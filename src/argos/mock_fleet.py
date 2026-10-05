@@ -1,7 +1,8 @@
 """Local stand-in for Terra's fleet topics.
 
-This peer publishes ``fleet/state`` and accepts ``fleet/size`` plus ``cmd_vel``.
-It is only a smoke target. Terra keeps rover ids stable and may leave gaps
+This peer publishes ``fleet/state`` and accepts ``fleet/size`` plus the temporary
+``cmd_vel`` debug path (see docs/DESIGN.md). It is only a smoke target.
+Terra keeps rover ids stable and may leave gaps
 after shrinking the fleet; this mock renumbers surviving ids from zero.
 """
 

@@ -45,6 +45,7 @@ class TerraTopics:
         object.__setattr__(self, "prefix", prefix)
 
     def cmd_vel(self, rover_id: int) -> str:
+        """Temporary debug key. The operator contract is high-level commands; see docs/DESIGN.md."""
         _rover_id(rover_id)
         return f"{self.prefix}/{rover_id}/cmd_vel"
 
@@ -59,7 +60,7 @@ class TerraTopics:
 
 
 def encode_twist(linear: float, angular: float) -> bytes:
-    """JSON twist Terra accepts on ``<prefix>/<id>/cmd_vel``."""
+    """JSON twist for the temporary ``cmd_vel`` debug path. See docs/DESIGN.md."""
     payload = json.dumps(
         {"linear": _f32_number(linear), "angular": _f32_number(angular)}
     ).encode("utf-8")

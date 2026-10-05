@@ -56,7 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     fleet.add_argument("--json", action="store_true", help="Print the snapshot as JSON")
     fleet.set_defaults(func=cmd_fleet)
 
-    drive = sub.add_parser("drive", help="Repeat a twist, then send zero")
+    drive = sub.add_parser(
+        "drive",
+        help="Temporary debug twist on cmd_vel, then zero. See docs/DESIGN.md",
+    )
     _add_session_args(drive)
     drive.add_argument("--rover", type=int, required=True, help="Rover id from fleet/state")
     drive.add_argument("--linear", type=float, default=0.0, help="Forward speed in m/s")

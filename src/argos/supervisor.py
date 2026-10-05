@@ -1,4 +1,7 @@
-"""Fleet discovery, twist commands, and a health snapshot."""
+"""Fleet discovery, health, and the temporary cmd_vel debug path.
+
+The long-term operator contract is high-level commands. See docs/DESIGN.md.
+"""
 
 from __future__ import annotations
 

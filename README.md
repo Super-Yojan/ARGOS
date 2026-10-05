@@ -2,9 +2,9 @@
 
 ARGOS (Adaptive Robotic Group Operator System) supervises a Terra rover fleet over Zenoh.
 
-This repository is the operator slice: discover rover ids, send `cmd_vel` twists, and show basic link and motion health. Terra (https://github.com/Super-Yojan/Terra) owns the simulator and the topic contract. The first slice is tracked on the [ARGOS project board](https://github.com/users/Super-Yojan/projects/6).
+Terra keeps local autonomy onboard: sensing, local planning, the watchdog, and low-level drive. ARGOS sends high-level commands — missions, goals, and fleet intents — and reads fleet health. That split is the operator contract. The first slice on the [ARGOS project board](https://github.com/users/Super-Yojan/projects/6) discovers rover ids, shows health, and can request a fleet size. `argos drive` publishes `cmd_vel` twists as a temporary debug path so the Zenoh session can be checked against today's simulator. It is not the long-term command interface.
 
-Design, topic table, and out-of-scope items: [docs/DESIGN.md](docs/DESIGN.md).
+Terra (https://github.com/Super-Yojan/Terra) owns the bus. Design, the target boundary, and the spike topic table: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Run against Terra
 
@@ -28,7 +28,7 @@ argos drive --rover 0 --linear 1.0 --angular 0.3 --seconds 5
 argos watch
 ```
 
-`drive` repeats the twist at 20 Hz, then sends a zero twist. Terra stops a rover 500 ms after the last valid command.
+`drive` is the temporary debug twist: it repeats `cmd_vel` at 20 Hz, then sends zero. Terra stops a rover 500 ms after the last valid command. The long-term replacement is a mission or goal that Terra executes onboard. See [docs/DESIGN.md](docs/DESIGN.md).
 
 From another machine, start Terra with `TERRA_ZENOH_LISTEN=tcp/0.0.0.0:7447` and point ARGOS at it:
 
