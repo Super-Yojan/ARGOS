@@ -133,7 +133,10 @@ def _f32_number(value: object) -> float:
     number = float(value)
     if not math.isfinite(number):
         raise ValueError("twist components must be finite numbers")
-    packed = struct.unpack("<f", struct.pack("<f", number))[0]
+    try:
+        packed = struct.unpack("<f", struct.pack("<f", number))[0]
+    except OverflowError:
+        packed = math.inf
     if not math.isfinite(packed):
         raise ValueError("twist components must fit in f32")
     return number

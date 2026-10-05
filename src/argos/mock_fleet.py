@@ -88,7 +88,10 @@ def _initial_ids(count: int | None, raw_ids: str | None) -> list[int]:
     if count is not None and raw_ids is not None:
         raise SystemExit("pass only one of --count and --ids")
     if count is not None:
-        encode_fleet_size(count)
+        try:
+            encode_fleet_size(count)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         return list(range(count))
     if raw_ids is None:
         return [0]

@@ -41,14 +41,14 @@ Session shape matches Terra's client: Zenoh client mode, connect to `tcp/127.0.0
 1. **Discover.** Subscribe to `fleet/state`. Report `count`, `max_count`, and `ids`. Ids can have gaps; `count` is how many rovers exist, not the highest id.
 2. **Drive.** Publish `cmd_vel` for one id, then a zero twist. Warn when that id is missing from the latest fleet set.
 3. **Show health.** Print link freshness and per-rover motion. This is derived. Terra does not publish a health topic.
-4. **Resize (pass-through).** Publish `fleet/size` and wait until `fleet/state.count` equals the request. Same acknowledgement rule as Terra's `zenoh_client.py`.
+4. **Resize (pass-through).** Wait up to one second for a `fleet/state` sample, publish `fleet/size`, and wait until `fleet/state.count` equals the request. Same acknowledgement rule as Terra's `zenoh_client.py`. The brief wait lets a shrink show which ids left.
 
 ## Health model
 
 | Field | Values | Rule |
 | --- | --- | --- |
 | `link` | `unknown`, `healthy`, `stale` | `unknown` until the first valid `fleet/state`. `stale` when that sample is 2.5 s old or older, which is longer than two of Terra's one-second republishes. |
-| rover `health` | `online`, `absent`, `stale`, `unlisted` | `online` ids are in the latest healthy sample. `absent` ids were in the previous healthy sample and dropped out. `stale` ids are the last set while the link is stale. `unlisted` ids have a local twist and are not in that set. |
+| rover `health` | `online`, `absent`, `stale`, `unlisted` | `online` ids are in the latest healthy sample. `absent` ids were seen earlier in this process and are missing from the latest sample; a repeated sample does not clear them, and the id becomes `online` again if it returns. `stale` ids are the last reported set while the link is stale. `unlisted` ids have a local twist and have never appeared in `fleet/state`. |
 | rover `motion` | `driving`, `idle` | `driving` while this process's last non-zero twist is younger than 500 ms. Otherwise `idle`, including after ARGOS sends the stopping zero twist. |
 
 A rover can be `online` and `idle` while some other client is still commanding it. ARGOS only knows twists it sent.

@@ -48,7 +48,7 @@ class FleetSupervisor:
         self._command_hz = command_hz
         self._lock = threading.Lock()
         self._state: FleetState | None = None
-        self._previous_ids: tuple[int, ...] = ()
+        self._seen: set[int] = set()
         self._state_at: float | None = None
         self._commands: dict[int, tuple[float, float, float]] = {}
         self._notice: str | None = None
@@ -70,7 +70,7 @@ class FleetSupervisor:
                 now=self._clock(),
                 state=self._state,
                 state_at=self._state_at,
-                previous_ids=self._previous_ids,
+                seen_ids=set(self._seen),
                 commands=dict(self._commands),
                 notice=self._notice,
                 state_stale_after_s=self._state_stale_after_s,
@@ -91,6 +91,12 @@ class FleetSupervisor:
         payload = encode_fleet_size(count)
         key = self._topics.fleet_size()
         deadline = self._deadline(timeout)
+        # Learn who is already spawned so a shrink can be shown as absent.
+        observe_until = min(deadline, self._clock() + min(1.0, timeout))
+        while self._clock() < observe_until:
+            if self.snapshot().link == "healthy":
+                break
+            self._sleep(min(0.05, observe_until - self._clock()))
         while True:
             self._transport.put(key, payload)
             snapshot = self.snapshot()
@@ -140,8 +146,7 @@ class FleetSupervisor:
         if state.count != len(state.ids):
             notice = "fleet state count does not match ids length"
         with self._lock:
-            if self._state is not None:
-                self._previous_ids = self._state.ids
+            self._seen.update(state.ids)
             self._state = state
             self._state_at = self._clock()
             self._notice = notice

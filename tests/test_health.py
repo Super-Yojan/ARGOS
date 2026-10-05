@@ -17,7 +17,7 @@ def test_unknown_until_a_fleet_sample_arrives():
         now=0.0,
         state=None,
         state_at=None,
-        previous_ids=(),
+        seen_ids=(),
         commands={},
         notice=None,
         state_stale_after_s=STATE_STALE_AFTER_S,
@@ -33,7 +33,7 @@ def test_fresh_state_is_healthy_and_a_dropped_id_is_absent():
         now=1.0,
         state=_state(0, 2),
         state_at=0.8,
-        previous_ids=(0, 1, 2),
+        seen_ids=(0, 1, 2),
         commands={2: (1.0, 0.2, 0.9)},
         notice=None,
         state_stale_after_s=STATE_STALE_AFTER_S,
@@ -55,7 +55,7 @@ def test_command_at_the_terra_timeout_is_idle():
         now=COMMAND_TIMEOUT_S,
         state=_state(0),
         state_at=COMMAND_TIMEOUT_S,
-        previous_ids=(),
+        seen_ids=(),
         commands={0: (0.5, 0.0, 0.0)},
         notice=None,
         state_stale_after_s=STATE_STALE_AFTER_S,
@@ -70,7 +70,7 @@ def test_stale_link_keeps_the_last_ids_and_local_commands():
         now=STATE_STALE_AFTER_S,
         state=_state(4),
         state_at=0.0,
-        previous_ids=(1,),
+        seen_ids=(1, 4),
         commands={9: (0.0, 1.0, STATE_STALE_AFTER_S)},
         notice=None,
         state_stale_after_s=STATE_STALE_AFTER_S,
@@ -80,6 +80,6 @@ def test_stale_link_keeps_the_last_ids_and_local_commands():
     assert snapshot.ids == (4,)
     by_id = {rover.rover_id: rover for rover in snapshot.rovers}
     assert by_id[4].health == "stale"
+    assert by_id[1].health == "absent"
     assert by_id[9].health == "unlisted"
     assert by_id[9].motion == "driving"
-    assert 1 not in by_id

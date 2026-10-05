@@ -59,12 +59,13 @@ def build_snapshot(
     now: float,
     state: FleetState | None,
     state_at: float | None,
-    previous_ids: tuple[int, ...],
+    seen_ids: tuple[int, ...] | set[int],
     commands: dict[int, tuple[float, float, float]],
     notice: str | None,
     state_stale_after_s: float,
     command_timeout_s: float,
 ) -> FleetSnapshot:
+    seen = set(seen_ids)
     if state is None or state_at is None:
         listed: list[tuple[int, str]] = []
         age = None
@@ -77,18 +78,16 @@ def build_snapshot(
         ids = state.ids
         count = state.count
         max_count = state.max_count
+        current = set(state.ids)
+        missing = [rover_id for rover_id in seen if rover_id not in current]
         if age >= state_stale_after_s:
             link = "stale"
             listed = [(rover_id, "stale") for rover_id in state.ids]
+            listed.extend((rover_id, "absent") for rover_id in missing)
         else:
             link = "healthy"
-            current = set(state.ids)
             listed = [(rover_id, "online") for rover_id in state.ids]
-            listed.extend(
-                (rover_id, "absent")
-                for rover_id in previous_ids
-                if rover_id not in current
-            )
+            listed.extend((rover_id, "absent") for rover_id in missing)
     known = {rover_id for rover_id, _health in listed}
     listed.extend(
         (rover_id, "unlisted") for rover_id in commands if rover_id not in known

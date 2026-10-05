@@ -119,7 +119,7 @@ def test_text_snapshot_lists_rover_health():
         now=1.0,
         state=FleetState(2, 32, (0, 2)),
         state_at=0.5,
-        previous_ids=(0, 1),
+        seen_ids=(0, 1),
         commands={},
         notice="fleet state count does not match ids length",
         state_stale_after_s=2.5,

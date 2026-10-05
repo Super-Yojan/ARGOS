@@ -34,6 +34,7 @@ def test_discovery_then_absent_rover_after_shrink():
     assert fleet.snapshot().link == "healthy"
     assert fleet.snapshot().ids == (0, 1)
     transport.inject(STATE_KEY, state([0]))
+    transport.inject(STATE_KEY, state([0]))
     by_id = {rover.rover_id: rover.health for rover in fleet.snapshot().rovers}
     assert by_id == {0: "online", 1: "absent"}
 
@@ -130,6 +131,25 @@ def test_start_subscribes_once():
     fleet.start()
     with pytest.raises(RuntimeError):
         fleet.start()
+
+
+def test_resize_keeps_ids_that_disappeared():
+    clock = Clock()
+    transport = FakeTransport()
+    fleet = supervisor(transport, clock)
+    transport.inject(STATE_KEY, state([0, 1, 2]))
+
+    def put(key, payload):
+        transport.sent.append((key, bytes(payload)))
+        if key.endswith("/fleet/size"):
+            count = json.loads(payload)["count"]
+            transport.inject(STATE_KEY, state(range(count)))
+
+    transport.put = put
+    snapshot = fleet.request_count(1, timeout=5)
+    assert snapshot.ids == (0,)
+    by_id = {rover.rover_id: rover.health for rover in snapshot.rovers}
+    assert by_id == {0: "online", 1: "absent", 2: "absent"}
 
 
 def test_wait_for_state_times_out_on_the_injected_clock():
