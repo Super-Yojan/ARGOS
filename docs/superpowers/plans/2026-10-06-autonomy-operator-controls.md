@@ -10,6 +10,10 @@
 
 **Spec:** https://github.com/Super-Yojan/ARGOS/issues/4. Depends on https://github.com/Super-Yojan/Terra/issues/17 and the Terra plan at `/Users/yojan/git/Terra/docs/superpowers/plans/2026-10-06-level-of-autonomy.md`. Build on native dashboard PR https://github.com/Super-Yojan/ARGOS/pull/5.
 
+## Implementation status
+
+Implemented on `codex/mission-operator-controls`, based on dashboard PR #5. The [mission-control guide](../../autonomy/README.md) records delivered controls, exported logs, linked runtime evidence, and empirical limits. Original task checkboxes include complete physical/operator trials; those are not claimed from simulator builds.
+
 ## Global constraints
 
 - Initial platforms remain macOS 14+ and iOS 17+, using the current Apple project and shared SwiftUI sources.

@@ -56,3 +56,36 @@ actor FakeBackend
     func send(id:UInt64,waypoint:Waypoint) async throws -> String {sendCount+=1;return "test-token"}
     func cancel(id:UInt64) async throws {}
 }
+
+final class AutonomyStateTests:XCTestCase {
+    func testSafetyAndPendingAuthorityDisableDriving() throws {
+        let data=Data(#"{"status":{"assigned_level":"waypoint","requested_level":"teleop","effective_level":"teleop","active_source":"none","safety":"clear","reason":"idle","revision":1,"supported_levels":["teleop"],"paused":false},"age":0.1,"action_phase":"pending"}"#.utf8)
+        var state=try JSONDecoder().decode(OperatorState.self,from:data)
+        XCTAssertFalse(state.canDrive)
+        state.action_phase="accepted";XCTAssertTrue(state.canDrive)
+        state.age=3;XCTAssertFalse(state.canDrive)
+        state.age=0;state.status?.safety="emergency_stop";XCTAssertFalse(state.canDrive)
+    }
+}
+
+final class OccupancyMapTests:XCTestCase {
+    func testRowMajorGridRetainsUnknownAndOccupiedCells() throws {
+        let json=#"{"grid":{"schema_version":1,"rover_id":8,"run_id":"test","sequence":1,"width":2,"height":2,"resolution":0.5,"origin_x":-1,"origin_y":3,"occupancy":[-1,0,65,100]},"age":0.1}"#
+        var map=try JSONDecoder().decode(OccupancyState.self,from:Data(json.utf8))
+        XCTAssertTrue(map.grid.valid);XCTAssertEqual(map.grid.occupancy,[-1,0,65,100]);XCTAssertFalse(map.stale)
+        map=try JSONDecoder().decode(OccupancyState.self,from:Data(json.replacingOccurrences(of:"\"age\":0.1",with:"\"age\":3").utf8))
+        XCTAssertTrue(map.stale)
+        let bad=try JSONDecoder().decode(OccupancyState.self,from:Data(json.replacingOccurrences(of:"\"width\":2",with:"\"width\":3").utf8))
+        XCTAssertFalse(bad.grid.valid)
+    }
+    func testWorldCoordinatesRoundTripWithoutRectangularMapDistortion() {
+        let size=CGSize(width:800,height:320)
+        let a=LocalMapProjection.screen(x:4,y:6,size:size,extent:10,centerX:2,centerY:3)
+        let b=LocalMapProjection.world(a,size:size,extent:10,centerX:2,centerY:3)
+        XCTAssertEqual(b.0,4,accuracy:0.000001);XCTAssertEqual(b.1,6,accuracy:0.000001)
+        let origin=LocalMapProjection.screen(x:2,y:3,size:size,extent:10,centerX:2,centerY:3)
+        let north=LocalMapProjection.screen(x:3,y:3,size:size,extent:10,centerX:2,centerY:3)
+        let west=LocalMapProjection.screen(x:2,y:4,size:size,extent:10,centerX:2,centerY:3)
+        XCTAssertEqual(origin.y-north.y,origin.x-west.x,accuracy:0.000001)
+    }
+}
