@@ -35,7 +35,7 @@ actor NativeBackend: FleetBackend {
     func disconnect() async {stopObservation();await backend.disconnect();await refresh()}
     func refresh() async {
         snapshot=await backend.snapshot()
-        if let selected, !snapshot.rovers.contains(where:{$0.id==selected && $0.membership=="online"}) {self.selected=nil}
+        if let selected, !snapshot.rovers.contains(where:{$0.id==selected}) {self.selected=nil}
         if selected == nil {selected=snapshot.rovers.first(where:{$0.membership=="online"})?.id}
     }
     func startObservation() {

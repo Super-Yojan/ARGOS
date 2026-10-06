@@ -11,6 +11,6 @@ after cancellation. The iOS UI test then drove to 38.82986, -77.3075, reached
 arrival, and cancelled. These are simulator results, not physical-rover or
 physical-phone verification.
 
-macOS and iOS unit suites passed (2 tests each). Native Zenoh loopback, Rust
+macOS and iOS unit suites passed (3 tests each). The Rust suite passed 13 tests. Native Zenoh loopback, Rust
 contract/state tests, FFI lifecycle, and Clippy also passed. macOS XCUITest could not initialize host automation mode;
 its UI automation result is not counted as passing.

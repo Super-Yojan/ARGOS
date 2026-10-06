@@ -50,6 +50,19 @@ impl FleetCache {
                 *entry = Entry::default();
             }
         }
+        // Terra retires increasing IDs. Preserve current membership plus at most
+        // 32 retired rows for last-known inspection, rather than lifetime history.
+        let current = state.ids.iter().copied().collect::<BTreeSet<_>>();
+        let retired = self
+            .entries
+            .keys()
+            .rev()
+            .filter(|id| !current.contains(id))
+            .take(32)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        self.entries
+            .retain(|id, _| current.contains(id) || retired.contains(id));
         self.notice = (state.count != state.ids.len() as u64)
             .then(|| "Fleet count disagrees with membership".into());
         self.fleet = Some((state, now));

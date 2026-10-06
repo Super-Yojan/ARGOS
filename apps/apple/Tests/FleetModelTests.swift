@@ -29,13 +29,30 @@ final class FleetModelTests: XCTestCase {
         XCTAssertEqual(model.snapshot.link,"disconnected")
         XCTAssertFalse(model.observing)
     }
+    @MainActor func testStaleSelectedRoverRemainsInspectable() async {
+        let backend=FakeBackend()
+        let model=FleetModel(backend:backend)
+        await model.connect(endpoint:"tcp/127.0.0.1:7447",prefix:"terra/rover")
+        await model.refresh()
+        XCTAssertEqual(model.selected,8)
+        await backend.setMembership("stale")
+        await model.refresh()
+        XCTAssertEqual(model.selected,8)
+        await backend.setMembership("absent")
+        await model.refresh()
+        XCTAssertEqual(model.selected,8)
+        await model.disconnect()
+    }
 }
-actor FakeBackend: FleetBackend {
+actor FakeBackend
+: FleetBackend {
     var sendCount=0
     var connected=false
+    var membership="online"
+    func setMembership(_ value:String) {membership=value}
     func connect(endpoint:String,prefix:String) async throws {connected=true}
     func disconnect() async {connected=false}
-    func snapshot() async -> FleetSnapshot {FleetSnapshot(link:connected ? "healthy":"disconnected",fleetAge:connected ? 0:nil,rovers:[],notice:nil)}
+    func snapshot() async -> FleetSnapshot {FleetSnapshot(link:connected ? "healthy":"disconnected",fleetAge:connected ? 0:nil,rovers:connected ? [RoverView(id:8,membership:membership,pose:nil,poseAge:nil,goal:nil,goalAge:nil,commandPhase:"none",commandToken:nil)]:[],notice:nil)}
     func send(id:UInt64,waypoint:Waypoint) async throws -> String {sendCount+=1;return "test-token"}
     func cancel(id:UInt64) async throws {}
 }

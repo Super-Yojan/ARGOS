@@ -112,3 +112,26 @@ fn pose_id_mismatch_and_unlisted_status_are_ignored() {
     assert!(c.snapshot(0.1).rovers[0].pose.is_none());
     assert_eq!(c.snapshot(0.1).rovers.len(), 2);
 }
+
+#[test]
+fn retired_rovers_do_not_grow_snapshots_without_bound() {
+    let mut c = FleetCache::default();
+    for id in 0..100 {
+        c.fleet(
+            FleetState {
+                count: 1,
+                max_count: 32,
+                ids: vec![id],
+            },
+            id as f64,
+        );
+    }
+    let snapshot = c.snapshot(99.);
+    assert!(snapshot.rovers.len() <= 33);
+    assert!(
+        snapshot
+            .rovers
+            .iter()
+            .any(|r| r.id == 99 && r.membership == "online")
+    );
+}
