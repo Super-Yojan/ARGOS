@@ -3,6 +3,7 @@ name = "argos-ffi"
 version.workspace = true
 edition.workspace = true
 [dependencies]
+serde_json = "1"
 argos-core = { path = "../argos-core" }
 argos-zenoh = { path = "../argos-zenoh" }
 uniffi.workspace = true

@@ -1,0 +1,299 @@
+{
+  "evidence": [
+    {
+      "ack_latency": 0.110127416,
+      "level": "teleop",
+      "state": {
+        "action_phase": "none",
+        "action_token": null,
+        "age": 0.04665833400000008,
+        "experiment": {
+          "recording": true,
+          "run_elapsed": 73.825311542,
+          "run_id": "run-1791265087955492000",
+          "schema_version": 1,
+          "utc": 1791265161.788607
+        },
+        "mission": {
+          "complete": false,
+          "confirmed": 0,
+          "failed": false,
+          "half_extent": 40.0,
+          "mission_id": "rescue-42",
+          "objective": "Search sectors, confirm survivor locations, and return to base",
+          "observations": [],
+          "phase": "search",
+          "remaining_seconds": 526.174688458,
+          "required": 3,
+          "seed": 42
+        },
+        "proposal": null,
+        "proposal_remaining": null,
+        "recording": "active",
+        "status": {
+          "active_source": "none",
+          "assigned_level": null,
+          "effective_level": "teleop",
+          "paused": false,
+          "reason": "idle",
+          "request_reason": "operator_selection",
+          "requested_level": "teleop",
+          "result": "accepted",
+          "revision": 3,
+          "run_id": "run-1791265087955492000",
+          "safety": "clear",
+          "supported_levels": [
+            "teleop",
+            "assisted_teleop",
+            "waypoint",
+            "supervised"
+          ],
+          "token": "671e76bd-be6c-4164-882d-cd0364b7e4cc"
+        }
+      }
+    },
+    {
+      "ack_latency": 0.538585917,
+      "level": "assisted_teleop",
+      "state": {
+        "action_phase": "accepted",
+        "action_token": "fc70b926-e273-49ab-9470-ce5b83567edb",
+        "age": 0.08763799999999988,
+        "experiment": {
+          "recording": true,
+          "run_elapsed": 75.132523375,
+          "run_id": "run-1791265087955492000",
+          "schema_version": 1,
+          "utc": 1791265163.092376
+        },
+        "mission": {
+          "complete": false,
+          "confirmed": 0,
+          "failed": false,
+          "half_extent": 40.0,
+          "mission_id": "rescue-42",
+          "objective": "Search sectors, confirm survivor locations, and return to base",
+          "observations": [],
+          "phase": "search",
+          "remaining_seconds": 524.867476625,
+          "required": 3,
+          "seed": 42
+        },
+        "proposal": null,
+        "proposal_remaining": null,
+        "recording": "active",
+        "status": {
+          "active_source": "assisted_operator",
+          "assigned_level": null,
+          "effective_level": "assisted_teleop",
+          "paused": false,
+          "reason": "active",
+          "request_reason": "operator_selection",
+          "requested_level": "assisted_teleop",
+          "result": "accepted",
+          "revision": 4,
+          "run_id": "run-1791265087955492000",
+          "safety": "clear",
+          "supported_levels": [
+            "teleop",
+            "assisted_teleop",
+            "waypoint",
+            "supervised"
+          ],
+          "token": "fc70b926-e273-49ab-9470-ce5b83567edb"
+        }
+      }
+    },
+    {
+      "ack_latency": 0.143783709,
+      "level": "waypoint",
+      "state": {
+        "action_phase": "accepted",
+        "action_token": "a61404f8-26e5-4a18-9c91-70bb0bccbb60",
+        "age": 0.08000525000000014,
+        "experiment": {
+          "recording": true,
+          "run_elapsed": 76.050689042,
+          "run_id": "run-1791265087955492000",
+          "schema_version": 1,
+          "utc": 1791265164.023617
+        },
+        "mission": {
+          "complete": false,
+          "confirmed": 0,
+          "failed": false,
+          "half_extent": 40.0,
+          "mission_id": "rescue-42",
+          "objective": "Search sectors, confirm survivor locations, and return to base",
+          "observations": [],
+          "phase": "search",
+          "remaining_seconds": 523.949310958,
+          "required": 3,
+          "seed": 42
+        },
+        "proposal": null,
+        "proposal_remaining": null,
+        "recording": "active",
+        "status": {
+          "active_source": "none",
+          "assigned_level": null,
+          "effective_level": "waypoint",
+          "paused": false,
+          "reason": "idle",
+          "request_reason": "operator_selection",
+          "requested_level": "waypoint",
+          "result": "accepted",
+          "revision": 5,
+          "run_id": "run-1791265087955492000",
+          "safety": "clear",
+          "supported_levels": [
+            "teleop",
+            "assisted_teleop",
+            "waypoint",
+            "supervised"
+          ],
+          "token": "a61404f8-26e5-4a18-9c91-70bb0bccbb60"
+        }
+      }
+    },
+    {
+      "distance": 0.6870744228363037,
+      "goal_token": "1b602051-e423-487b-8c43-be292bc37cb1",
+      "phase": "arrived"
+    },
+    {
+      "ack_latency": 0.114822459,
+      "level": "supervised",
+      "state": {
+        "action_phase": "accepted",
+        "action_token": "536f4b3f-32da-450c-bf25-f406defbab4f",
+        "age": 0.049154957999999915,
+        "experiment": {
+          "recording": true,
+          "run_elapsed": 76.291027,
+          "run_id": "run-1791265087955492000",
+          "schema_version": 1,
+          "utc": 1791265164.309614
+        },
+        "mission": {
+          "complete": false,
+          "confirmed": 0,
+          "failed": false,
+          "half_extent": 40.0,
+          "mission_id": "rescue-42",
+          "objective": "Search sectors, confirm survivor locations, and return to base",
+          "observations": [],
+          "phase": "search",
+          "remaining_seconds": 523.708973,
+          "required": 3,
+          "seed": 42
+        },
+        "proposal": {
+          "expires_at": 106.291027,
+          "map_revision": 893,
+          "proposal_id": 1,
+          "reason": "search_unobserved_sector",
+          "run_id": "run-1791265087955492000",
+          "x": 1.5499999999999918,
+          "y": 0.05000000000000071
+        },
+        "proposal_remaining": 29.950845042,
+        "recording": "active",
+        "status": {
+          "active_source": "none",
+          "assigned_level": null,
+          "effective_level": "supervised",
+          "paused": false,
+          "reason": "awaiting_approval",
+          "request_reason": "operator_selection",
+          "requested_level": "supervised",
+          "result": "accepted",
+          "revision": 7,
+          "run_id": "run-1791265087955492000",
+          "safety": "clear",
+          "supported_levels": [
+            "teleop",
+            "assisted_teleop",
+            "waypoint",
+            "supervised"
+          ],
+          "token": "536f4b3f-32da-450c-bf25-f406defbab4f"
+        }
+      }
+    },
+    {
+      "decision": {
+        "action_phase": "accepted",
+        "action_token": "33341377-f995-4891-b9ca-dfd29c28701a",
+        "age": 0.07316533299999994,
+        "experiment": {
+          "recording": true,
+          "run_elapsed": 76.43005575,
+          "run_id": "run-1791265087955492000",
+          "schema_version": 1,
+          "utc": 1791265164.39129
+        },
+        "mission": {
+          "complete": false,
+          "confirmed": 0,
+          "failed": false,
+          "half_extent": 40.0,
+          "mission_id": "rescue-42",
+          "objective": "Search sectors, confirm survivor locations, and return to base",
+          "observations": [],
+          "phase": "search",
+          "remaining_seconds": 523.56994425,
+          "required": 3,
+          "seed": 42
+        },
+        "proposal": null,
+        "proposal_remaining": null,
+        "recording": "active",
+        "status": {
+          "active_source": "frontier",
+          "assigned_level": null,
+          "effective_level": "supervised",
+          "paused": false,
+          "reason": "assisted",
+          "request_reason": "proposal_approve",
+          "requested_level": "supervised",
+          "result": "accepted",
+          "revision": 8,
+          "run_id": "run-1791265087955492000",
+          "safety": "clear",
+          "supported_levels": [
+            "teleop",
+            "assisted_teleop",
+            "waypoint",
+            "supervised"
+          ],
+          "token": "33341377-f995-4891-b9ca-dfd29c28701a"
+        }
+      },
+      "proposal_id": 1
+    },
+    {
+      "fleet_stop": [
+        [
+          0,
+          "6f6f0f6a-e6ee-48ca-8686-56071eb593ad"
+        ],
+        [
+          1,
+          "1dd39da6-1651-4010-9d7b-01486987fff1"
+        ]
+      ],
+      "fleet_takeover": [
+        [
+          0,
+          "29fec66e-df73-4a04-90bd-83019a094f47"
+        ],
+        [
+          1,
+          "72f74b77-4e10-475c-9142-cf95a85a09c2"
+        ]
+      ]
+    }
+  ],
+  "operator_log": "/private/tmp/argos-mission-operator-session.jsonl"
+}
