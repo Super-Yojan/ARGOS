@@ -1,0 +1,28 @@
+name: native
+on: [push, pull_request]
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+  apple:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/build-apple.sh
+      - name: Build both apps from packaged XCFramework
+        run: |
+          xcodebuild -project apps/apple/ARGOS.xcodeproj -scheme ARGOSMac -destination 'generic/platform=macOS' -derivedDataPath apps/apple/build build ARCHS=arm64 CODE_SIGNING_ALLOWED=NO
+          xcodebuild -project apps/apple/ARGOS.xcodeproj -scheme ARGOSiOS -destination 'generic/platform=iOS Simulator' -derivedDataPath apps/apple/build-ios build ARCHS=arm64 CODE_SIGNING_ALLOWED=NO
+      - name: Swift unit tests on Apple Silicon runner
+        if: runner.arch == 'ARM64'
+        run: xcodebuild -project apps/apple/ARGOS.xcodeproj -scheme ARGOSMac -destination 'platform=macOS,arch=arm64' -derivedDataPath apps/apple/build test -only-testing:ARGOSMacTests CODE_SIGNING_ALLOWED=NO

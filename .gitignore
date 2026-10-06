@@ -6,3 +6,12 @@ dist/
 *.egg-info/
 .coverage
 htmlcov/
+/target/
+/apps/apple/Generated/
+/apps/apple/build/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+/apps/apple/build-ios/
+/.worktrees/
+/uv.lock

@@ -88,3 +88,22 @@ The mock peer (`python -m argos.mock_fleet`) stands in for `fleet/state`, `fleet
 Edit `src/argos/contract.py` if Terra renames a key, the prefix, the 32-rover request cap, or the JSON fields. Supervisor and CLI code should keep calling `TerraTopics`, `encode_twist`, `encode_fleet_size`, and `decode_fleet_state`.
 
 Add mission and goal codecs in that same module when Terra defines them. Until then, `encode_twist` remains the debug adapter and should stay marked as temporary.
+
+## Native Apple dashboard
+
+The new operator surface is a Rust workspace (`argos-core`, `argos-zenoh`,
+`argos-ffi`) with iOS and macOS SwiftUI targets in `apps/apple`. Goal keys are
+now defined by Terra and implemented by the Rust contract and Python CLI
+compatibility codecs. The earlier spike-only statements above describe the
+original CLI slice, not the native dashboard.
+
+`argos-core` validates telemetry and goal requests and owns independent receive
+ages plus token acknowledgement state. `argos-zenoh` owns one native TCP session
+and bounded latest snapshots. `argos-ffi` exposes owned records and typed errors
+through UniFFI. Swift owns presentation and platform navigation; the actor-held
+client keeps all native network operations off the main thread.
+
+The app observes fleet/state, per-rover goal/status, and body-pose metadata in
+camera/depth, and publishes one goal or cancel request. It never implements
+Terra's follower, motor path, or command watchdog. No Python runtime, web server,
+browser bridge, Dioxus, or image decoding is needed by the Apple app.

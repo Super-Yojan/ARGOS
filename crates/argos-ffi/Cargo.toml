@@ -1,0 +1,17 @@
+[package]
+name = "argos-ffi"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+argos-core = { path = "../argos-core" }
+argos-zenoh = { path = "../argos-zenoh" }
+uniffi.workspace = true
+thiserror.workspace = true
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+[features]
+bindgen = ["uniffi/cli"]
+[[bin]]
+name = "argos-bindgen"
+path = "src/bin/bindgen.rs"
+required-features = ["bindgen"]

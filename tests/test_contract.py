@@ -72,3 +72,28 @@ def test_fleet_state_decodes_terra_sample_and_keeps_id_order():
 def test_fleet_state_rejects_bad_payloads(payload):
     with pytest.raises(ValueError):
         decode_fleet_state(payload)
+
+
+def test_goal_encoding_matches_native_dashboard_contract():
+    from argos.contract import encode_goal, decode_goal_status
+    import json
+    assert json.loads(encode_goal(frame="local", x=12, y=-4, token="g-1")) == {
+        "frame": "local", "x": 12, "y": -4, "token": "g-1"}
+    assert json.loads(encode_goal(cancel=True)) == {"cancel": True}
+    assert TerraTopics().goal(8) == "terra/rover/8/goal"
+    assert TerraTopics().goal_status(8) == "terra/rover/8/goal/status"
+    status = decode_goal_status(b'{"state":"active","goal_id":1,"distance":12,"x":12,"y":0,"token":"g-1"}')
+    assert status.token == "g-1"
+    assert status.state == "active"
+
+
+def test_goal_encoding_rejects_invalid_shapes():
+    from argos.contract import encode_goal, decode_goal_status
+    import pytest
+    for fields in [dict(frame="local", x=True, y=0), dict(frame="local", x=float("nan"), y=0),
+                   dict(frame="wgs84", latitude=86, longitude=0),dict(cancel=True,token="extra"),
+                   dict(frame="local",x=1,y=0,latitude=0),dict(frame="local",x=1,y=0,token="bad token")]:
+        with pytest.raises(ValueError):
+            encode_goal(**fields)
+    with pytest.raises(ValueError):
+        decode_goal_status(b'{"state":"active","goal_id":0,"distance":0,"x":0,"y":0}')
