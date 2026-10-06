@@ -1,0 +1,957 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		03F801ABCB8B7F92FCA21D52 /* ARGOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */; };
+		0E9BFCFB2F6CB2984D4B111B /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF9BC4E9CE2701D23228B56C /* Foundation.framework */; };
+		21B21F049E8D9A84CB6F8A2C /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */; };
+		24EB2D335EC5A3E666C75451 /* FleetModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C000BC0B1C0CD76C917E5277 /* FleetModel.swift */; };
+		3ECA3D8393C3F7E6A500C5C6 /* GeographicMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */; };
+		43345F0F1A5327E67779767C /* FleetModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */; };
+		502953D165A21254A4288CFA /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
+		545B5B411F71423B57385F8E /* ArgosCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */; };
+		5D16E11CE1A77AFB8C3943BC /* OperatorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9290BCACEA034E788C22BC /* OperatorFlowTests.swift */; };
+		60C45FC3CCBE8B94C3A028C2 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
+		665228FF2DF38BEEBF3252DF /* ArgosCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */; };
+		76C1BD29AAF8F368BEEBE0CB /* RoverDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD20409506E08BB8CC983EFC /* RoverDetailView.swift */; };
+		7BFBFEE7F791F17947C6F64A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1ACF2AAE600DD15DF5423E96 /* Security.framework */; };
+		80496DCEEC8C985053A15C1A /* OperatorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0C86AE9965D27073B28157 /* OperatorFlowTests.swift */; };
+		8ABBA5787C2EC87F7AC9E3FE /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9011155250B525EE25C664 /* FleetView.swift */; };
+		8F17DA44D10C258969F8EE2D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9BF6467E221CD4047B0F3FAF /* Security.framework */; };
+		904FEFF00D689040464A70B3 /* LocalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F5206A8539BEBBF98C8C4F /* LocalMap.swift */; };
+		9F66AB99FFB456CA2D9A457C /* LocalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F5206A8539BEBBF98C8C4F /* LocalMap.swift */; };
+		AF409789AF50010E40286FBA /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DAD05139A42AB661E4E7B9C /* MapKit.framework */; };
+		B596003C6FDBE8D85712842C /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9011155250B525EE25C664 /* FleetView.swift */; };
+		B8A22CD0A4EF00DF30949B31 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF9BC4E9CE2701D23228B56C /* Foundation.framework */; };
+		C017503B3EB0D3D355AD4F4C /* FleetModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */; };
+		C04BAA7C505F93FB0BAA65CD /* ArgosCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */; };
+		C0EA9D8449FD6641FFD38EB0 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA29137BE1A33A78136AC49E /* ConnectionView.swift */; };
+		C3D4B9D6DA47D4D5BA941241 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 29C363A694FA4CBD61733040 /* SwiftUI.framework */; };
+		C8E2C1B929FE4FD7C4A17FCF /* ARGOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */; };
+		C92536F756652878E7D427F2 /* GeographicMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */; };
+		CDF6DC79B4171F72ABF95CFF /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
+		D4C36D87413EF2D4F4EF1B7B /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA29137BE1A33A78136AC49E /* ConnectionView.swift */; };
+		E43F86E3C960A9618C3BD723 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF9BC4E9CE2701D23228B56C /* Foundation.framework */; };
+		E8C114D42240D9DAD613B5A1 /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FF24481486875E309DC2BA2 /* MapKit.framework */; };
+		EB43C976DB7C029F104AEE81 /* RoverDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD20409506E08BB8CC983EFC /* RoverDetailView.swift */; };
+		F4463308F4AB5CBF297295C0 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A8601AD957337D767B4F0AA2 /* SwiftUI.framework */; };
+		F530CD669B087277371B8153 /* ArgosCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */; };
+		F64B1F952FB687079CFAEC98 /* FleetModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C000BC0B1C0CD76C917E5277 /* FleetModel.swift */; };
+		FE32B96F4B97864258BEADB7 /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FC96894B9A94D035D499694 /* SystemConfiguration.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		14696E312CE948A714D1883E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 681090B8311F8238855C0AB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3FB89F58980849066C816BE2;
+			remoteInfo = ARGOSiOS;
+		};
+		7249C3BB2A461022AAC40A75 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 681090B8311F8238855C0AB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1174374142C6483F1E4CD140;
+			remoteInfo = ARGOSMac;
+		};
+		819D749765D39FDB433340EA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 681090B8311F8238855C0AB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3FB89F58980849066C816BE2;
+			remoteInfo = ARGOSiOS;
+		};
+		88CE2ADF64C26D576D700063 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 681090B8311F8238855C0AB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1174374142C6483F1E4CD140;
+			remoteInfo = ARGOSMac;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetModelTests.swift; sourceTree = "<group>"; };
+		1360B4FB409855B9E97C2AA1 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		191F2C56540D9AF91741B1C0 /* ARGOSiOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ARGOSiOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1ACF2AAE600DD15DF5423E96 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
+		29C363A694FA4CBD61733040 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/SwiftUI.framework; sourceTree = DEVELOPER_DIR; };
+		2F07F3070EECAA42958EEC49 /* ARGOSMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ARGOSMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		30B498B01BE1159F2CE7B27F /* ARGOSiOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ARGOSiOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3F0C86AE9965D27073B28157 /* OperatorFlowTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OperatorFlowTests.swift; sourceTree = "<group>"; };
+		45F5206A8539BEBBF98C8C4F /* LocalMap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalMap.swift; sourceTree = "<group>"; };
+		4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeographicMap.swift; sourceTree = "<group>"; };
+		5F90886386B7CFBF3E4BFC59 /* ARGOSMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ARGOSMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FE6C33C79FBC999D9549D5A /* ARGOSiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ARGOSiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6873B8B0E29F0C41565AE52F /* ARGOSMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ARGOSMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8DAD05139A42AB661E4E7B9C /* MapKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/MapKit.framework; sourceTree = DEVELOPER_DIR; };
+		8E9011155250B525EE25C664 /* FleetView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetView.swift; sourceTree = "<group>"; };
+		8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; path = ArgosCore.xcframework; sourceTree = "<group>"; };
+		8FC96894B9A94D035D499694 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/SystemConfiguration.framework; sourceTree = DEVELOPER_DIR; };
+		8FF24481486875E309DC2BA2 /* MapKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/MapKit.framework; sourceTree = DEVELOPER_DIR; };
+		92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ARGOSApp.swift; sourceTree = "<group>"; };
+		9BF6467E221CD4047B0F3FAF /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
+		A8601AD957337D767B4F0AA2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/SwiftUI.framework; sourceTree = DEVELOPER_DIR; };
+		C000BC0B1C0CD76C917E5277 /* FleetModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetModel.swift; sourceTree = "<group>"; };
+		CD20409506E08BB8CC983EFC /* RoverDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoverDetailView.swift; sourceTree = "<group>"; };
+		D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ArgosCore.swift; sourceTree = "<group>"; };
+		EB9290BCACEA034E788C22BC /* OperatorFlowTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OperatorFlowTests.swift; sourceTree = "<group>"; };
+		EF9BC4E9CE2701D23228B56C /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/SystemConfiguration.framework; sourceTree = DEVELOPER_DIR; };
+		FA29137BE1A33A78136AC49E /* ConnectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1722FB5923CFF6DF121CC69C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8A22CD0A4EF00DF30949B31 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		22E7EAB7A3CB6E5961709661 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0E9BFCFB2F6CB2984D4B111B /* Foundation.framework in Frameworks */,
+				C04BAA7C505F93FB0BAA65CD /* ArgosCore.xcframework in Frameworks */,
+				F4463308F4AB5CBF297295C0 /* SwiftUI.framework in Frameworks */,
+				AF409789AF50010E40286FBA /* MapKit.framework in Frameworks */,
+				FE32B96F4B97864258BEADB7 /* SystemConfiguration.framework in Frameworks */,
+				7BFBFEE7F791F17947C6F64A /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		330B147CEF619E8228B08E4E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				502953D165A21254A4288CFA /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CAC969CEE27ED65643DD4FE6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E43F86E3C960A9618C3BD723 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D3DE319067B8599ABB5181FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CDF6DC79B4171F72ABF95CFF /* Cocoa.framework in Frameworks */,
+				665228FF2DF38BEEBF3252DF /* ArgosCore.xcframework in Frameworks */,
+				C3D4B9D6DA47D4D5BA941241 /* SwiftUI.framework in Frameworks */,
+				E8C114D42240D9DAD613B5A1 /* MapKit.framework in Frameworks */,
+				21B21F049E8D9A84CB6F8A2C /* SystemConfiguration.framework in Frameworks */,
+				8F17DA44D10C258969F8EE2D /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D54269E680FF9DD18ABE66FE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				60C45FC3CCBE8B94C3A028C2 /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		24343F0014DE17A4DAB42B7B /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				1360B4FB409855B9E97C2AA1 /* Cocoa.framework */,
+				29C363A694FA4CBD61733040 /* SwiftUI.framework */,
+				8FF24481486875E309DC2BA2 /* MapKit.framework */,
+				F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */,
+				9BF6467E221CD4047B0F3FAF /* Security.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		3938CF4AD9D7D059AEF9D067 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				24343F0014DE17A4DAB42B7B /* OS X */,
+				99A2805DB979FEC4507B5F0E /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		430C2EB9F060234423FC2E44 /* ARGOSMac UI tests */ = {
+			isa = PBXGroup;
+			children = (
+				EB9290BCACEA034E788C22BC /* OperatorFlowTests.swift */,
+			);
+			name = "ARGOSMac UI tests";
+			path = UITests;
+			sourceTree = "<group>";
+		};
+		47589CFE413EF5903544F5B2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6873B8B0E29F0C41565AE52F /* ARGOSMac.app */,
+				2F07F3070EECAA42958EEC49 /* ARGOSMacTests.xctest */,
+				5F90886386B7CFBF3E4BFC59 /* ARGOSMacUITests.xctest */,
+				5FE6C33C79FBC999D9549D5A /* ARGOSiOS.app */,
+				30B498B01BE1159F2CE7B27F /* ARGOSiOSTests.xctest */,
+				191F2C56540D9AF91741B1C0 /* ARGOSiOSUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		70395B89DCEE781219551AE8 = {
+			isa = PBXGroup;
+			children = (
+				47589CFE413EF5903544F5B2 /* Products */,
+				3938CF4AD9D7D059AEF9D067 /* Frameworks */,
+				DEB93D328C9149B34D51764D /* Shared */,
+				DBF3135E1A502F0C9BC06A59 /* Generated */,
+				D1BE8623309547DDCBF21370 /* Tests */,
+				430C2EB9F060234423FC2E44 /* ARGOSMac UI tests */,
+				ACD8D6C5F37F43958E0719D8 /* ARGOSiOS UI tests */,
+			);
+			sourceTree = "<group>";
+		};
+		99A2805DB979FEC4507B5F0E /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				EF9BC4E9CE2701D23228B56C /* Foundation.framework */,
+				A8601AD957337D767B4F0AA2 /* SwiftUI.framework */,
+				8DAD05139A42AB661E4E7B9C /* MapKit.framework */,
+				8FC96894B9A94D035D499694 /* SystemConfiguration.framework */,
+				1ACF2AAE600DD15DF5423E96 /* Security.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		ACD8D6C5F37F43958E0719D8 /* ARGOSiOS UI tests */ = {
+			isa = PBXGroup;
+			children = (
+				3F0C86AE9965D27073B28157 /* OperatorFlowTests.swift */,
+			);
+			name = "ARGOSiOS UI tests";
+			path = UITests;
+			sourceTree = "<group>";
+		};
+		D1BE8623309547DDCBF21370 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */,
+			);
+			name = Tests;
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		DBF3135E1A502F0C9BC06A59 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */,
+				8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */,
+			);
+			name = Generated;
+			path = Generated;
+			sourceTree = "<group>";
+		};
+		DEB93D328C9149B34D51764D /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */,
+				FA29137BE1A33A78136AC49E /* ConnectionView.swift */,
+				C000BC0B1C0CD76C917E5277 /* FleetModel.swift */,
+				8E9011155250B525EE25C664 /* FleetView.swift */,
+				4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */,
+				45F5206A8539BEBBF98C8C4F /* LocalMap.swift */,
+				CD20409506E08BB8CC983EFC /* RoverDetailView.swift */,
+			);
+			name = Shared;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1174374142C6483F1E4CD140 /* ARGOSMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 349A44653D6F00FC25663ADF /* Build configuration list for PBXNativeTarget "ARGOSMac" */;
+			buildPhases = (
+				F6D8B3FE08B2177340D31AB7 /* Sources */,
+				D3DE319067B8599ABB5181FB /* Frameworks */,
+				00576C37CB84D31BAD483622 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ARGOSMac;
+			productName = ARGOSMac;
+			productReference = 6873B8B0E29F0C41565AE52F /* ARGOSMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		3FB89F58980849066C816BE2 /* ARGOSiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5ACBD464D847A35698D8C2B8 /* Build configuration list for PBXNativeTarget "ARGOSiOS" */;
+			buildPhases = (
+				ECDD91C2D3D07FE8017CF8E4 /* Sources */,
+				22E7EAB7A3CB6E5961709661 /* Frameworks */,
+				DBCB9445D89BA8FCC3AA7831 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ARGOSiOS;
+			productName = ARGOSiOS;
+			productReference = 5FE6C33C79FBC999D9549D5A /* ARGOSiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		68E01C3EB125C4513B115A2A /* ARGOSMacUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F4A2C52DCCF0B17D214A6C8 /* Build configuration list for PBXNativeTarget "ARGOSMacUITests" */;
+			buildPhases = (
+				5EAA0CCC39FA561123FAA7B4 /* Sources */,
+				330B147CEF619E8228B08E4E /* Frameworks */,
+				D9C9BAA09FF377E5DD859108 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B71389DEAB310428CB48A4CA /* PBXTargetDependency */,
+			);
+			name = ARGOSMacUITests;
+			productName = ARGOSMacUITests;
+			productReference = 5F90886386B7CFBF3E4BFC59 /* ARGOSMacUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		8BFC030A9ADF7094300F904D /* ARGOSiOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C9D0ADE37025ECC8BF252A6 /* Build configuration list for PBXNativeTarget "ARGOSiOSTests" */;
+			buildPhases = (
+				287440A947FEEF712F007A0D /* Sources */,
+				1722FB5923CFF6DF121CC69C /* Frameworks */,
+				F74BFA11D08DB337E76B27EB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				97FB04F0B5ADDFD7B5E4CBE1 /* PBXTargetDependency */,
+			);
+			name = ARGOSiOSTests;
+			productName = ARGOSiOSTests;
+			productReference = 30B498B01BE1159F2CE7B27F /* ARGOSiOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D18F5040FC03CF8416580DF5 /* ARGOSMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FF6CB6AE0CC89335F9CFC08 /* Build configuration list for PBXNativeTarget "ARGOSMacTests" */;
+			buildPhases = (
+				4F31BA82E2134FCA180740EC /* Sources */,
+				D54269E680FF9DD18ABE66FE /* Frameworks */,
+				FBF61561BCAF6AA810C61E07 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4EA682259326FF941DAF824F /* PBXTargetDependency */,
+			);
+			name = ARGOSMacTests;
+			productName = ARGOSMacTests;
+			productReference = 2F07F3070EECAA42958EEC49 /* ARGOSMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		DE5BB657B568D938FCF4DB1A /* ARGOSiOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 82E46F794E8041813EF3CC41 /* Build configuration list for PBXNativeTarget "ARGOSiOSUITests" */;
+			buildPhases = (
+				23D82765086853CB41587DED /* Sources */,
+				CAC969CEE27ED65643DD4FE6 /* Frameworks */,
+				AD94BA83E7B535E6E5BA35F2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C880C2A96E76BD913D49F03D /* PBXTargetDependency */,
+			);
+			name = ARGOSiOSUITests;
+			productName = ARGOSiOSUITests;
+			productReference = 191F2C56540D9AF91741B1C0 /* ARGOSiOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		681090B8311F8238855C0AB2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 6ED1636AC0B646AA9F3DE353 /* Build configuration list for PBXProject "ARGOS" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 70395B89DCEE781219551AE8;
+			minimizedProjectReferenceProxies = 0;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 47589CFE413EF5903544F5B2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1174374142C6483F1E4CD140 /* ARGOSMac */,
+				D18F5040FC03CF8416580DF5 /* ARGOSMacTests */,
+				68E01C3EB125C4513B115A2A /* ARGOSMacUITests */,
+				3FB89F58980849066C816BE2 /* ARGOSiOS */,
+				8BFC030A9ADF7094300F904D /* ARGOSiOSTests */,
+				DE5BB657B568D938FCF4DB1A /* ARGOSiOSUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		00576C37CB84D31BAD483622 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD94BA83E7B535E6E5BA35F2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D9C9BAA09FF377E5DD859108 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DBCB9445D89BA8FCC3AA7831 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F74BFA11D08DB337E76B27EB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FBF61561BCAF6AA810C61E07 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		23D82765086853CB41587DED /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				80496DCEEC8C985053A15C1A /* OperatorFlowTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		287440A947FEEF712F007A0D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				43345F0F1A5327E67779767C /* FleetModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4F31BA82E2134FCA180740EC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C017503B3EB0D3D355AD4F4C /* FleetModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5EAA0CCC39FA561123FAA7B4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5D16E11CE1A77AFB8C3943BC /* OperatorFlowTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ECDD91C2D3D07FE8017CF8E4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C8E2C1B929FE4FD7C4A17FCF /* ARGOSApp.swift in Sources */,
+				D4C36D87413EF2D4F4EF1B7B /* ConnectionView.swift in Sources */,
+				F64B1F952FB687079CFAEC98 /* FleetModel.swift in Sources */,
+				B596003C6FDBE8D85712842C /* FleetView.swift in Sources */,
+				3ECA3D8393C3F7E6A500C5C6 /* GeographicMap.swift in Sources */,
+				9F66AB99FFB456CA2D9A457C /* LocalMap.swift in Sources */,
+				EB43C976DB7C029F104AEE81 /* RoverDetailView.swift in Sources */,
+				F530CD669B087277371B8153 /* ArgosCore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F6D8B3FE08B2177340D31AB7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				03F801ABCB8B7F92FCA21D52 /* ARGOSApp.swift in Sources */,
+				C0EA9D8449FD6641FFD38EB0 /* ConnectionView.swift in Sources */,
+				24EB2D335EC5A3E666C75451 /* FleetModel.swift in Sources */,
+				8ABBA5787C2EC87F7AC9E3FE /* FleetView.swift in Sources */,
+				C92536F756652878E7D427F2 /* GeographicMap.swift in Sources */,
+				904FEFF00D689040464A70B3 /* LocalMap.swift in Sources */,
+				76C1BD29AAF8F368BEEBE0CB /* RoverDetailView.swift in Sources */,
+				545B5B411F71423B57385F8E /* ArgosCore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4EA682259326FF941DAF824F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ARGOSMac;
+			target = 1174374142C6483F1E4CD140 /* ARGOSMac */;
+			targetProxy = 7249C3BB2A461022AAC40A75 /* PBXContainerItemProxy */;
+		};
+		97FB04F0B5ADDFD7B5E4CBE1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ARGOSiOS;
+			target = 3FB89F58980849066C816BE2 /* ARGOSiOS */;
+			targetProxy = 819D749765D39FDB433340EA /* PBXContainerItemProxy */;
+		};
+		B71389DEAB310428CB48A4CA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ARGOSMac;
+			target = 1174374142C6483F1E4CD140 /* ARGOSMac */;
+			targetProxy = 88CE2ADF64C26D576D700063 /* PBXContainerItemProxy */;
+		};
+		C880C2A96E76BD913D49F03D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ARGOSiOS;
+			target = 3FB89F58980849066C816BE2 /* ARGOSiOS */;
+			targetProxy = 14696E312CE948A714D1883E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0346645DA72CE14CDF87031A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = macOS/ARGOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGOS;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ARGOS connects to your Terra simulator or rover on the local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx;
+				PRODUCT_MODULE_NAME = ARGOS;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		03716D1841DB6218296B6640 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx.uitests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ARGOSMac;
+			};
+			name = Debug;
+		};
+		204A076BE978C7CE1A77B0E3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = macOS/ARGOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGOS;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ARGOS connects to your Terra simulator or rover on the local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx;
+				PRODUCT_MODULE_NAME = ARGOS;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		212514B16A42AA0C43820F0D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		59811E1727E17B303AC9C6F7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		79824F461A08DDB1BEEAA75C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ARGOSiOS;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		88852C61F78917B1C9F3B544 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ARGOSiOS;
+			};
+			name = Debug;
+		};
+		8EBB8DDD3C497995598C8DE1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGOS;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ARGOS connects to your Terra simulator or rover on the local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios;
+				PRODUCT_MODULE_NAME = ARGOS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A22C81498FDD052FB94175FC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ARGOSMac.app/Contents/MacOS/ARGOSMac";
+			};
+			name = Debug;
+		};
+		B44BE20837F68279C319080B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGOS;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ARGOS connects to your Terra simulator or rover on the local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios;
+				PRODUCT_MODULE_NAME = ARGOS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C2886C44D6E03297BA32E423 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ARGOSiOS.app/ARGOSiOS";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C28B27EDFFB56637140FF239 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx.uitests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ARGOSMac;
+			};
+			name = Release;
+		};
+		DBAF24116669D3D921AE3144 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.ios.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ARGOSiOS.app/ARGOSiOS";
+			};
+			name = Debug;
+		};
+		EEB6B4FAEDA8B8F99F0B10F1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.argos.operator.osx.tests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ARGOSMac.app/Contents/MacOS/ARGOSMac";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		349A44653D6F00FC25663ADF /* Build configuration list for PBXNativeTarget "ARGOSMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0346645DA72CE14CDF87031A /* Release */,
+				204A076BE978C7CE1A77B0E3 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4F4A2C52DCCF0B17D214A6C8 /* Build configuration list for PBXNativeTarget "ARGOSMacUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C28B27EDFFB56637140FF239 /* Release */,
+				03716D1841DB6218296B6640 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5ACBD464D847A35698D8C2B8 /* Build configuration list for PBXNativeTarget "ARGOSiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B44BE20837F68279C319080B /* Release */,
+				8EBB8DDD3C497995598C8DE1 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C9D0ADE37025ECC8BF252A6 /* Build configuration list for PBXNativeTarget "ARGOSiOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C2886C44D6E03297BA32E423 /* Release */,
+				DBAF24116669D3D921AE3144 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FF6CB6AE0CC89335F9CFC08 /* Build configuration list for PBXNativeTarget "ARGOSMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EEB6B4FAEDA8B8F99F0B10F1 /* Release */,
+				A22C81498FDD052FB94175FC /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6ED1636AC0B646AA9F3DE353 /* Build configuration list for PBXProject "ARGOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				212514B16A42AA0C43820F0D /* Debug */,
+				59811E1727E17B303AC9C6F7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		82E46F794E8041813EF3CC41 /* Build configuration list for PBXNativeTarget "ARGOSiOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79824F461A08DDB1BEEAA75C /* Release */,
+				88852C61F78917B1C9F3B544 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 681090B8311F8238855C0AB2 /* Project object */;
+}

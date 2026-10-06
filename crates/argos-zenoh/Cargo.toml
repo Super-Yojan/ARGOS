@@ -1,0 +1,9 @@
+[package]
+name = "argos-zenoh"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+argos-core = { path = "../argos-core" }
+zenoh.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4"] }

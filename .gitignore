@@ -1,8 +1,7 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-dist/
-*.egg-info/
-.coverage
-htmlcov/
+/target/
+/apps/apple/Generated/
+/apps/apple/build*/
+/.worktrees/
+.DS_Store
+*.xcuserstate
+xcuserdata/
