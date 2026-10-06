@@ -76,3 +76,21 @@ impl Anchor {
         ))
     }
 }
+/// Direct pose telemetry from the phone-owned shared runtime.
+pub fn decode_body_pose(bytes: &[u8]) -> Result<Pose> {
+    if bytes.len() > MAX_STATE_BYTES {
+        return Err(invalid("oversized pose"));
+    }
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| invalid("invalid pose JSON"))?;
+    Ok(Pose {
+        rover_id: value["rover_id"]
+            .as_u64()
+            .ok_or_else(|| invalid("missing rover ID"))?,
+        sequence: value["sequence"]
+            .as_u64()
+            .ok_or_else(|| invalid("missing pose sequence"))?,
+        x: finite(value.get("x"))?,
+        y: finite(value.get("y"))?,
+        yaw: finite(value.get("yaw"))?,
+    })
+}

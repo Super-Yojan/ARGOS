@@ -7,7 +7,10 @@ low-level control; ARGOS owns fleet supervision and high-level goals.
 ## Native iOS and macOS dashboard
 
 The Apple dashboard uses a shared Rust Zenoh client through UniFFI and native
-SwiftUI/MapKit views. ARGOS discovers Terra rovers, displays live positions and
+SwiftUI/MapKit views. ARGOS supplies four autonomy levels, supervised proposal approval, per-rover/fleet
+takeover and emergency stop, held keyboard/touch teleop, and session-log export.
+The [mission-control guide](docs/autonomy/README.md) covers the linked runtime and evidence.
+ARGOS discovers Terra rovers, displays live positions and
 goal progress, and sends latched high-level waypoint/cancel commands.
 
 Requirements: macOS with Xcode, Rust (edition 2024), the `xcodeproj` Ruby gem,
@@ -40,7 +43,7 @@ TERRA_ROVER_COUNT=1 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run
 In ARGOS, open **Connection**, set endpoint `tcp/127.0.0.1:7447`, prefix
 `terra/rover`, and enable **Geographic map**. Keep latitude `38.8297`, longitude
 `-77.3075` to match that simulator. Select a rover, tap/click a target or enter
-latitude `38.82981`, longitude `-77.3075`, then choose **Send waypoint**. The app
+latitude `38.82981`, longitude `-77.3075`, explicitly select **Waypoint**, then choose **Send waypoint**. The app
 shows the correlation token, acceptance, distance remaining, and arrival.
 For the default flat practice world, disable Geographic map and enter local
 x/y coordinates in metres; +x is north/forward, +y is west/left. The local plot
