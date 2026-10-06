@@ -1,109 +1,73 @@
-# ARGOS fleet supervision
+# ARGOS native fleet supervision
 
-ARGOS (Adaptive Robotic Group Operator System) supervises a Terra rover fleet over Zenoh. Terra (https://github.com/Super-Yojan/Terra) is a separate repository. This repo does not contain Terra code.
+ARGOS supervises Terra rovers through Zenoh. Terra owns sensing, onboard
+waypoint execution, motor control, and watchdogs. ARGOS owns discovery, live
+operator state, and high-level waypoint/cancel requests.
 
-Tracking board: [ARGOS project #6](https://github.com/users/Super-Yojan/projects/6). Terra issue #5 moved this work out of the Terra repo.
+## Native architecture
 
-## End state
-
-Terra runs local autonomy onboard. Each rover senses, plans, and drives itself. ARGOS stays at supervision range: it learns who is in the fleet, watches health, and sends high-level commands. Those commands are missions, goals, and fleet intents. Terra's onboard stack closes the loop.
-
-The long-term operator contract is that high-level command set. ARGOS publishes a mission, a goal, or a fleet intent and then lets Terra carry it out. Continuous low-level teleoperation is outside that contract.
-
-## Target boundary
-
-| Side | Owns |
+| Component | Responsibility |
 | --- | --- |
-| Terra | Sensing, local planning, the command watchdog, low-level drive, onboard autonomy, and the Zenoh topic contract |
-| ARGOS | Fleet supervision and high-level commands over Zenoh: missions, goals, and fleet intents |
+| `crates/argos-core` | Contract validation, pose metadata, coordinate projection, freshness, and command acknowledgement |
+| `crates/argos-zenoh` | Native TCP session, fleet/status/depth subscriptions, one-shot goal publication |
+| `crates/argos-ffi` | UniFFI-owned records, typed errors, client lifecycle |
+| `apps/apple/Shared` | Shared SwiftUI fleet, map, connection settings, and waypoint flow |
+| `apps/apple/ARGOS.xcodeproj` | Native macOS and iOS app/test targets |
+| `scripts` | Cargo/UniFFI/XCFramework generation and live Swift smoke test |
 
-A mission tells a rover, or the fleet, what to accomplish (inspect a region, return to base, hold). A goal is an objective Terra's local planner closes, such as a pose. A fleet intent is a group-level request. Desired fleet size is the one intent Terra already accepts, on `fleet/size`. Further mission and goal keys are part of the target contract and are not on the bus yet. They land in `argos.contract` only after Terra specifies the key names and payloads.
+The Swift actor owns the Rust client, keeping connect/send/disconnect operations
+off MainActor. The presentation model polls immutable snapshots at 5 Hz and
+updates SwiftUI on MainActor. Views do not subscribe to Zenoh independently.
+No browser bridge, Dioxus, web server, or image decoding is part of the app.
 
-ARGOS does not take over sensing, local planning, the watchdog, or the motor path. A later UI can call the same supervisor the CLI uses.
+## Terra topics
 
-## This repository today
+The default prefix is `terra/rover`; override it in Connection settings to match
+Terra's `TERRA_ZENOH_PREFIX`.
 
-The working slice is a spike on the topics Terra already publishes. It discovers rover ids, shows derived health, and can request a fleet size. It also includes a `cmd_vel` twist command so an operator can prove the Zenoh session and see a rover move.
-
-That twist path is a temporary first-slice debug tool. It is the way this spike talks to today's simulator. It is not the long-term operator contract. Streaming twists at 20 Hz keeps ARGOS inside Terra's 500 ms command watchdog and bypasses the onboard autonomy the end state assumes. Leave the code in place until a Terra mission or goal topic replaces it. New operator features should extend supervision and high-level commands, and should leave `cmd_vel` as debug.
-
-`fleet/size` is already the right kind of message: one fleet intent, acknowledged by `fleet/state`, with Terra deciding how to spawn and remove rovers.
-
-## Spike topics
-
-Default prefix `terra/rover`. Override with `--prefix` / `ARGOS_ZENOH_PREFIX` when Terra is started with `TERRA_ZENOH_PREFIX`. Names for this spike are built only in `argos.contract.TerraTopics`.
-
-Terra's current bus is documented in [simulator/ZENOH.md](https://github.com/Super-Yojan/Terra/blob/main/simulator/ZENOH.md) and `simulator/src/zenoh_bridge.rs`.
-
-| Key | Direction | Payload | Role in this spike |
-| --- | --- | --- | --- |
-| `<prefix>/fleet/state` | Terra → ARGOS | `{"count":3,"max_count":32,"ids":[0,1,2]}` | Supervision. Discover ids and fleet size. Terra publishes on change and about once a second. |
-| `<prefix>/fleet/size` | ARGOS → Terra | `{"count":3}` | Fleet intent already on the bus. Integer `0` through `32`. Terra ignores any other body. |
-| `<prefix>/<id>/cmd_vel` | ARGOS → Terra | `{"linear":1.0,"angular":0.3}` | Temporary debug twist. `linear` is m/s forward, `angular` is rad/s left. Finite f32 values, exactly those two fields, at most 2048 bytes. |
-
-There is no shared twist topic. Commands for an id that is not spawned are ignored by Terra. The debug path repeats a twist at 20 Hz and publishes a zero twist when the drive interval ends, matching Terra's Python client. Terra drops the command 500 ms after the last valid sample.
-
-These Terra keys are unused by the spike:
-
-| Key | Why it stays on Terra's side |
-| --- | --- |
-| `<prefix>/<id>/camera/rgb` | Sensing product for Terra, and later a supervision display |
-| `<prefix>/<id>/camera/depth` | Sensing product for Terra, and later a supervision display |
-
-Session shape matches Terra's client: Zenoh client mode, connect to `tcp/127.0.0.1:7447` (`TERRA_ZENOH_LISTEN` on the simulator), multicast scouting off.
-
-## Spike operator actions
-
-1. **Discover.** Subscribe to `fleet/state`. Report `count`, `max_count`, and `ids`. Ids can have gaps; `count` is how many rovers exist, not the highest id.
-2. **Show health.** Print link freshness and, for the debug twist path, per-rover motion. Terra does not publish a separate health topic. Long-term health should describe mission progress and rover condition, which Terra will report once that contract exists.
-3. **Resize.** Wait up to one second for a `fleet/state` sample, publish `fleet/size`, and wait until `fleet/state.count` equals the request. Same acknowledgement rule as Terra's `zenoh_client.py`. The brief wait lets a shrink show which ids left. This action is a fleet intent and stays in the target contract.
-4. **Debug drive.** `argos drive` publishes `cmd_vel` for one id, then a zero twist. It warns when that id is missing from the latest fleet set. Use it to check the link. It is the temporary spike described above.
-
-## Health model in the spike
-
-| Field | Values | Rule |
+| Key | Direction | Role |
 | --- | --- | --- |
-| `link` | `unknown`, `healthy`, `stale` | `unknown` until the first valid `fleet/state`. `stale` when that sample is 2.5 s old or older, which is longer than two of Terra's one-second republishes. |
-| rover `health` | `online`, `absent`, `stale`, `unlisted` | `online` ids are in the latest healthy sample. `absent` ids were seen earlier in this process and are missing from the latest sample; a repeated sample does not clear them, and the id becomes `online` again if it returns. `stale` ids are the last reported set while the link is stale. `unlisted` ids have a local debug twist and have never appeared in `fleet/state`. |
-| rover `motion` | `driving`, `idle` | Debug-path only. `driving` while this process's last non-zero twist is younger than 500 ms. Otherwise `idle`, including after ARGOS sends the stopping zero twist. |
+| `<prefix>/fleet/state` | Terra -> ARGOS | Membership and fleet freshness |
+| `<prefix>/<id>/goal` | ARGOS -> Terra | One latched local/geographic goal or cancellation |
+| `<prefix>/<id>/goal/status` | Terra -> ARGOS | idle/active/arrived, correlation token, target, remaining distance |
+| `<prefix>/<id>/camera/depth` | Terra -> ARGOS | Header-only rover body pose; discard pixel data |
 
-A rover can be `online` and `idle` while some other client is still sending twists. This process only knows twists it sent. That motion field goes away with the debug path. Supervision health remains.
+The endpoint defaults to `tcp/127.0.0.1:7447`; a physical phone needs the
+simulator computer's LAN address. Session mode is client, multicast discovery
+is disabled, and goal publication uses per-rover keys.
 
-Invalid `fleet/state` payloads do not replace the last good sample. A `count` that disagrees with `len(ids)` is still shown, with a notice. Membership follows `ids`.
+## Operator semantics
 
-## Out of scope for the spike
+Fleet IDs can have gaps. Membership follows `ids`; disagreement between count
+and ID length is shown as a notice. Unknown/removed members cannot receive
+commands. Membership, pose, and goal status have independent monotonic receive
+ages; 2.5 seconds is stale. Bad telemetry preserves the last good values without
+refreshing their ages.
 
-- The mission and goal wire format (target contract, waiting on Terra)
-- Dashboard or web UI
-- Camera frames, occupancy maps, odometry (odometry is not on this bus)
-- Local planning, task assignment, and multi-operator arbitration
-- Motor PWM, enable, and the hardware watchdog (Terra `terra-motors`)
-- iOS / TerraPhone transport
-- Reproducing Terra's id-retirement rules inside the mock peer
+Goals use exact Terra shapes, finite values, bounded coordinates/yaw/tokens,
+and a 2048-byte request cap. ARGOS generates a UUID token and publishes once;
+a matching status confirms acceptance. Unconfirmed after five seconds means
+no acknowledgement, not failure or arrival. ARGOS does not automatically retry.
+Cancel sends exactly `{"cancel":true}` and waits for a subsequent idle status.
+This releases Terra's latched goal for debug teleop; it does not send a twist.
 
-The mock peer (`python -m argos.mock_fleet`) stands in for `fleet/state`, `fleet/size`, and the debug `cmd_vel` key so the CLI can run without the simulator. After a shrink, Terra keeps surviving ids and may leave gaps. The mock renumbers from zero.
+Goal-status x/y describe the target. Rover position comes from the depth header's
+exposure-aligned `body` pose. With geographic tiles, local +x is north and +y is
+west of the configured anchor. Local mode uses a coordinate plot in metres;
+geographic mode uses MapKit at the matching anchor, default GMU Johnson Center
+38.8297, -77.3075. The bus does not advertise the anchor or tile-load success.
 
-## Where to change the contract
+Closing/disconnecting/backgrounding ARGOS does not cancel Terra's goal. Fresh
+observation resumes after foreground/reconnect without command replay. This
+MVP assumes one operator; cancellation has no wire token and cannot support
+strong multi-operator correlation. No continuous iOS background operation is
+promised.
 
-Edit `src/argos/contract.py` if Terra renames a key, the prefix, the 32-rover request cap, or the JSON fields. Supervisor and CLI code should keep calling `TerraTopics`, `encode_twist`, `encode_fleet_size`, and `decode_fleet_state`.
+## Scope
 
-Add mission and goal codecs in that same module when Terra defines them. Until then, `encode_twist` remains the debug adapter and should stay marked as temporary.
-
-## Native Apple dashboard
-
-The new operator surface is a Rust workspace (`argos-core`, `argos-zenoh`,
-`argos-ffi`) with iOS and macOS SwiftUI targets in `apps/apple`. Goal keys are
-now defined by Terra and implemented by the Rust contract and Python CLI
-compatibility codecs. The earlier spike-only statements above describe the
-original CLI slice, not the native dashboard.
-
-`argos-core` validates telemetry and goal requests and owns independent receive
-ages plus token acknowledgement state. `argos-zenoh` owns one native TCP session
-and bounded latest snapshots. `argos-ffi` exposes owned records and typed errors
-through UniFFI. Swift owns presentation and platform navigation; the actor-held
-client keeps all native network operations off the main thread.
-
-The app observes fleet/state, per-rover goal/status, and body-pose metadata in
-camera/depth, and publishes one goal or cancel request. It never implements
-Terra's follower, motor path, or command watchdog. No Python runtime, web server,
-browser bridge, Dioxus, or image decoding is needed by the Apple app.
+Native macOS/iOS operator apps and a portable Rust core are the first slice.
+Video, urgency ranking, natural-language commands, fleet resizing controls,
+authentication, multi-user arbitration, browser UI, and Android apps are outside
+this slice. Native Apple UI builds require macOS/Xcode; Codespaces can run Rust
+checks and Terra. Physical-phone signing/LAN tests remain distinct from simulator
+verification.

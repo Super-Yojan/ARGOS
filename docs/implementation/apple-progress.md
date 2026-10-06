@@ -13,3 +13,4 @@ Real Bevy simulator Swift smoke: rover pose received, geographic waypoint reache
 Mac XCUITest blocked by host automation-mode initialization timeout; no system permission was changed. Native Mac unit tests and direct Swift simulator verification passed.
 Python compatibility: 37/37 tests passed. This is the only Python product change; native build/tooling uses Cargo, shell, Ruby, and Swift.
 Physical iPhone signing/LAN run, active-goal cancel->teleop movement, and full restart/background end-to-end checks remain unverified. No claim of those checks passing.
+User amendment: remove old Python artifacts. Removed legacy CLI/package/tests, pyproject.toml, Python CI, local generated environment/caches, and obsolete setup/architecture text. This supersedes the earlier compatibility requirement and its prior test results.

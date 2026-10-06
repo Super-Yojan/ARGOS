@@ -26,11 +26,11 @@
 - Send each goal once with a generated UUID token. Show pending until a matching status confirms it; show unconfirmed after 5 seconds without acceptance. Do not retry automatically. Separate progress from acceptance and keep an active-but-stalled goal visible.
 - Cancel publishes exactly {"cancel":true} once, then waits for a later idle status. No cancellation token exists; this is a single-operator MVP. Cancellation releases the goal but does not send a debug twist.
 - Exclude video, urgency, natural-language commands, authentication, multi-user arbitration, and Android implementation. Keep the Rust API portable for later Kotlin bindings.
-- Leave the existing Python CLI intact. Mirror the issue-required Python goal codecs in a small compatibility follow-up; all new native behavior and most tests use Rust/Swift.
+- User amendment: remove the legacy Python package, CLI, tests, configuration, and CI job. The Rust contract is authoritative for ARGOS; no Python compatibility layer remains.
 
 ## Planned files and interfaces
 
-- Root Cargo.toml: ARGOS Rust workspace alongside the existing CLI.
+- Root Cargo.toml: ARGOS Rust workspace.
 - crates/argos-core/src/{contract,telemetry,state,lib}.rs: validated goal/status types, coordinate conversion, immutable snapshots, pending commands.
 - crates/argos-zenoh/src/lib.rs: transport/session lifecycle and subscriptions; depends on core.
 - crates/argos-ffi/src/lib.rs and uniffi.toml: exported ArgosClient and value records; depends on core and transport.
@@ -93,16 +93,16 @@ FFI surface: ArgosClient.connect(config), disconnect(), snapshot() -> FleetSnaps
 - [ ] Test app background/foreground and simulator restart: clear stale presentation, obtain fresh state, and confirm zero command replay.
 - [ ] Document Cargo/Xcode setup, binding generation, native launch, device endpoint configuration, permissions, world/anchor matching, cancellation semantics, and depth-bandwidth limitation. Attach macOS/iOS evidence to the eventual PR.
 
-## Task 6: Preserve compatibility and CI
+## Task 6: Remove legacy artifacts and configure native CI
 
-- [ ] Add the small Python TerraTopics.goal/goal_status, encode_goal, and status-parser compatibility change required by issue #3, with existing pytest contract tests. Keep it out of the app runtime and do not use Python build scripts.
+- [x] Remove the legacy Python package, tests, pyproject.toml, generated environment/cache artifacts, and Python CI job. Update setup and architecture documentation to Rust/Swift only.
 - [ ] Run Rust tests on Linux, and Apple binding/build/Swift tests on a macOS runner. Test packaged XCFramework consumption rather than only source compilation.
-- [ ] Keep the existing CLI suite passing. Update docs/DESIGN.md to describe the native supervision boundary and note the changed web/Codespaces scope.
+- [x] Update docs/DESIGN.md to describe the native supervision boundary and note the changed web/Codespaces scope.
 - [ ] Run the full checks once at the final revision and map each acceptance requirement to automated or recorded native-simulator evidence.
 
 ## Completion criteria
 
-Both native app targets build and run. Each can show at least one real simulated rover with independently fresh pose/status, send a correlated waypoint that reaches arrived, and cancel to release teleop. Rust/Swift tests pass, existing CLI compatibility is preserved, startup instructions reproduce the evidence, and macOS/iOS screenshots accompany the PR. Physical-device distribution, Android, and browser UI are not implied by successful native simulator builds.
+Both native app targets build and run. Each can show at least one real simulated rover with independently fresh pose/status, send a correlated waypoint that reaches arrived, and cancel to release teleop. Rust/Swift tests pass, legacy Python artifacts are removed, startup instructions reproduce the evidence, and macOS/iOS screenshots accompany the PR. Physical-device distribution, Android, and browser UI are not implied by successful native simulator builds.
 
 ## Sources
 
