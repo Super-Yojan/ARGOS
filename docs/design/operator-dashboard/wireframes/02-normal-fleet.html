@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ARGOS wireframe 02 · normal fleet</title>
+  <link rel="stylesheet" href="wireframe.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="ui">
+      <header class="top">
+        <div class="brand">ARGOS</div>
+        <div class="place">Practice field</div>
+        <div class="viewlabel">VIEW</div>
+        <div class="toggle"><span>2D</span><span class="on">3D</span></div>
+        <div class="grow"></div>
+        <div class="chip">S-014 · recording</div>
+        <button class="btn heavy" type="button">STOP ALL</button>
+      </header>
+      <div class="scene">
+        <svg class="world" viewBox="0 0 1000 600" preserveAspectRatio="none">
+          <g stroke="#d0d0d0" stroke-width="1">
+            <path d="M0 75 H1000 M0 150 H1000 M0 225 H1000 M0 300 H1000 M0 375 H1000 M0 450 H1000 M0 525 H1000" />
+            <path d="M70 0 V600 M140 0 V600 M210 0 V600 M280 0 V600 M350 0 V600 M420 0 V600 M490 0 V600 M560 0 V600 M630 0 V600 M700 0 V600 M770 0 V600 M840 0 V600 M910 0 V600 M980 0 V600" />
+          </g>
+          <text x="24" y="32" font-size="13" font-weight="700">N · practice field · 3D</text>
+          <g transform="translate(180,340)">
+            <ellipse cx="0" cy="46" rx="38" ry="8" fill="#d2d2d2" stroke="none" />
+            <polygon points="-30,6 0,22 0,-8 -30,-24" fill="#cfcfcf" stroke="#161616" stroke-width="2" />
+            <polygon points="30,6 0,22 0,-8 30,-24" fill="#f3f3f3" stroke="#161616" stroke-width="2" />
+            <polygon points="-30,-24 0,-40 30,-24 0,-8" fill="#fff" stroke="#161616" stroke-width="2" />
+            <line x1="0" y1="-40" x2="0" y2="-58" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-62" r="4" fill="#161616" />
+          </g>
+          <g transform="translate(520,430)">
+            <ellipse cx="0" cy="46" rx="38" ry="8" fill="#d2d2d2" stroke="none" />
+            <polygon points="-30,6 0,22 0,-8 -30,-24" fill="#cfcfcf" stroke="#161616" stroke-width="2" />
+            <polygon points="30,6 0,22 0,-8 30,-24" fill="#f3f3f3" stroke="#161616" stroke-width="2" />
+            <polygon points="-30,-24 0,-40 30,-24 0,-8" fill="#fff" stroke="#161616" stroke-width="2" />
+            <line x1="0" y1="-40" x2="0" y2="-58" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-62" r="4" fill="#161616" />
+          </g>
+          <g transform="translate(780,160)">
+            <ellipse cx="0" cy="70" rx="22" ry="6" fill="#cfcfcf" stroke="none" />
+            <line x1="0" y1="8" x2="0" y2="64" stroke="#161616" stroke-width="1" stroke-dasharray="3 3" />
+            <polygon points="-26,-18 0,-30 26,-18 0,-6" fill="#fff" stroke="#161616" stroke-width="2" />
+            <polygon points="-26,-18 0,-6 0,6 -26,-6" fill="#d5d5d5" stroke="#161616" stroke-width="2" />
+            <polygon points="26,-18 0,-6 0,6 26,-6" fill="#eee" stroke="#161616" stroke-width="2" />
+            <line x1="-40" y1="-26" x2="-16" y2="-26" stroke="#161616" stroke-width="2" />
+            <line x1="16" y1="-26" x2="40" y2="-26" stroke="#161616" stroke-width="2" />
+          </g>
+          <rect x="300" y="200" width="70" height="46" fill="#161616" />
+          <text x="308" y="268" font-size="11">occupied</text>
+          <rect x="640" y="300" width="90" height="36" fill="none" stroke="#161616" stroke-width="2" stroke-dasharray="5 4" />
+          <text x="646" y="354" font-size="11">unknown</text>
+        </svg>
+        <div class="callout stem" style="left:28%;top:42%">
+          <div class="kicker">STATE</div>
+          Searching the north edge
+          <div class="note">autonomy · waypoint</div>
+        </div>
+        <div class="callout stem" style="left:60%;top:62%">
+          <div class="kicker">STATE</div>
+          On a waypoint · transit
+          <div class="note">autonomy · waypoint</div>
+        </div>
+        <div class="callout stem-r" style="left:52%;top:16%;width:220px">
+          <div class="kicker">STATE</div>
+          Holding over the east road
+          <div class="note">other vehicle · same scene</div>
+        </div>
+      </div>
+      <div class="voice">
+        <div class="mic">VOICE</div>
+        <div class="utter">Tap a robot, or speak to the place.</div>
+      </div>
+    </div>
+    <footer class="cap">Wireframe 02 · Normal · 3D view of the place · state sits on each robot · no roster</footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ARGOS wireframe 01 · main layout</title>
+  <link rel="stylesheet" href="wireframe.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="ui">
+      <header class="top">
+        <div class="brand">ARGOS</div>
+        <div class="place">The place</div>
+        <div class="viewlabel">VIEW</div>
+        <div class="toggle"><span>2D</span><span class="on">3D</span></div>
+        <div class="grow"></div>
+        <div class="chip">S-014 · recording</div>
+        <button class="btn heavy" type="button">7 · STOP ALL</button>
+      </header>
+      <div class="scene">
+        <svg class="world" viewBox="0 0 1000 600" preserveAspectRatio="none">
+          <g stroke="#c8c8c8" stroke-width="1">
+            <path d="M0 80 H1000 M0 160 H1000 M0 240 H1000 M0 320 H1000 M0 400 H1000 M0 480 H1000 M0 560 H1000" />
+            <path d="M80 0 V600 M160 0 V600 M240 0 V600 M320 0 V600 M400 0 V600 M480 0 V600 M560 0 V600 M640 0 V600 M720 0 V600 M800 0 V600 M880 0 V600 M960 0 V600" />
+          </g>
+          <text x="28" y="36" font-size="13" font-weight="700">N</text>
+          <line x1="34" y1="42" x2="34" y2="68" stroke="#161616" stroke-width="2" />
+          <g transform="translate(430,300)">
+            <ellipse cx="0" cy="48" rx="40" ry="8" fill="#d0d0d0" stroke="none" />
+            <polygon points="-32,8 0,24 0,-6 -32,-22" fill="#cfcfcf" stroke="#161616" stroke-width="2" />
+            <polygon points="32,8 0,24 0,-6 32,-22" fill="#f4f4f4" stroke="#161616" stroke-width="2" />
+            <polygon points="-32,-22 0,-38 32,-22 0,-6" fill="#fff" stroke="#161616" stroke-width="2" />
+            <line x1="0" y1="-38" x2="0" y2="-56" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-60" r="5" fill="#161616" />
+          </g>
+        </svg>
+        <div class="tag ghost" style="left:16px;top:16px;width:280px">
+          <div class="kicker">1 · THE PLACE</div>
+          Big map. Pan and zoom. Every robot is here. No roster.
+        </div>
+        <div class="tag ghost" style="left:300px;top:16px;width:230px">
+          <div class="kicker">2 · 2D / 3D</div>
+          Same place, other camera. Not a unit switch.
+        </div>
+        <div class="tag" style="left:500px;top:168px;width:200px">
+          <div class="kicker">3 · ROBOT</div>
+          A 3D object. Tap it.
+        </div>
+        <div class="tag" style="left:700px;top:250px;width:240px">
+          <div class="kicker">4 · STATE + TRACE</div>
+          Anchored beside that robot.
+        </div>
+        <div class="edge">5 · OFF-SCREEN</div>
+      </div>
+      <div class="voice">
+        <div class="mic">6 · VOICE</div>
+        <div class="utter">Speaks to the robot you are on, or to the whole place.</div>
+      </div>
+    </div>
+    <footer class="cap">Wireframe 01 · Main layout · iPad landscape · the place, the camera, the robot, voice, stop</footer>
+  </div>
+</body>
+</html>
