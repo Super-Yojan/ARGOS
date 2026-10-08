@@ -4,6 +4,11 @@ ARGOS (Adaptive Robotic Group Operator System) is a native fleet operator app
 for Terra, built with Rust and Swift. Terra owns sensing, onboard autonomy, and
 low-level control; ARGOS owns fleet supervision and high-level goals.
 
+Documentation: [https://super-yojan.dev/ARGOS/](https://super-yojan.dev/ARGOS/).
+That site is the hub for ARGOS, [Terra](https://super-yojan.dev/Terra/),
+[TerraPhone](https://super-yojan.dev/Terra/terraphone/), and
+[Zorvane](https://super-yojan.dev/Zorvane/).
+
 ## Native iOS and macOS dashboard
 
 The Apple dashboard uses a shared Rust Zenoh client through UniFFI and native
@@ -32,12 +37,12 @@ need your Apple signing team. The macOS target has outgoing-network sandbox
 permission; iOS describes its local-network access request. Allow local-network
 access when prompted.
 
-Start the Terra simulator in another terminal. A geographic demo using its
-bundled GMU anchor is:
+Start Zorvane, the world simulator, in another terminal. A geographic demo
+using its bundled GMU anchor is:
 
 ```sh
-cd /path/to/Terra/simulator
-TERRA_ROVER_COUNT=1 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run
+cd /path/to/Zorvane
+TERRA_ROVER_COUNT=1 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 ```
 
 In ARGOS, open **Connection**, set endpoint `tcp/127.0.0.1:7447`, prefix
@@ -50,7 +55,7 @@ x/y coordinates in metres; +x is north/forward, +y is west/left. The local plot
 supports zooming without an internet basemap.
 
 A physical phone needs your simulator computer's LAN address, not phone
-localhost. Start Terra with `TERRA_ZENOH_LISTEN=tcp/0.0.0.0:7447` and enter
+localhost. Start Zorvane with `TERRA_ZENOH_LISTEN=tcp/0.0.0.0:7447` and enter
 `tcp/COMPUTER_LAN_IP:7447` in the app. The app's configured anchor must match
 Terra; the bus does not advertise the anchor or whether tile loading succeeded.
 
