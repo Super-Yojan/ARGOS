@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ARGOS wireframe 03 · urgent alert</title>
+  <link rel="stylesheet" href="wireframe.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="ui">
+      <header class="top">
+        <div class="brand">ARGOS</div>
+        <div class="place">Practice field</div>
+        <div class="viewlabel">VIEW</div>
+        <div class="toggle"><span>2D</span><span class="on">3D</span></div>
+        <div class="grow"></div>
+        <div class="chip">S-014 · recording</div>
+        <button class="btn heavy" type="button">STOP ALL</button>
+      </header>
+      <div class="scene">
+        <svg class="world" viewBox="0 0 1000 600" preserveAspectRatio="none">
+          <g stroke="#d0d0d0" stroke-width="1">
+            <path d="M0 75 H1000 M0 150 H1000 M0 225 H1000 M0 300 H1000 M0 375 H1000 M0 450 H1000 M0 525 H1000" />
+            <path d="M70 0 V600 M140 0 V600 M210 0 V600 M280 0 V600 M350 0 V600 M420 0 V600 M490 0 V600 M560 0 V600 M630 0 V600 M700 0 V600 M770 0 V600 M840 0 V600 M910 0 V600" />
+          </g>
+          <text x="24" y="32" font-size="13" font-weight="700">N · practice field · 3D</text>
+          <g transform="translate(220,360)">
+            <ellipse cx="0" cy="36" rx="58" ry="22" fill="none" stroke="#161616" stroke-width="3" />
+            <ellipse cx="0" cy="46" rx="38" ry="8" fill="#d2d2d2" stroke="none" />
+            <polygon points="-30,6 0,22 0,-8 -30,-24" fill="#cfcfcf" stroke="#161616" stroke-width="3" />
+            <polygon points="30,6 0,22 0,-8 30,-24" fill="#f3f3f3" stroke="#161616" stroke-width="3" />
+            <polygon points="-30,-24 0,-40 30,-24 0,-8" fill="#fff" stroke="#161616" stroke-width="3" />
+            <line x1="0" y1="-40" x2="0" y2="-58" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-62" r="4" fill="#161616" />
+            <rect x="-22" y="-86" width="44" height="18" fill="#161616" stroke="none" />
+            <text x="-16" y="-73" fill="#fff" font-size="11" font-weight="700">NOW</text>
+          </g>
+          <g transform="translate(560,300)">
+            <ellipse cx="0" cy="46" rx="34" ry="7" fill="#d2d2d2" stroke="none" />
+            <polygon points="-26,6 0,20 0,-6 -26,-20" fill="#cfcfcf" stroke="#161616" stroke-width="2" />
+            <polygon points="26,6 0,20 0,-6 26,-20" fill="#f3f3f3" stroke="#161616" stroke-width="2" />
+            <polygon points="-26,-20 0,-34 26,-20 0,-6" fill="#fff" stroke="#161616" stroke-width="2" />
+            <line x1="0" y1="-34" x2="0" y2="-48" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-52" r="4" fill="#161616" />
+          </g>
+          <g transform="translate(760,180)">
+            <ellipse cx="0" cy="64" rx="18" ry="5" fill="#cfcfcf" stroke="none" />
+            <line x1="0" y1="6" x2="0" y2="58" stroke="#161616" stroke-width="1" stroke-dasharray="3 3" />
+            <polygon points="-22,-16 0,-26 22,-16 0,-6" fill="#fff" stroke="#161616" stroke-width="2" />
+            <polygon points="-22,-16 0,-6 0,4 -22,-6" fill="#d5d5d5" stroke="#161616" stroke-width="2" />
+            <polygon points="22,-16 0,-6 0,4 22,-6" fill="#eee" stroke="#161616" stroke-width="2" />
+          </g>
+        </svg>
+        <div class="callout stem" style="left:34%;top:46%;width:270px">
+          <div class="kicker">NOW · ON THIS ROBOT</div>
+          Stuck · localization lost
+          <div class="note">Tap the robot. The view comes in close. No queue.</div>
+        </div>
+        <div class="callout" style="left:62%;top:38%;width:180px">
+          <div class="kicker">STATE</div>
+          Still on its waypoint
+        </div>
+        <div class="edge">NOW · OFF-SCREEN →</div>
+      </div>
+      <div class="voice">
+        <div class="mic">VOICE</div>
+        <div class="utter">Goes to the robot you tap, or to the place.</div>
+      </div>
+    </div>
+    <footer class="cap">Wireframe 03 · Urgent · marked on the robot · edge pointer if it is off the view · tap zooms in</footer>
+  </div>
+</body>
+</html>
