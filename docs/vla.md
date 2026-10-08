@@ -1,42 +1,75 @@
 # Two-stage VLA
 
-Vision-language-action in this system is two models with a person between them. The split is the one drawn in the [operator dashboard design](design/operator-dashboard/README.md). Neither stage is implemented in this repository.
-
-!!! warning "Planned"
-    There is no VLA crate, no model weight, no prompt, and no recommendation topic in ARGOS. The diagram is the target architecture. Supervised frontier approval, below, is the human gate that exists in code today.
+!!! warning "TL;DR · planned"
+    Two models. A person stands between them.
+    **ARGOS VLA** sees the whole fleet and recommends.
+    **Vehicle VLA** runs on TerraPhone and drives the local behavior.
+    Neither model is in this repo.
 
 ```mermaid
 flowchart LR
   op[Operator]
-  staff[ARGOS VLA]
-  bot[Vehicle VLAs]
-  op -->|"intent, tasking, or directed order"| staff
-  staff -->|"recommendation, drawn on the place"| op
+  staff["ARGOS VLA\nstaff, on the operator side"]
+  bot["Vehicle VLA\nTerraPhone, on the robot"]
+  op -->|"intent, tasking, or a point"| staff
+  staff -->|"recommendation on the map"| op
   op -->|"accept, reject, or adjust"| staff
   staff -->|"dispatch only after accept"| bot
-  bot -->|"state, trace, point cloud"| op
+  bot -->|"state, trace, cloud"| op
+  classDef planned fill:#fff8e1,stroke:#f9a825,color:#333
+  class staff,bot planned
 ```
 
-## ARGOS VLA, the staff
+*Both boxes are planned. Dispatch waits for accept.*
 
-The larger model runs with the operator. It sees the fleet, not one camera. A high-level command comes in as a broad intent, a tasking, or a directed order. The staff allocates vehicles and tasks and draws the recommendation on the same ground: an area, highlighted bodies, dashed paths, and a reason. Accept, reject, and adjust have the same visual weight. Dispatch happens after accept.
+## The staff, on ARGOS
 
-That agent is the operator-intelligence work in [ARGOS #2](https://github.com/Super-Yojan/ARGOS/issues/2): perception and attention reports in, an urgency ranking of who needs a person, and a natural-language path that becomes a validated high-level command. The issue also asks for a fail-closed VLA sketch and a person in the loop for high-risk actions. Those items are open.
+![Recommendation on the ground. Area, dashed paths, accept, reject, adjust.](design/operator-dashboard/wireframes/05-recommendation.png)
 
-Until that model is running, the dashboard design says the same scene is where a recommendation will appear. The shipping app has nowhere to draw an area or a ghost path.
+*Where the staff recommendation will sit. Same visual weight for accept, reject, and adjust.*
 
-## Vehicle VLA
+The larger model sits with the operator.
 
-The smaller model runs on the vehicle. It is [Terra #12](https://github.com/Super-Yojan/Terra/issues/12), an on-device phone VLA on TerraPhone (a Gemma-class model in that issue’s current wording). Onboard behavior, a thinking trace, and a localized cloud belong there. ARGOS would show the trace beside the robot. Until a vehicle VLA is running, the callout shows what Terra already reports: mission, waypoint, autonomy level, and whatever perception or attention text the vehicle publishes.
+It sees every vehicle.
 
-Terra #12 is backlog on the [project board](roadmap.md). The phone app and its build notes live on the [TerraPhone](https://super-yojan.dev/Terra/terraphone/) section of the Terra site.
+A high-level order comes in. The staff allocates robots and draws the plan: an area, highlighted bodies, dashed paths, a reason.
 
-## What stands in for the gate today
+You agree, disagree, or adjust. Then it dispatches.
 
-Terra’s onboard autonomy can propose a search frontier. ARGOS subscribes to `<prefix>/<id>/goal/proposal` and publishes `<prefix>/<id>/goal/decision`.
+That work is [ARGOS #2](https://github.com/Super-Yojan/ARGOS/issues/2). Attention reports, an urgency ranking, and natural language that becomes a validated command. Open.
 
-A proposal carries `proposal_id`, `run_id`, a local `x` and `y`, and `expires_at`. Approve and reject require the proposal id and the run id. A proposal from another run is ignored. The buttons disable when autonomy status is stale or the proposal’s remaining time is spent. Resume is a decision without a proposal id, still bound to the run id.
+## The vehicle model, on TerraPhone
 
-That is a person accepting a frontier the vehicle already proposed. The accept-before-dispatch shape is the same one the staff recommendation will use. Fleet-wide allocation, natural language, adjust-in-place, and a trace from a vehicle model remain the planned ARGOS VLA and vehicle VLA above.
+![Third person. A local cloud outside the robot, state beside it.](design/operator-dashboard/wireframes/06-third-person.png)
 
-Directed waypoints skip the staff on purpose. The operator names one rover and one point, confirms by sending, and ARGOS publishes one goal. See [Vision and command model](vision.md) and the wire formats in [Zenoh interfaces](zenoh.md).
+*The callout beside the robot. A real thinking trace arrives with the vehicle VLA. Until then it shows mission, waypoint, and autonomy.*
+
+The smaller model runs on the phone on the robot.
+
+[Terra #12](https://github.com/Super-Yojan/Terra/issues/12). On-device. Backlog on the [roadmap](roadmap.md).
+
+Build notes for that phone: [TerraPhone](https://super-yojan.dev/Terra/terraphone/).
+
+## The gate that exists today
+
+Terra can propose a search frontier.
+
+ARGOS shows it. Approve and reject publish `goal/decision`.
+
+The proposal carries `proposal_id`, `run_id`, `x`, `y`, and `expires_at`.
+
+A proposal from another run is ignored. Stale status disables the buttons.
+
+```mermaid
+sequenceDiagram
+  participant Bot as Terra
+  participant You as ARGOS
+  Bot->>You: goal/proposal
+  Note over You: buttons stay off until you choose
+  You->>Bot: goal/decision approve or reject
+  Note over Bot: motion follows the decision
+```
+
+*A person accepts a frontier the vehicle already proposed. Fleet-wide allocation and a model trace are the planned stages above.*
+
+A directed waypoint skips the staff. You name one rover and one point. ARGOS publishes one goal. See [command grains](vision.md).

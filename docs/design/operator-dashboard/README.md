@@ -1,5 +1,14 @@
 # ARGOS operator dashboard
 
+!!! tip "TL;DR"
+    One place. Robots are objects. No roster.
+    Orders come in three grains. The staff fills in only what you left open.
+    Design draft. The shipping app is still a list.
+
+![The place fills the screen. 2D/3D is the camera. Robots are objects.](wireframes/01-main-layout.png)
+
+*Open on this picture. The notes below are the decisions in it.*
+
 Draft for Yojan to react to. Design only: it does not change the app. Related to [ARGOS #8](https://github.com/Super-Yojan/ARGOS/issues/8).
 
 iPad landscape, grayscale wireframes: [`wireframes/`](wireframes/).
@@ -46,6 +55,10 @@ Home is one place filling the screen. 2D flattens it; 3D is the sand table. Tap 
 5. **Stop**, fixed in the corner, for the whole field, in every view.
 6. **A quiet session mark.** The log stays in the export.
 
+![Normal field. Each robot carries its state.](wireframes/02-normal-fleet.png)
+
+*The place, with state on the bodies.*
+
 ## What is on screen
 
 **The place.** Fleet overview is the map. In 3D the robots are objects on it; occupancy, goals, and frontiers draw on that same ground. There is no table of vehicles beside it.
@@ -61,6 +74,10 @@ Home is one place filling the screen. 2D flattens it; 3D is the sand table. Tap 
 **Safety.** STOP ALL stays in the corner, including in third person. It is immediate. Reset is a separate control on the robot you are looking at, once that robot is stopped. A safety hold is written in that robot’s callout.
 
 **Experiment.** The corner shows the session and that recording is on. The assigned condition, intervention totals, and the event feed stay in the exported session log, so this screen does not coach the operator. The log already keeps tokens, teleop, goals, and experiment snapshots.
+
+![Urgent. NOW on one robot, and a mark off the edge of the view.](wireframes/03-urgent-alert.png)
+
+*Urgency sits on the robot. The edge mark points at the one you cannot see.*
 
 ## Command grains
 
