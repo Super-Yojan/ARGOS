@@ -1,9 +1,20 @@
 # Native dashboard verification
 
+!!! tip "TL;DR"
+    Simulator only. 2026-10-06. GMU anchor.
+    Mac shows a live pose and an accepted goal.
+    iPhone shot is the UI test after arrival and cancel.
+
+![Mac dashboard during the geographic simulator run.](../assets/macos-dashboard.jpg)
+
+*Live pose and an accepted goal. File on disk: `macos-dashboard.png` (JPEG data).*
+
+![iPhone UI test after the waypoint flow.](../assets/ios-dashboard.jpg)
+
+*Retained iOS XCUITest shot. `ios-dashboard.png`.*
+
 Captured 2026-10-06 against the local Bevy simulator with the bundled GMU tile
-anchor. `macos-dashboard.png` shows live pose/status and an active accepted
-goal. `ios-dashboard.png` is the retained screenshot from the passing iOS
-XCUITest after waypoint arrival and cancellation.
+anchor.
 
 The generated Swift smoke independently observed movement from the origin to
 38.82981, -77.3075, reached `arrived` at 0.709 m remaining, and observed `idle`

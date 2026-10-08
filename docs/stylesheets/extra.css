@@ -1,0 +1,35 @@
+.md-typeset object.system-diagram {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1000 / 560;
+  border-radius: 12px;
+  display: block;
+}
+
+.md-typeset img {
+  border-radius: 8px;
+}
+
+.md-typeset .shot-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.md-typeset .shot-row figure {
+  margin: 0;
+}
+
+.md-typeset .shot-row figure.wide {
+  flex: 1 1 280px;
+}
+
+.md-typeset .shot-row figure.phone {
+  flex: 0 1 220px;
+}
+
+.md-typeset .shot-row img {
+  width: 100%;
+  height: auto;
+}

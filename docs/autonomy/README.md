@@ -1,5 +1,14 @@
 # Mission operator controls
 
+!!! tip "TL;DR"
+    Four levels: Teleop, Assisted, Waypoint, Supervised.
+    A proposal does not move the robot. Approve does.
+    Stop latches. Reset is separate. The log can be exported.
+
+![Mac dashboard with autonomy controls beside the map.](../assets/macos-dashboard.jpg)
+
+*Requested level, the map, and the goal, on one screen.*
+
 ARGOS keeps mission objectives, observed survivor reports, progress, and remaining budget visible while the operator changes authority. Terra owns all planning and final motor selection. The dashboard uses the shared Rust client through UniFFI on native macOS and iOS; no Python or Dioxus is introduced.
 
 Select Teleop for precise manual movement, Assisted teleop for obstacle support, Waypoint for operator-directed transit, or Supervised for approving reachable search frontiers. A proposed goal alone never authorizes motion. Approval carries both the run identity and proposal ID; expiry, replacement, restart, and stale telemetry disable old decisions. Safety holds are displayed independently of requested and assigned levels.
@@ -17,6 +26,10 @@ Rust core/FFI/loopback tests, macOS and iOS native unit tests, and Apple builds 
 Build with `scripts/build-apple.sh`, then select ARGOSMac or ARGOSiOS in Xcode. The companion Terra guide is `Terra/docs/autonomy/README.md`; its protocol defines wire messages and mission detection rules. This branch builds on dashboard PR #5 and implements issue #4 with Terra #17.
 
 The live smoke example can be repeated with `cargo run -p argos-zenoh --example mission_smoke -- tcp/127.0.0.1:7448`. Start the isolated Terra mission listener on that port first. The native UI test uses the same isolated port; it explicitly opens a window when macOS restores a windowless session.
+
+![iPhone simulator. Levels, stop, and the goal panel.](../assets/ios-dashboard.jpg)
+
+*Same controls on the phone.*
 
 ## Occupancy grid and autonomy selector
 

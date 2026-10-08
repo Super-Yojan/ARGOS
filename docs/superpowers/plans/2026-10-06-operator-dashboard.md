@@ -1,5 +1,19 @@
 # ARGOS Apple Dashboard Implementation Plan
 
+!!! tip "TL;DR"
+    Native Mac and iOS.
+    Rust owns the bus and the contract.
+    SwiftUI draws.
+
+```mermaid
+flowchart LR
+  core[argos-core] --> zenoh[argos-zenoh] --> ffi[UniFFI] --> ui[SwiftUI]
+```
+
+![Resulting Mac dashboard.](../../assets/macos-dashboard.jpg)
+
+*What the tasks below were aiming at.*
+
 > **For agentic workers:** Use superpowers:executing-plans to implement task by task when implementation is requested. Track the steps below. This plan supersedes the Python web-dashboard proposal.
 
 **Goal:** Native iOS and macOS operator apps showing the Terra fleet, live rover positions, waypoint progress, and send/cancel controls.
@@ -75,6 +89,10 @@ FFI surface: ArgosClient.connect(config), disconnect(), snapshot() -> FleetSnaps
 - [ ] Test lower/reset goal IDs, transport loss, explicit reconnect, and idempotent shutdown. Fresh post-reconnect observations must replace historical state; unresolved submissions stay unconfirmed without replay.
 - [ ] Implement bounded latest-state storage and subscriptions to fleet/state, */goal/status, and */camera/depth. No pixel decoding or forwarding. Reject telemetry for unknown membership.
 - [ ] Expose owned records and typed errors through UniFFI. Verify generated Swift API, run Cargo tests plus a real localhost Zenoh integration test, and commit.
+
+![iPhone dashboard from the UI test.](../../assets/ios-dashboard.jpg)
+
+*Task 4 and Task 5 land on these two screens.*
 
 ## Task 4: Build the shared SwiftUI operator flow
 

@@ -1,48 +1,90 @@
 # Vision and command model
 
-The operator is a general at the map. Vehicles are already in the field. An order is an objective, a tasking, or a point, and the staff fills in only what the operator left open. That picture is the [operator dashboard design](design/operator-dashboard/README.md). This page records which of those orders the app can publish today, and which grains are still planned.
+!!! tip "TL;DR"
+    The operator is a general at the map.
+    A coarse order asks the staff to fill in the rest.
+    A point named on one rover ships today as a waypoint.
+    Area intent, tasking, and voice are planned.
+
+```mermaid
+flowchart TD
+  op([Operator])
+  intent["Broad intent\ncover this area"]
+  task["Tasking\nthese units, this region"]
+  point["Directed order\nthis rover, this point"]
+  staff["Staff draws the plan\narea, bodies, paths"]
+  accept{Accept, reject, or adjust}
+  send["Send waypoint\none latched goal"]
+  drive["Take over\nyou drive"]
+  follower["Onboard follower\nshipped"]
+  op --> intent --> staff --> accept --> follower
+  op --> task --> staff
+  op --> point --> send --> follower
+  op --> drive --> follower
+  classDef planned fill:#fff8e1,stroke:#f9a825,color:#333
+  classDef shipped fill:#e8f5e9,stroke:#2e7d32,color:#333
+  class intent,task,staff,accept planned
+  class point,send,drive,follower shipped
+```
+
+*Amber is planned. Green is in the app. A directed point is green. Voice on that point is still amber.*
 
 ## Three grains
 
-The design names three grains. A finer order leaves less for the staff to invent. Takeover is finer still: the operator drives the robot they are looking at.
+![Staff recommendation. An area, dashed paths, accept, reject, adjust.](design/operator-dashboard/wireframes/05-recommendation.png)
 
-| Grain | Operator act | What should happen | Status |
+*Broad intent and tasking. The staff draws the area. You accept before anything is dispatched. Planned.*
+
+| Grain | You do | Screen | Status |
 | --- | --- | --- | --- |
-| Broad intent | Name or draw an area (“cover this”) | Staff marks the area, the vehicles, and ghost paths, then waits for accept, reject, or adjust | Planned. No area intent and no ARGOS staff model in this repo |
-| Tasking | Choose the vehicles and a region | Same drawing. The operator chose the units; the staff still asks before it adds routes and roles | Planned |
-| Directed order | One vehicle and one point, or a voice order while that vehicle is in view | One point and a confirm on that vehicle. Everyone else stays on their current work | The point half is shipped as a latched waypoint. Voice, a scene confirm, and “leave everyone else” as a staff behavior are planned |
+| Broad intent | “Cover this.” Or draw the area | Area, bodies, ghost paths, a reason | Planned |
+| Tasking | Pick the units and a region | Same drawing. You chose the units | Planned |
+| Directed order | One rover, one point | A point and a confirm on that rover | The point ships as a waypoint. Voice is planned |
 
-The shipping Mac and iOS app still opens on a rover list. Explicit confirm before a motion intent is published, effective authority separate from the requested level, a latched stop with a separate reset, and an exported session log are already in that app and stay in the design.
+Take over is finer still. You drive the rover you are on.
 
-## What a command is today
+![Directed order. One robot, one point, confirm, take over.](design/operator-dashboard/wireframes/04-command-takeover.png)
 
-ARGOS publishes one-shot and leased messages. Terra (or Zorvane, running Terra’s crates) decides whether the chassis moves. Publication is a send. A matching status is acceptance.
+*One robot. One point. Confirm. Take over is that same robot. The point is what Send waypoint does today.*
 
-**Waypoint.** The operator selects Waypoint, names a local `(x, y)` in metres or a WGS84 latitude and longitude, and sends once. ARGOS generates a UUID token and publishes `<prefix>/<id>/goal`. A later `goal/status` with the same token moves the command from pending to active or arrived. Five seconds without that token shows unconfirmed. ARGOS does not resend. Cancel publishes exactly `{"cancel":true}` and waits for a later idle status. Idle releases Terra’s latched goal so debug teleop can move the rover again. Closing, disconnecting, or backgrounding the app leaves the latched goal in place.
+## What Send does today
 
-**Autonomy.** Per rover, the operator requests `teleop`, `assisted_teleop`, `waypoint`, or `supervised`. The request carries a token. Terra’s `autonomy/status` reports requested level, effective level, safety, revision, run id, and result. The panel keeps those apart. A request stays disabled while the link is down, status is stale (2.5 seconds), or an acknowledgement is still pending. Pending operator actions show unconfirmed after two seconds.
+![Mac app. Waypoint mode, an active goal, 0.00 m remaining.](assets/macos-dashboard.jpg)
 
-**Supervised approval.** A `goal/proposal` is a frontier Terra is willing to pursue. The proposal itself does not authorize motion. Approve and reject send `goal/decision` with `proposal_id` and `run_id`. Resume sends `decision: resume` with the run id. Expiry, a replaced proposal, a new run, or stale telemetry drops the old decision.
+*Shipped console. A list, a map, and an explicit Send. Captured on the simulator.*
 
-**Takeover and stop.** Take over fleet, and take over one rover, clear held drive and request `teleop`. Emergency stop sends `safety` with `action: stop`. Terra latches the stop. Reset is a separate `action: reset` and does not restore the previous twist. A fleet action fans the same payload out to each known rover id and keeps each token. One rover’s acknowledgement is that rover’s.
+```mermaid
+sequenceDiagram
+  participant You as ARGOS
+  participant Bus as Zenoh
+  participant Bot as Terra or Zorvane
+  You->>Bus: goal + token, once
+  Bus->>Bot: latch the goal
+  Bot-->>You: goal/status with the same token
+  Note over You: pending, then active or arrived
+  You->>Bus: {"cancel":true}
+  Bot-->>You: idle
+```
 
-**Held teleop.** With fresh confirmed `teleop` or `assisted_teleop` authority, safety `clear`, and a healthy link, W/S or the vertical touch pad set linear, and A/D or the horizontal pad set angular. The client publishes `<prefix>/<id>/teleop` about every 50 ms while a sample is nonzero, then a zero sample on release. Leaving the view, losing focus, changing rover, or losing authority clears the keys and publishes zero when the session is still up. The sample is −1, 0, or 1 on each axis. Speed limits and the 500 ms command lease belong to the vehicle side.
+*Published is not accepted. The matching token is acceptance. Five seconds of silence is unconfirmed. ARGOS does not resend.*
 
-**Mission report.** `mission/report` carries a `survivor_id` the operator confirms from observed mission state. It does not open an acknowledgement wait.
+- **Waypoint.** Local metres or WGS84. One publish on `<prefix>/<id>/goal`.
+- **Cancel.** Exactly `{"cancel":true}`. Idle releases the latch. Closing the app leaves the goal in place.
+- **Autonomy.** `teleop`, `assisted_teleop`, `waypoint`, or `supervised`. Requested level and effective level stay separate.
+- **Supervised.** A `goal/proposal` does not move the robot. Approve or reject sends `goal/decision` with the proposal id and the run id.
+- **Stop.** `safety` `stop` latches at Terra. `reset` is a second action.
+- **Teleop.** W/S and A/D, about every 50 ms, on `<prefix>/<id>/teleop`. Values are −1, 0, or 1. Release sends zero.
 
-Session JSONL records the manifest, goal and cancel sends, action tokens, teleop packets (session id and sequence), and observed mission and experiment state. Export flushes a snapshot. A failed recorder is visible and leaves stop available.
+Full key list: [Zenoh interfaces](zenoh.md). The scene these grains belong to: [dashboard design](design/operator-dashboard/README.md). The staff that would draw the amber boxes: [two-stage VLA](vla.md).
 
-## Confirmation rules that stay
+## Rules that stay
 
-These rules are implemented in `argos-core` and `argos-zenoh`, and the design keeps them:
+- Pose, goal, and membership each go stale at 2.5 seconds.
+- A rover that has left the fleet cannot take a new goal.
+- Local axes stay within ±20 km. Latitude [−85, 85]. Longitude [−180, 180]. Yaw within ±2π.
+- Goal-status `x` and `y` are the target. The rover’s position comes from pose.
+- +x is north. +y is west of the anchor you typed. The bus does not advertise that anchor.
+- One operator. Cancel has no token.
+- The waypoint follower does not plan around obstacles.
 
-- Membership, pose, and goal status age independently. 2.5 seconds is stale. Bad packets keep the last good values and do not refresh those ages.
-- Unknown or removed members cannot take a new goal. Fleet ids may have gaps. A count that disagrees with `ids` is a notice.
-- Goal coordinates are finite and bounded: local axes within ±20 km, latitude in [−85, 85], longitude in [−180, 180], yaw within ±2π, token 1–64 characters from `[A-Za-z0-9._:-]`, payload at most 2048 bytes.
-- Goal-status `x` and `y` are the target. Rover position comes from pose telemetry. With tiles, local +x is north and +y is west of the anchor the operator typed. The bus does not advertise that anchor.
-- One operator is the assumption. Cancel has no wire token, so two operators cannot correlate a cancel. Multi-operator arbitration is outside this slice.
-- Terra’s waypoint follower does not plan around obstacles.
-
-## Planned, from the same picture
-
-Voice, a place with robots as objects, third-person clouds, urgency painted on a body, and staff recommendations drawn on the ground are specified in the [dashboard design](design/operator-dashboard/README.md) and its [wireframes](design/operator-dashboard/wireframes/index.md). They are design only. The [two-stage VLA](vla.md) is the staff those recommendations need. Issue [#2](https://github.com/Super-Yojan/ARGOS/issues/2) tracks attention reports, urgency ranking, and natural language to commands. Issue [#8](https://github.com/Super-Yojan/ARGOS/issues/8) tracks the dashboard design.
+Issues: [#2](https://github.com/Super-Yojan/ARGOS/issues/2) natural language and urgency. [#8](https://github.com/Super-Yojan/ARGOS/issues/8) the dashboard design.

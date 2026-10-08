@@ -1,5 +1,9 @@
 # Wireframes
 
+!!! tip "TL;DR"
+    Six iPad frames. Grayscale. Low fidelity.
+    The decisions live in the [design note](../README.md).
+
 iPad landscape, grayscale, low fidelity. The decisions these frames illustrate are in the [operator dashboard design](../README.md). Each PNG is the rendered frame. The HTML file next to it is the source.
 
 ### 01 · Main layout
