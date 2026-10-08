@@ -1,4 +1,5 @@
 /target/
+/site/
 /apps/apple/Generated/
 /apps/apple/build*/
 /.worktrees/

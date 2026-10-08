@@ -1,0 +1,68 @@
+site_name: ARGOS
+site_description: Operator and fleet layer for Terra vehicles and the Zorvane world simulator.
+site_url: https://super-yojan.dev/ARGOS/
+copyright: 'Part of <a href="https://super-yojan.dev">super-yojan.dev</a>'
+repo_url: https://github.com/Super-Yojan/ARGOS
+repo_name: Super-Yojan/ARGOS
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.footer
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - super-yojan.dev: https://super-yojan.dev
+  - Hub: index.md
+  - Vision and command model: vision.md
+  - Two-stage VLA: vla.md
+  - Operator dashboard:
+      - Design: design/operator-dashboard/README.md
+      - Wireframes: design/operator-dashboard/wireframes/index.md
+  - Zenoh interfaces: zenoh.md
+  - Getting started: getting-started.md
+  - Deployment: deployment.md
+  - Roadmap: roadmap.md
+  - Reference:
+      - Fleet supervision boundary: DESIGN.md
+      - Mission operator controls: autonomy/README.md
+      - Native dashboard evidence: evidence/README.md
+      - Apple execution ledger: implementation/apple-progress.md
+      - Plans:
+          - Apple dashboard plan: superpowers/plans/2026-10-06-operator-dashboard.md
+          - Autonomy controls plan: superpowers/plans/2026-10-06-autonomy-operator-controls.md
