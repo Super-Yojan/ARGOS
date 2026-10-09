@@ -87,3 +87,9 @@ native UI evidence. Do not run both live command tests concurrently.
 
 Codespaces can run Rust tests and Terra, but native Apple UI builds/runs require
 Xcode on macOS. There is no browser dashboard in this native slice.
+
+### Hardware arming from ARGOS
+
+Select the Terra rover in the 3D scene and use **Arm** in its panel. **Disarm** remains available during pending arming or missing authority telemetry. Terra may stay on its home screen; it forwards explicit requests to its paired rover and publishes confirmed hardware status. Driving and waypoint execution require fresh confirmed armed status. Waypoint drafting remains available while disarmed.
+
+Arm requests are bound to the current rover run and authority revision and expire after 500 ms. Both endpoints and the final phone execution check enforce freshness. No reconnect, mode selection, or drive takeover automatically arms hardware. Existing background stops, Bluetooth acknowledgement, emergency-stop and rover watchdog protections remain in effect.

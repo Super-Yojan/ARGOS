@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		03F801ABCB8B7F92FCA21D52 /* ARGOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */; };
+		0437BF0BE0A246C4313D33EE /* Rover.scn in Resources */ = {isa = PBXBuildFile; fileRef = CEB63923DEEF33C6D4609AC6 /* Rover.scn */; };
 		0E9BFCFB2F6CB2984D4B111B /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF9BC4E9CE2701D23228B56C /* Foundation.framework */; };
+		213F49DB983B8B4E1A22C59B /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E4CEE2A6057B032DD19400F /* GameController.framework */; };
 		21B21F049E8D9A84CB6F8A2C /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */; };
 		24EB2D335EC5A3E666C75451 /* FleetModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C000BC0B1C0CD76C917E5277 /* FleetModel.swift */; };
 		3ECA3D8393C3F7E6A500C5C6 /* GeographicMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */; };
@@ -16,14 +18,18 @@
 		502953D165A21254A4288CFA /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
 		545B5B411F71423B57385F8E /* ArgosCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */; };
 		5D16E11CE1A77AFB8C3943BC /* OperatorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9290BCACEA034E788C22BC /* OperatorFlowTests.swift */; };
+		5D7A206530A94A41A4FE1D8E /* ManualDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F4A078A69147329BB78B00 /* ManualDriving.swift */; };
+		5D9EE8A409E479369FC33215 /* RoverScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = E28E75F9C2E012C0993FE480 /* RoverScene.swift */; };
 		60C45FC3CCBE8B94C3A028C2 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
 		665228FF2DF38BEEBF3252DF /* ArgosCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */; };
+		76109B398A9E589C9647E343 /* RoverScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = E28E75F9C2E012C0993FE480 /* RoverScene.swift */; };
 		76C1BD29AAF8F368BEEBE0CB /* RoverDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD20409506E08BB8CC983EFC /* RoverDetailView.swift */; };
 		7BFBFEE7F791F17947C6F64A /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1ACF2AAE600DD15DF5423E96 /* Security.framework */; };
 		80496DCEEC8C985053A15C1A /* OperatorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0C86AE9965D27073B28157 /* OperatorFlowTests.swift */; };
 		8ABBA5787C2EC87F7AC9E3FE /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9011155250B525EE25C664 /* FleetView.swift */; };
 		8F17DA44D10C258969F8EE2D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9BF6467E221CD4047B0F3FAF /* Security.framework */; };
 		904FEFF00D689040464A70B3 /* LocalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F5206A8539BEBBF98C8C4F /* LocalMap.swift */; };
+		987C67550C7C9CAC21E12BE2 /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD19CC27F551D2128419E6FC /* SceneKit.framework */; };
 		9F66AB99FFB456CA2D9A457C /* LocalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F5206A8539BEBBF98C8C4F /* LocalMap.swift */; };
 		AF409789AF50010E40286FBA /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DAD05139A42AB661E4E7B9C /* MapKit.framework */; };
 		B596003C6FDBE8D85712842C /* FleetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9011155250B525EE25C664 /* FleetView.swift */; };
@@ -35,9 +41,13 @@
 		C8E2C1B929FE4FD7C4A17FCF /* ARGOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */; };
 		C92536F756652878E7D427F2 /* GeographicMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */; };
 		CDF6DC79B4171F72ABF95CFF /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1360B4FB409855B9E97C2AA1 /* Cocoa.framework */; };
+		D2FCE2D1E22F452AE997E8DE /* ManualDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F4A078A69147329BB78B00 /* ManualDriving.swift */; };
 		D4C36D87413EF2D4F4EF1B7B /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA29137BE1A33A78136AC49E /* ConnectionView.swift */; };
+		DB8AC3C05B868C44D65E29B0 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B0DD376702B90FDBA3814E1E /* GameController.framework */; };
 		E43F86E3C960A9618C3BD723 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF9BC4E9CE2701D23228B56C /* Foundation.framework */; };
 		E8C114D42240D9DAD613B5A1 /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FF24481486875E309DC2BA2 /* MapKit.framework */; };
+		E8E0ADD892A8F573B434B5A5 /* Rover.scn in Resources */ = {isa = PBXBuildFile; fileRef = CEB63923DEEF33C6D4609AC6 /* Rover.scn */; };
+		E8E426ED9FD75AF4ED1AF1CF /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB9AD2A737D78798579325AA /* SceneKit.framework */; };
 		EB43C976DB7C029F104AEE81 /* RoverDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD20409506E08BB8CC983EFC /* RoverDetailView.swift */; };
 		F4463308F4AB5CBF297295C0 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A8601AD957337D767B4F0AA2 /* SwiftUI.framework */; };
 		F530CD669B087277371B8153 /* ArgosCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */; };
@@ -90,6 +100,7 @@
 		5F90886386B7CFBF3E4BFC59 /* ARGOSMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ARGOSMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5FE6C33C79FBC999D9549D5A /* ARGOSiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ARGOSiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6873B8B0E29F0C41565AE52F /* ARGOSMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ARGOSMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7E4CEE2A6057B032DD19400F /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/GameController.framework; sourceTree = DEVELOPER_DIR; };
 		8DAD05139A42AB661E4E7B9C /* MapKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/MapKit.framework; sourceTree = DEVELOPER_DIR; };
 		8E9011155250B525EE25C664 /* FleetView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetView.swift; sourceTree = "<group>"; };
 		8F598321FBBD819878E0EFDE /* ArgosCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; path = ArgosCore.xcframework; sourceTree = "<group>"; };
@@ -98,13 +109,19 @@
 		92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ARGOSApp.swift; sourceTree = "<group>"; };
 		9BF6467E221CD4047B0F3FAF /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
 		A8601AD957337D767B4F0AA2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/SwiftUI.framework; sourceTree = DEVELOPER_DIR; };
+		B0DD376702B90FDBA3814E1E /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/GameController.framework; sourceTree = DEVELOPER_DIR; };
 		C000BC0B1C0CD76C917E5277 /* FleetModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetModel.swift; sourceTree = "<group>"; };
+		CD19CC27F551D2128419E6FC /* SceneKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/SceneKit.framework; sourceTree = DEVELOPER_DIR; };
 		CD20409506E08BB8CC983EFC /* RoverDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoverDetailView.swift; sourceTree = "<group>"; };
+		CEB63923DEEF33C6D4609AC6 /* Rover.scn */ = {isa = PBXFileReference; includeInIndex = 1; path = Rover.scn; sourceTree = "<group>"; };
 		D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ArgosCore.swift; sourceTree = "<group>"; };
+		D4F4A078A69147329BB78B00 /* ManualDriving.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ManualDriving.swift; sourceTree = "<group>"; };
+		E28E75F9C2E012C0993FE480 /* RoverScene.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoverScene.swift; sourceTree = "<group>"; };
 		EB9290BCACEA034E788C22BC /* OperatorFlowTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OperatorFlowTests.swift; sourceTree = "<group>"; };
 		EF9BC4E9CE2701D23228B56C /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/SystemConfiguration.framework; sourceTree = DEVELOPER_DIR; };
 		FA29137BE1A33A78136AC49E /* ConnectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+		FB9AD2A737D78798579325AA /* SceneKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/SceneKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -126,6 +143,8 @@
 				AF409789AF50010E40286FBA /* MapKit.framework in Frameworks */,
 				FE32B96F4B97864258BEADB7 /* SystemConfiguration.framework in Frameworks */,
 				7BFBFEE7F791F17947C6F64A /* Security.framework in Frameworks */,
+				E8E426ED9FD75AF4ED1AF1CF /* SceneKit.framework in Frameworks */,
+				DB8AC3C05B868C44D65E29B0 /* GameController.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -155,6 +174,8 @@
 				E8C114D42240D9DAD613B5A1 /* MapKit.framework in Frameworks */,
 				21B21F049E8D9A84CB6F8A2C /* SystemConfiguration.framework in Frameworks */,
 				8F17DA44D10C258969F8EE2D /* Security.framework in Frameworks */,
+				987C67550C7C9CAC21E12BE2 /* SceneKit.framework in Frameworks */,
+				213F49DB983B8B4E1A22C59B /* GameController.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -177,6 +198,8 @@
 				8FF24481486875E309DC2BA2 /* MapKit.framework */,
 				F82CDE8C2DCA39C857BB5B64 /* SystemConfiguration.framework */,
 				9BF6467E221CD4047B0F3FAF /* Security.framework */,
+				CD19CC27F551D2128419E6FC /* SceneKit.framework */,
+				7E4CEE2A6057B032DD19400F /* GameController.framework */,
 			);
 			name = "OS X";
 			sourceTree = "<group>";
@@ -212,6 +235,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		60E34E28B940115DA2CF0900 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				CEB63923DEEF33C6D4609AC6 /* Rover.scn */,
+			);
+			name = Resources;
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		70395B89DCEE781219551AE8 = {
 			isa = PBXGroup;
 			children = (
@@ -222,6 +254,7 @@
 				D1BE8623309547DDCBF21370 /* Tests */,
 				430C2EB9F060234423FC2E44 /* ARGOSMac UI tests */,
 				ACD8D6C5F37F43958E0719D8 /* ARGOSiOS UI tests */,
+				60E34E28B940115DA2CF0900 /* Resources */,
 			);
 			sourceTree = "<group>";
 		};
@@ -233,6 +266,8 @@
 				8DAD05139A42AB661E4E7B9C /* MapKit.framework */,
 				8FC96894B9A94D035D499694 /* SystemConfiguration.framework */,
 				1ACF2AAE600DD15DF5423E96 /* Security.framework */,
+				FB9AD2A737D78798579325AA /* SceneKit.framework */,
+				B0DD376702B90FDBA3814E1E /* GameController.framework */,
 			);
 			name = iOS;
 			sourceTree = "<group>";
@@ -273,6 +308,8 @@
 				4C973DB115AB2CC49B305ED0 /* GeographicMap.swift */,
 				45F5206A8539BEBBF98C8C4F /* LocalMap.swift */,
 				CD20409506E08BB8CC983EFC /* RoverDetailView.swift */,
+				E28E75F9C2E012C0993FE480 /* RoverScene.swift */,
+				D4F4A078A69147329BB78B00 /* ManualDriving.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -423,6 +460,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0437BF0BE0A246C4313D33EE /* Rover.scn in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -444,6 +482,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E8E0ADD892A8F573B434B5A5 /* Rover.scn in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -508,6 +547,8 @@
 				9F66AB99FFB456CA2D9A457C /* LocalMap.swift in Sources */,
 				EB43C976DB7C029F104AEE81 /* RoverDetailView.swift in Sources */,
 				F530CD669B087277371B8153 /* ArgosCore.swift in Sources */,
+				5D9EE8A409E479369FC33215 /* RoverScene.swift in Sources */,
+				D2FCE2D1E22F452AE997E8DE /* ManualDriving.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -523,6 +564,8 @@
 				904FEFF00D689040464A70B3 /* LocalMap.swift in Sources */,
 				76C1BD29AAF8F368BEEBE0CB /* RoverDetailView.swift in Sources */,
 				545B5B411F71423B57385F8E /* ArgosCore.swift in Sources */,
+				76109B398A9E589C9647E343 /* RoverScene.swift in Sources */,
+				5D7A206530A94A41A4FE1D8E /* ManualDriving.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

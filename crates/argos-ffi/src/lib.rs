@@ -118,6 +118,34 @@ impl ArgosClient {
         })?;
         Ok(client.cancel_goal(rover_id)?)
     }
+    pub fn operator_snapshot(&self) -> String {
+        self.client
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.operator_snapshot())
+            .unwrap_or_else(|| "{}".into())
+    }
+    pub fn operator_command(
+        &self,
+        rover_id: u64,
+        kind: String,
+        payload: String,
+    ) -> Result<(), ClientError> {
+        let slot = self.client.lock().unwrap();
+        let client = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(client.operator_command(rover_id, &kind, &payload)?)
+    }
+    pub fn localization_snapshot(&self) -> String {
+        self.client
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.localization_snapshot())
+            .unwrap_or_else(|| "{}".into())
+    }
     pub fn snapshot(&self) -> FleetSnapshot {
         let slot = self.client.lock().unwrap();
         let Some(client) = slot.as_ref() else {

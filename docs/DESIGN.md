@@ -71,3 +71,11 @@ authentication, multi-user arbitration, browser UI, and Android apps are outside
 this slice. Native Apple UI builds require macOS/Xcode; Codespaces can run Rust
 checks and Terra. Physical-phone signing/LAN tests remain distinct from simulator
 verification.
+
+## Real-phone prototype over Tailscale
+
+A foreground TerraPhone can now connect outward to a Mac-hosted Zenoh router. ARGOS subscribes to lightweight `<prefix>/<id>/pose` JSON (`rover_id`, `sequence`, `x`, `y`, `yaw`) as well as the existing simulator depth header. The phone controls connect/disconnect separately from its Bluetooth hardware link. Connect never arms hardware; phone disconnect/backgrounding clears remote intent and disarms. This is distinct from ARGOS itself disconnecting, which does not cancel a phone goal.
+
+For initial local-coordinate tests, run Terra's `scripts/dashboard-router.sh`, configure ARGOS with `tcp/127.0.0.1:7448` and prefix `terra/phone`, and configure the phone with the Mac's Tailscale address on port 7448 and the same prefix. Phone IMU/VIO or Bluetooth feedback control must be running. Geographic mode stays off because ARKit's local frame has no established geographic alignment. See the companion Terra `docs/DASHBOARD_TAILSCALE.md` for setup and verification.
+
+This slice supports one physical phone per topic prefix; its singleton fleet publisher is not a multi-phone membership aggregator. No video, MQTT migration, cloud deployment, or continuous background phone operation is added. On October 8, 2026 the paired generated-Swift smoke verified pose, matching goal acknowledgement, cancel and explicit reconnect through a local router. Real Tailscale and physical rover verification remain separate.

@@ -3,6 +3,7 @@ struct LocalMap:View {
     let rovers:[RoverView]
     let selected:UInt64
     let draft:(Double,Double)?
+    var select: (UInt64) -> Void = { _ in }
     let pick:(Double,Double)->Void
     @State private var extent=30.0
     var body:some View {
@@ -17,16 +18,26 @@ struct LocalMap:View {
                         if let pose=rover.pose {
                             let point=screen(x:pose.x,y:pose.y,size:size)
                             context.fill(Path(ellipseIn:CGRect(x:point.x-6,y:point.y-6,width:12,height:12)),with:.color((rover.poseAge ?? 99)<2.5 ? (rover.id==selected ? .blue:.teal):.gray))
-                            context.draw(Text("\(rover.id)").font(.caption),at:CGPoint(x:point.x,y:point.y+17))
+                            context.draw(Text(DashboardStyle.vehicle(rover.id)).font(.caption),at:CGPoint(x:point.x,y:point.y+17))
                         }
                         if let goal=rover.goal,goal.state != "idle" {context.draw(Text("⚑").foregroundStyle(.orange),at:screen(x:goal.x,y:goal.y,size:size))}
                     }
                     if let draft {context.draw(Text("⊕").font(.title).foregroundStyle(.purple),at:screen(x:draft.0,y:draft.1,size:size))}
                 }.background(Color.secondary.opacity(0.05))
-                VStack(alignment:.leading,spacing:4) {Text("LOCAL WORLD").font(.caption.weight(.semibold));Text("↑ +x north · ← +y west").font(.caption);Text("±\(Int(extent)) metres").font(.caption)}.padding(12).allowsHitTesting(false)
+                VStack(alignment:.leading,spacing:4) {Text("LOCAL WORLD").font(.caption.weight(.semibold));Text("↑ +x · ← +y").font(.caption);Text("±\(Int(extent)) metres").font(.caption)}.padding(12).allowsHitTesting(false)
                 VStack {Spacer();HStack {Spacer();Button {extent=min(10000,extent*2)}label:{Image(systemName:"minus.magnifyingglass")};Button {extent=max(5,extent/2)}label:{Image(systemName:"plus.magnifyingglass")}}}.padding(12)
             }
-            .onTapGesture {point in pick((geometry.size.height/2-point.y)/(geometry.size.height/2)*extent,(geometry.size.width/2-point.x)/(geometry.size.width/2)*extent)}
+            .onTapGesture { point in
+                if let hit = rovers.filter({ $0.pose != nil }).min(by: { lhs, rhs in
+                    let a = screen(x: lhs.pose!.x, y: lhs.pose!.y, size: geometry.size)
+                    let b = screen(x: rhs.pose!.x, y: rhs.pose!.y, size: geometry.size)
+                    return hypot(a.x-point.x, a.y-point.y) < hypot(b.x-point.x, b.y-point.y)
+                }), let pose = hit.pose {
+                    let marker = screen(x: pose.x, y: pose.y, size: geometry.size)
+                    if hypot(marker.x-point.x, marker.y-point.y) <= 22 { select(hit.id); return }
+                }
+                pick((geometry.size.height/2-point.y)/(geometry.size.height/2)*extent,(geometry.size.width/2-point.x)/(geometry.size.width/2)*extent)
+            }
         }.accessibilityLabel("Local rover map. Set exact coordinates using the waypoint fields.")
     }
     private func screen(x:Double,y:Double,size:CGSize)->CGPoint {CGPoint(x:size.width/2-y/extent*size.width/2,y:size.height/2-x/extent*size.height/2)}
