@@ -8,3 +8,6 @@ mod operator;
 pub use operator::*;
 mod occupancy;
 pub use occupancy::*;
+
+mod search;
+pub use search::*;

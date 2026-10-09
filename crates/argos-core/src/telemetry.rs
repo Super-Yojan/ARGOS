@@ -8,6 +8,24 @@ pub struct Pose {
     pub y: f64,
     pub yaw: f64,
 }
+/// Lightweight pose sent by a real phone; no depth image is required.
+pub fn decode_phone_pose(bytes: &[u8]) -> Result<Pose> {
+    if bytes.len() > MAX_STATE_BYTES {
+        return Err(invalid("pose payload too large"));
+    }
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| crate::Error(e.to_string()))?;
+    Ok(Pose {
+        rover_id: value["rover_id"]
+            .as_u64()
+            .ok_or_else(|| invalid("invalid pose rover id"))?,
+        sequence: value["sequence"]
+            .as_u64()
+            .ok_or_else(|| invalid("invalid pose sequence"))?,
+        x: finite(value.get("x"))?,
+        y: finite(value.get("y"))?,
+        yaw: finite(value.get("yaw"))?,
+    })
+}
 pub fn decode_pose(bytes: &[u8]) -> Result<Option<Pose>> {
     let split = bytes
         .iter()

@@ -5,7 +5,7 @@ import SwiftUI
         WindowGroup {
             FleetView().environmentObject(model)
                 #if os(macOS)
-                .frame(minWidth:900,minHeight:650)
+                .frame(minWidth:1180,minHeight:800)
                 #endif
         }
         #if os(macOS)

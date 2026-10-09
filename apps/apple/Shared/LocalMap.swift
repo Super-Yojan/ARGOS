@@ -4,6 +4,7 @@ struct LocalMap:View {
     let selected:UInt64
     let occupancy:OccupancyState?
     let draft:(Double,Double)?
+    var select: (UInt64) -> Void = { _ in }
     let pick:(Double,Double)->Void
     @State private var extent=30.0
     private var centerX:Double {occupancy.map {$0.grid.origin_x+Double($0.grid.width)*$0.grid.resolution/2} ?? 0}
@@ -49,7 +50,16 @@ struct LocalMap:View {
                 }.padding(10).background(.regularMaterial,in:RoundedRectangle(cornerRadius:8)).padding(8).allowsHitTesting(false)
                 VStack {Spacer();HStack {Text("±\(Int(extent)) m").font(.caption);Spacer();Button("Fit map") {fit()};Button {extent=min(10000,extent*2)}label:{Image(systemName:"minus.magnifyingglass")};Button {extent=max(1,extent/2)}label:{Image(systemName:"plus.magnifyingglass")}}}.padding(12)
             }
-            .onTapGesture {point in let world=LocalMapProjection.world(point,size:geometry.size,extent:extent,centerX:centerX,centerY:centerY);pick(world.0,world.1)}
+            .onTapGesture {point in
+                if let hit = rovers.filter({ $0.pose != nil }).min(by: { lhs, rhs in
+                    let a = screen(x: lhs.pose!.x, y: lhs.pose!.y, size: geometry.size)
+                    let b = screen(x: rhs.pose!.x, y: rhs.pose!.y, size: geometry.size)
+                    return hypot(a.x-point.x, a.y-point.y) < hypot(b.x-point.x, b.y-point.y)
+                }), let pose = hit.pose {
+                    let marker = screen(x: pose.x, y: pose.y, size: geometry.size)
+                    if hypot(marker.x-point.x, marker.y-point.y) <= 22 { select(hit.id); return }
+                }
+ let world=LocalMapProjection.world(point,size:geometry.size,extent:extent,centerX:centerX,centerY:centerY);pick(world.0,world.1)}
         }
         .onChange(of:occupancy?.grid.run_id) {_,_ in fit()}
         .onChange(of:selected) {_,_ in fit()}

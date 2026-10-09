@@ -9,13 +9,16 @@ generated=project.main_group.new_group('Generated','Generated')
 swift=generated.new_file('ArgosCore.swift')
 framework=generated.new_file('ArgosCore.xcframework')
 framework.last_known_file_type='wrapper.xcframework'
+resources=project.main_group.new_group('Resources','Resources')
+resource_refs=Dir[File.join(root,'apps/apple/Resources/*')].sort.map { |file| resources.new_file(File.basename(file)) }
 tests=project.main_group.new_group('Tests','Tests')
 test_refs=Dir[File.join(root,'apps/apple/Tests/*.swift')].sort.map { |file| tests.new_file(File.basename(file)) }
 [['ARGOSMac',:osx,'14.0'],['ARGOSiOS',:ios,'17.0']].each do |name,platform,version|
  app=project.new_target(:application,name,platform,version)
  (source_refs+[swift]).each { |ref| app.source_build_phase.add_file_reference(ref) }
+ resource_refs.each { |ref| app.resources_build_phase.add_file_reference(ref) }
  app.frameworks_build_phase.add_file_reference(framework)
- %w[SwiftUI MapKit SystemConfiguration Security].each { |lib| app.add_system_framework(lib) }
+ %w[SwiftUI MapKit SceneKit GameController SystemConfiguration Security].each { |lib| app.add_system_framework(lib) }
  app.build_configurations.each do |config|
   config.build_settings.merge!({'PRODUCT_BUNDLE_IDENTIFIER'=>"org.argos.operator.#{platform}",'PRODUCT_MODULE_NAME'=>'ARGOS','SWIFT_VERSION'=>'5.0','CODE_SIGN_STYLE'=>'Automatic','GENERATE_INFOPLIST_FILE'=>'YES','MARKETING_VERSION'=>'0.1.0','CURRENT_PROJECT_VERSION'=>'1','INFOPLIST_KEY_CFBundleDisplayName'=>'ARGOS','INFOPLIST_KEY_NSLocalNetworkUsageDescription'=>'ARGOS connects to your Terra simulator or rover on the local network.','INFOPLIST_KEY_UILaunchScreen_Generation'=>'YES','INFOPLIST_KEY_UIApplicationSceneManifest_Generation'=>'YES','ENABLE_USER_SCRIPT_SANDBOXING'=>'YES'})
   if platform==:ios
