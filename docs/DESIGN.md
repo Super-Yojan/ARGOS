@@ -1,5 +1,20 @@
 # ARGOS native fleet supervision
 
+!!! tip "TL;DR"
+    Rust validates and talks to Zenoh.
+    SwiftUI draws the fleet.
+    Terra still owns motors and watchdogs.
+
+```mermaid
+flowchart LR
+  swift[SwiftUI] --> ffi[UniFFI]
+  ffi --> zenoh[argos-zenoh]
+  zenoh --> core[argos-core]
+  zenoh --> bus["Zenoh terra/rover"]
+```
+
+*The app polls snapshots. Views do not subscribe on their own.*
+
 ARGOS supervises Terra rovers through Zenoh. Terra owns sensing, onboard
 waypoint execution, motor control, and watchdogs. ARGOS owns discovery, live
 operator state, and high-level waypoint/cancel requests.
@@ -35,6 +50,10 @@ Terra's `TERRA_ZENOH_PREFIX`.
 The endpoint defaults to `tcp/127.0.0.1:7447`; a physical phone needs the
 simulator computer's LAN address. Session mode is client, multicast discovery
 is disabled, and goal publication uses per-rover keys.
+
+![Mac dashboard: list, map, active goal.](assets/macos-dashboard.jpg)
+
+*The slice this note describes.*
 
 ## Operator semantics
 

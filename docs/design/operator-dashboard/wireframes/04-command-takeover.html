@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ARGOS wireframe 04 · command and takeover</title>
+  <link rel="stylesheet" href="wireframe.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="ui">
+      <header class="top">
+        <div class="brand">ARGOS</div>
+        <div class="place">Practice field · this robot</div>
+        <div class="viewlabel">VIEW</div>
+        <div class="toggle"><span>2D</span><span class="on">3D</span></div>
+        <div class="grow"></div>
+        <div class="chip">S-014 · recording</div>
+        <button class="btn heavy" type="button">STOP ALL</button>
+      </header>
+      <div class="scene">
+        <svg class="world" viewBox="0 0 1000 600" preserveAspectRatio="none">
+          <g stroke="#d0d0d0" stroke-width="1">
+            <path d="M0 80 H1000 M0 160 H1000 M0 240 H1000 M0 320 H1000 M0 400 H1000 M0 480 H1000" />
+            <path d="M80 0 V600 M160 0 V600 M240 0 V600 M320 0 V600 M400 0 V600 M480 0 V600 M560 0 V600 M640 0 V600 M720 0 V600 M800 0 V600 M880 0 V600" />
+          </g>
+          <text x="24" y="32" font-size="13" font-weight="700">N · looking at this robot</text>
+          <line x1="250" y1="300" x2="560" y2="230" stroke="#161616" stroke-width="2" />
+          <g transform="translate(230,320) scale(1.45)">
+            <ellipse cx="0" cy="46" rx="38" ry="8" fill="#d2d2d2" stroke="none" />
+            <polygon points="-30,6 0,22 0,-8 -30,-24" fill="#cfcfcf" stroke="#161616" stroke-width="2" />
+            <polygon points="30,6 0,22 0,-8 30,-24" fill="#f3f3f3" stroke="#161616" stroke-width="2" />
+            <polygon points="-30,-24 0,-40 30,-24 0,-8" fill="#fff" stroke="#161616" stroke-width="2" />
+            <line x1="0" y1="-40" x2="0" y2="-58" stroke="#161616" stroke-width="3" />
+            <circle cx="0" cy="-62" r="4" fill="#161616" />
+          </g>
+          <g transform="translate(575,210)">
+            <polygon points="0,-18 16,0 0,18 -16,0" fill="#fff" stroke="#161616" stroke-width="2" />
+            <text x="-18" y="40" font-size="12" font-weight="700">that point</text>
+          </g>
+        </svg>
+        <div class="callout stem wide" style="left:64%;top:22%">
+          <div class="kicker">DIRECTED ORDER</div>
+          This robot, that point. Only this robot.
+          <div class="btns">
+            <button class="btn" type="button">Confirm</button>
+            <button class="btn" type="button">Discard</button>
+            <button class="btn" type="button">Take over</button>
+          </div>
+          <div class="note">After take over you drive. Hold:</div>
+          <div class="pads"><div class="pad">W</div><div class="pad">A</div><div class="pad">S</div><div class="pad">D</div></div>
+        </div>
+      </div>
+      <div class="voice">
+        <div class="mic">VOICE</div>
+        <div class="utter">“Stop. Go to this point.”</div>
+      </div>
+    </div>
+    <footer class="cap">Wireframe 04 · Precise order and takeover · voice while on this robot · confirm before it is sent</footer>
+  </div>
+</body>
+</html>

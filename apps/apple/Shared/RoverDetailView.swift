@@ -8,6 +8,7 @@ struct RoverDetailView: View {
     @AppStorage("anchorLatitude") private var anchorLatitude = 38.8297
     @AppStorage("anchorLongitude") private var anchorLongitude = -77.3075
     @State private var acknowledgedReason: String?
+    @FocusState private var drivingFocus:Bool
     @State private var first = ""
     @State private var second = ""
     private var ready: Bool { rover.membership == "online" && model.snapshot.link == "healthy" && !model.busy }
@@ -28,6 +29,8 @@ struct RoverDetailView: View {
             }
         }
         .navigationTitle("Rover \(rover.id)")
+        .onDisappear {model.clearInput()}
+        .onChange(of:drivingFocus) {_,focused in if !focused {model.clearInput()}}
         .onChange(of: rover.id) { _, _ in first = ""; second = ""; acknowledgedReason = nil }
         .onChange(of: geographic) { _, _ in first = ""; second = "" }
     }
@@ -53,7 +56,7 @@ struct RoverDetailView: View {
                         first = String(format: "%.7f", lat); second = String(format: "%.7f", lon)
                     }
                 } else {
-                    LocalMap(rovers: model.snapshot.rovers, selected: rover.id, draft: localDraft, select: { model.selected = $0 }) { x, y in
+                    LocalMap(rovers: model.snapshot.rovers, selected: rover.id, occupancy: model.occupancy(rover.id), draft: localDraft, select: { model.selected = $0 }) { x, y in
                         first = String(format: "%.2f", x); second = String(format: "%.2f", y)
                     }
                 }
@@ -74,6 +77,7 @@ struct RoverDetailView: View {
                 Button { stepVehicle(1) } label: { Image(systemName: "chevron.right") }.accessibilityLabel("Next vehicle")
             }
             Divider()
+            autonomyControls
             HStack(spacing: 12) {
                 Image(systemName: "car.side").font(.system(size: 31)).foregroundStyle(DashboardStyle.muted)
                 VStack(alignment: .leading, spacing: 5) {
@@ -163,6 +167,61 @@ struct RoverDetailView: View {
     }
     private func coordinateField(_ title: String, text: Binding<String>, identifier: String) -> some View {
         VStack(alignment: .leading, spacing: 6) { Text(title).font(.caption).foregroundStyle(DashboardStyle.muted); TextField("", text: text).textFieldStyle(.roundedBorder).accessibilityLabel(title).accessibilityIdentifier(identifier) }
+    }
+    @ViewBuilder private var autonomyControls:some View {
+        let state=model.state(rover.id)
+        VStack(alignment:.leading,spacing:12) {
+            if let mission=state?.mission {
+                Text(mission.objective).font(.headline)
+                Text("\(mission.confirmed)/\(mission.required) confirmed · \(Int(mission.remaining_seconds)) s remaining · \(mission.phase)")
+                ForEach(mission.observations,id:\.survivor_id) {sighting in
+                    HStack {Text(String(format:"Observed survivor %llu · %.1f, %.1f m",sighting.survivor_id,sighting.x,sighting.y));if !sighting.confirmed {Button("Confirm report") {Task {await model.action(id:sighting.rover_id,kind:"mission/report",values:["survivor_id":sighting.survivor_id])}}}else{Text("Confirmed").foregroundStyle(.secondary)}}
+                }
+            }
+            if state?.recording=="incomplete" {Text("Session recording incomplete · controls remain available").foregroundStyle(.orange)}
+            if let status=state?.status {
+                Text("Autonomy level").font(.headline)
+                Picker("Autonomy",selection:Binding(get:{status.requested_level},set:{level in model.clearInput();Task {await model.action(id:rover.id,kind:"autonomy",values:["level":level])}})) {
+                    ForEach(status.supported_levels,id:\.self) {level in Text(level.replacingOccurrences(of:"_",with:" ").capitalized).tag(level)}
+                }.pickerStyle(.menu).accessibilityIdentifier("autonomy-level").disabled(!ready || (state?.age ?? .infinity)>=2.5 || state?.action_phase=="pending" || model.changingAuthority.contains(rover.id))
+                Text("Effective: \(status.effective_level ?? "Held") · \(status.reason.replacingOccurrences(of:"_",with:" "))").font(.subheadline).accessibilityElement(children:.ignore).accessibilityLabel("Effective: \(status.effective_level ?? "Held") · \(status.reason.replacingOccurrences(of:"_",with:" "))").accessibilityIdentifier("effective-authority")
+                if let assigned=status.assigned_level {Text("Assigned condition: \(assigned)").font(.caption).foregroundStyle(.secondary)}
+                if let reason=status.request_reason {Text(reason.replacingOccurrences(of:"_",with:" ")).font(.caption).foregroundStyle(.secondary)}
+                Text("Change: \(state?.action_phase ?? "none")").font(.caption).accessibilityElement(children:.ignore).accessibilityLabel("Change: \(state?.action_phase ?? "none")").accessibilityIdentifier("autonomy-request-status")
+            }else {Text("Waiting for autonomy capability/status").foregroundStyle(.secondary)}
+            HStack {
+                Button("Take over") {model.clearInput();Task {await model.action(id:rover.id,kind:"autonomy",values:["level":"teleop"])}}.accessibilityIdentifier("take-over")
+                Button("Emergency stop",role:.destructive) {model.clearInput();Task {await model.action(id:rover.id,kind:"safety",values:["action":"stop"])}}.accessibilityIdentifier("emergency-stop")
+                if state?.status?.safety=="emergency_stop" {Button("Reset stop") {Task {await model.action(id:rover.id,kind:"safety",values:["action":"reset"])}}}
+            }.buttonStyle(.bordered).disabled(model.snapshot.link=="disconnected")
+            if let proposal=state?.proposal,state?.status?.requested_level=="supervised" {
+                Text(String(format:"Search proposal · %.1f, %.1f m",proposal.x,proposal.y))
+                HStack {Button("Approve") {Task {await model.action(id:rover.id,kind:"goal/decision",values:["decision":"approve","proposal_id":proposal.proposal_id,"run_id":proposal.run_id])}};Button("Reject") {Task {await model.action(id:rover.id,kind:"goal/decision",values:["decision":"reject","proposal_id":proposal.proposal_id,"run_id":proposal.run_id])}}}.disabled(!ready || (state?.age ?? .infinity)>=2.5 || (state?.proposal_remaining ?? 0)<=0)
+            }
+            if state?.status?.paused==true {Button("Resume search proposals") {Task {await model.action(id:rover.id,kind:"goal/decision",values:["decision":"resume","run_id":state?.status?.run_id ?? ""])}}}
+            if state?.canDrive==true {
+                VStack(alignment:.leading,spacing:8) {
+                    Text("Hold to drive · tap here for W/A/S/D or arrow keys").font(.subheadline)
+                    HStack {drivePad("Forward","w");drivePad("Reverse","s");drivePad("Left","a");drivePad("Right","d")}
+                }.padding(12).background(.quaternary,in:RoundedRectangle(cornerRadius:8))
+                .focusable().focused($drivingFocus)
+                .onKeyPress(phases:[.down,.up]) {press in
+                    let key:String
+                    switch press.key {case .upArrow:key="w";case .downArrow:key="s";case .leftArrow:key="a";case .rightArrow:key="d";default:key=press.characters.lowercased()}
+                    guard ["w","a","s","d"].contains(key) else{return .ignored}
+                    model.input(id:rover.id,key:key,down:press.phase == .down);return .handled
+                }
+                .onDisappear {model.clearInput()}
+                #if os(macOS)
+                .onReceive(NotificationCenter.default.publisher(for:NSApplication.didResignActiveNotification)) {_ in drivingFocus=false;model.clearInput()}
+                #endif
+            }
+        }
+    }
+    private func drivePad(_ label:String,_ key:String)->some View {
+        Text(label).padding(10).background(.quaternary,in:RoundedRectangle(cornerRadius:6))
+            .accessibilityLabel("Hold to drive \(label.lowercased())")
+            .gesture(DragGesture(minimumDistance:0).onChanged {_ in model.input(id:rover.id,key:key,down:true)}.onEnded {_ in model.input(id:rover.id,key:key,down:false)})
     }
     private var localDraft: (Double, Double)? {
         guard let a = Double(first.trimmingCharacters(in: .whitespaces)), let b = Double(second.trimmingCharacters(in: .whitespaces)), a.isFinite, b.isFinite else { return nil }

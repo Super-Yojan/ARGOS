@@ -1,4 +1,14 @@
 # Apple dashboard execution ledger
+
+!!! tip "TL;DR"
+    Apple Silicon only.
+    Simulator waypoint and cancel passed.
+    A signed iPhone on a real LAN is still unverified.
+
+![Mac dashboard from the simulator acceptance run.](../assets/macos-dashboard.jpg)
+
+*The console the ledger is about.*
+
 Plan: docs/superpowers/plans/2026-10-06-operator-dashboard.md
 Base: 0852aac
 Ruling: isolated ARGOS checkout at /private/tmp/argos-apple on codex/apple-dashboard; app-managed worktree tool targets the chat's Masters-Thesis repository, so manual ARGOS worktree used.

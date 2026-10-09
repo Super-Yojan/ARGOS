@@ -1,5 +1,23 @@
 # ARGOS Autonomy Operator Controls Implementation Plan
 
+!!! tip "TL;DR"
+    Four autonomy levels, takeover, stop, held drive, session export.
+    Terra still picks the motor command.
+
+```mermaid
+flowchart LR
+  you[Operator] --> level[autonomy request]
+  you --> stop[safety stop]
+  you --> keys[held teleop]
+  level --> terra[Terra arbiter]
+  stop --> terra
+  keys --> terra
+```
+
+![Mac controls this plan added around the map.](../../assets/macos-dashboard.jpg)
+
+*Levels and the goal sit beside the map.*
+
 > **For agentic workers:** Use superpowers:executing-plans when implementation is requested. Track the checkboxes below. This document proposes implementation; no product code is changed by preparing it.
 
 **Goal:** Deliver ARGOS #4 on native macOS and iOS with per-rover autonomy controls, fleet takeover/stop, keyboard teleop, supervised approval, and exportable operator session logs.
@@ -9,6 +27,10 @@
 **Tech stack:** Rust, Zenoh, UniFFI, SwiftUI/MapKit; no Dioxus or Python.
 
 **Spec:** https://github.com/Super-Yojan/ARGOS/issues/4. Depends on https://github.com/Super-Yojan/Terra/issues/17 and the Terra plan at `/Users/yojan/git/Terra/docs/superpowers/plans/2026-10-06-level-of-autonomy.md`. Build on native dashboard PR https://github.com/Super-Yojan/ARGOS/pull/5.
+
+## Implementation status
+
+Implemented on `codex/mission-operator-controls`, based on dashboard PR #5. The [mission-control guide](../../autonomy/README.md) records delivered controls, exported logs, linked runtime evidence, and empirical limits. Original task checkboxes include complete physical/operator trials; those are not claimed from simulator builds.
 
 ## Global constraints
 
@@ -85,6 +107,10 @@ Start an operator session when connecting; end/flush on explicit end or disconne
 - [ ] Test command-token and teleop-sequence joins against Terra fixtures, differing clock origins, missing run IDs, external changes, duplicate acknowledgements, and incomplete logs.
 - [ ] Implement bounded recording, explicit flush/close, and consistent export snapshots; record backpressure/I/O failure as incomplete without blocking emergency actions.
 - [ ] Test unwritable destination, full queue, partial final line, export during recording, and final flush; run Rust recorder/API tests and commit.
+
+![Phone controls for the same contract.](../../assets/ios-dashboard.jpg)
+
+*Takeover, stop, and the level menu on iOS.*
 
 ## Task 5: Native dashboard controls
 

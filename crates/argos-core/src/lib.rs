@@ -4,6 +4,10 @@ mod telemetry;
 pub use contract::*;
 pub use state::*;
 pub use telemetry::*;
+mod operator;
+pub use operator::*;
+mod occupancy;
+pub use occupancy::*;
 
 mod search;
 pub use search::*;

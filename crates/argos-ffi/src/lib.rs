@@ -65,7 +65,7 @@ pub struct FleetSnapshot {
 }
 #[derive(uniffi::Object)]
 pub struct ArgosClient {
-    client: Mutex<Option<argos_zenoh::Client>>,
+    client: Mutex<Option<Arc<argos_zenoh::Client>>>,
 }
 #[uniffi::export]
 impl ArgosClient {
@@ -81,10 +81,10 @@ impl ArgosClient {
         if let Some(old) = slot.take() {
             old.disconnect();
         }
-        *slot = Some(argos_zenoh::Client::connect(
+        *slot = Some(Arc::new(argos_zenoh::Client::connect(
             &config.endpoint,
             &config.prefix,
-        )?);
+        )?));
         Ok(())
     }
     pub fn disconnect(&self) {
@@ -118,6 +118,14 @@ impl ArgosClient {
         })?;
         Ok(client.cancel_goal(rover_id)?)
     }
+    pub fn occupancy_snapshot(&self) -> String {
+        self.client
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.occupancy_snapshot())
+            .unwrap_or_else(|| "{}".into())
+    }
     pub fn operator_snapshot(&self) -> String {
         self.client
             .lock()
@@ -125,6 +133,72 @@ impl ArgosClient {
             .as_ref()
             .map(|c| c.operator_snapshot())
             .unwrap_or_else(|| "{}".into())
+    }
+    pub fn operator_action(
+        &self,
+        rover_id: u64,
+        kind: String,
+        payload: String,
+    ) -> Result<String, ClientError> {
+        let value = serde_json::from_str(&payload).map_err(|_| ClientError::Operation {
+            message: "invalid action JSON".into(),
+        })?;
+        let slot = self.client.lock().unwrap();
+        let c = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(c.action(rover_id, &kind, value)?)
+    }
+    pub fn fleet_action(&self, kind: String, payload: String) -> Result<String, ClientError> {
+        let value = serde_json::from_str(&payload).map_err(|_| ClientError::Operation {
+            message: "invalid action JSON".into(),
+        })?;
+        let slot = self.client.lock().unwrap();
+        let c = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(serde_json::to_string(&c.fleet_action(&kind, value)).unwrap())
+    }
+    pub fn held_input(&self, rover_id: u64, key: String, down: bool) -> Result<(), ClientError> {
+        let slot = self.client.lock().unwrap();
+        let c = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(c.input(rover_id, &key, down)?)
+    }
+    pub fn input_event(
+        &self,
+        rover_id: u64,
+        key: String,
+        down: bool,
+        sequence: u64,
+        run_id: String,
+        revision: u64,
+    ) -> Result<(), ClientError> {
+        let slot = self.client.lock().unwrap();
+        let c = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(c.input_generation(rover_id, &key, down, sequence, &run_id, revision)?)
+    }
+    pub fn clear_input_event(&self, sequence: u64) {
+        if let Some(c) = self.client.lock().unwrap().as_ref() {
+            c.clear_input_event(sequence);
+        }
+    }
+    pub fn clear_input(&self) {
+        if let Some(c) = self.client.lock().unwrap().as_ref() {
+            c.clear_input();
+        }
+    }
+    pub fn export_session(&self, destination: String) -> Result<(), ClientError> {
+        let slot = self.client.lock().unwrap();
+        let c = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        let c = c.clone();
+        drop(slot);
+        Ok(c.export_session(&destination)?)
     }
     pub fn operator_command(
         &self,

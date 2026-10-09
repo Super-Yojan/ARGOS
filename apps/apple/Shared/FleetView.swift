@@ -49,6 +49,7 @@ struct FleetView: View {
     @AppStorage("prefix") private var prefix = "terra/phone"
     @StateObject private var drive = RoverDriveController()
     @StateObject private var renderer = RoverSceneController()
+    @State private var missions = false
     @State private var settings = false
     @State private var camera = FieldCamera()
     @State private var dragCamera: FieldCamera?
@@ -141,9 +142,11 @@ struct FleetView: View {
             }
             bottomBar
         }.foregroundStyle(ink).background(.white).preferredColorScheme(.light).tint(ink)
+        .sheet(isPresented: $missions) {FleetMissionView()}
         .sheet(isPresented: $settings) { ConnectionView() }
         .alert("Operator notice", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { model.startObservation() } else { drive.stop(); model.stopObservation() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { model.startObservation() } else { drive.stop(); model.clearInput(); model.stopObservation() } }
+        .onChange(of: missions) { _, _ in drive.stop(); model.clearInput() }
         .onChange(of: settings) { _, shown in if shown { drive.stop() } }
         .onAppear { drive.attach(model) }
         .onDisappear { drive.detach() }
@@ -161,9 +164,8 @@ struct FleetView: View {
             Spacer(minLength: 0)
             Button { settings = true } label: { Image(systemName: "network") }.buttonStyle(.plain).accessibilityLabel("Connection settings").accessibilityIdentifier("connection")
             Text(model.snapshot.link == "healthy" ? "Connected" : model.snapshot.link.capitalized).font(.caption)
-            Button("STOP ALL · unavailable") {}.buttonStyle(.borderedProminent).disabled(true)
-                .help("Fleet-wide physical stop is unavailable in the current transport.")
-                .accessibilityLabel("Stop all unavailable: transport does not expose physical stop")
+            Button("Mission controls") {missions = true}
+            Button("STOP ALL") {drive.stop();model.clearInput();Task {await model.fleetAction(stop:true)}}.buttonStyle(.borderedProminent).disabled(model.snapshot.link == "disconnected")
         }.padding(.horizontal, 14).padding(.vertical, 10)
             .overlay(alignment: .bottom) { Rectangle().fill(ink).frame(height: 1) }
     }
@@ -172,7 +174,7 @@ struct FleetView: View {
             Label("VOICE", systemImage: "mic.slash").font(.system(size: 11, weight: .semibold))
             Text(focused == nil ? "Voice unavailable · tap a robot to give a directed order." : "Voice unavailable · tap the ground to draft an order for this robot.")
                 .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
-            Text("Session not recording").font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(model.operatorStates.values.contains(where:{$0.recording == "incomplete"}) ? "Recording incomplete" : model.operatorStates.isEmpty ? "Waiting for session status" : "Session recording").font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(12).overlay(alignment: .top) { Rectangle().fill(ink).frame(height: 1) }
     }
     private func robotNote(_ rover: RoverView) -> some View {
@@ -191,17 +193,17 @@ struct FleetView: View {
             autonomyControls(rover)
             searchControls(rover)
             HStack {
-                Text(model.hardware[rover.id].map { $0.armed ? "Motors armed" : $0.arming ? "Arming…" : $0.reason } ?? "Hardware status unavailable").font(.caption)
+                Text(model.hardware[rover.id].map { $0.simulated == true ? "Simulated actuation ready" : $0.armed ? "Motors armed" : $0.arming ? "Arming…" : $0.reason } ?? "Hardware status unavailable").font(.caption)
                 Spacer()
                 Button(model.hardwarePending[rover.id] != nil ? "Arm requested…" : "Arm") {
                     Task { await model.requestHardware(id: rover.id, arm: true) }
                 }.buttonStyle(.bordered)
-                    .disabled(model.hardwarePending[rover.id] != nil || model.hardware[rover.id]?.armed == true || model.hardware[rover.id]?.arming == true || !model.driveAvailable(rover.id) || model.hardware[rover.id]?.ready != true)
+                    .disabled(model.hardware[rover.id]?.simulated == true || model.hardwarePending[rover.id] != nil || model.hardware[rover.id]?.armed == true || model.hardware[rover.id]?.arming == true || !model.driveAvailable(rover.id) || model.hardware[rover.id]?.ready != true)
                     .accessibilityIdentifier("hardware-arm")
                 Button("Disarm") {
                     drive.stop()
                     Task { await model.requestHardware(id: rover.id, arm: false) }
-                }.buttonStyle(.bordered).accessibilityIdentifier("hardware-disarm")
+                }.buttonStyle(.bordered).disabled(model.hardware[rover.id]?.simulated == true).accessibilityIdentifier("hardware-disarm")
             }
             if model.hardwarePending[rover.id] != nil { Text("Waiting for rover arm confirmation…").font(.caption) }
             HStack(alignment: .center, spacing: 12) {
@@ -337,7 +339,8 @@ struct FleetView: View {
     private func visible(_ point: CGPoint, size: CGSize) -> Bool { point.x >= 45 && point.x <= size.width - 45 && point.y >= 70 && point.y <= size.height - 70 }
     private func notePoint(_ point: CGPoint, size: CGSize) -> CGPoint { CGPoint(x: min(size.width - 105, max(105, point.x + 115)), y: min(size.height - 80, max(80, point.y - 70))) }
     private func controlPoint(_ point: CGPoint, size: CGSize, height: Double) -> CGPoint {
-        CGPoint(x: min(size.width - 170, max(170, point.x + 225)), y: min(size.height - height / 2 - 12, max(height / 2 + 12, point.y - 30)))
+        let halfHeight = CGFloat(height) / 2
+        return CGPoint(x: min(size.width - 170, max(170, point.x + 225)), y: min(size.height - halfHeight - 12, max(halfHeight + 12, point.y - 30)))
     }
     private func edgeMarker(_ rover: RoverView, point: CGPoint, size: CGSize) -> some View {
         Button { focus(rover) } label: { Label("T-\(rover.id)\(DashboardPresentation.attentionReason(rover) == nil ? "" : " · CHECK")", systemImage: "arrow.up.right") }
@@ -434,4 +437,50 @@ enum DashboardStyle {
 }
 struct DashboardSurface: ViewModifier {
     func body(content: Content) -> some View { content.background(DashboardStyle.surface).overlay { Rectangle().stroke(DashboardStyle.line, lineWidth: 1) } }
+}
+
+import SwiftUI
+struct FleetMissionView: View {
+    @EnvironmentObject var model: FleetModel
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var settings=false
+    @AppStorage("endpoint") private var endpoint="tcp/127.0.0.1:7447"
+    @AppStorage("prefix") private var prefix="terra/rover"
+    var body: some View {
+        NavigationSplitView {
+            List(selection:$model.selected) {
+                Section {
+                    HStack {Circle().fill(model.snapshot.link=="healthy" ? Color.green:Color.secondary).frame(width:8,height:8);Text(model.snapshot.link.capitalized).font(.subheadline);Spacer();if model.busy {ProgressView().controlSize(.small)}}
+                    .accessibilityElement(children:.combine)
+                } header: {Text("Fleet connection")}
+                Section("Mission actions") {
+                    Button("Take over fleet") {Task {await model.fleetAction(stop:false)}}
+                    Button("Emergency stop fleet",role:.destructive) {Task {await model.fleetAction(stop:true)}}
+                    ForEach(model.snapshot.rovers,id:\.id) {rover in
+                        if let phase=model.state(rover.id)?.action_phase,phase != "none" {Text("Rover \(rover.id): \(phase)").font(.caption)}
+                    }
+                    Button("Export session log") {Task {await model.exportLog()}}
+                    if let url=model.exportedLog {ShareLink("Save or share session log",item:url)}
+                }
+                Section("Rovers · \(model.snapshot.rovers.count)") {
+                    ForEach(model.snapshot.rovers,id:\.id) {rover in
+                        VStack(alignment:.leading,spacing:5) {
+                            HStack {Image(systemName:"location.north.circle");Text("Rover \(rover.id)").font(.headline);Spacer()}
+                            Text("\(rover.membership.capitalized) · \(rover.goal?.state.capitalized ?? "Goal unknown")").font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical,5).tag(rover.id)
+                    }
+                }
+                if model.snapshot.rovers.isEmpty {Text("Connect to Terra to discover your fleet.").foregroundStyle(.secondary).padding(.vertical)}
+            }
+            .navigationTitle("ARGOS")
+            .toolbar {ToolbarItem {Button {settings=true} label:{Label("Connection",systemImage:"network")}.accessibilityIdentifier("connection")}}
+        } detail: {
+            if let rover=model.snapshot.rovers.first(where:{$0.id==model.selected}) {RoverDetailView(rover:rover)}
+            else {ContentUnavailableView("Fleet overview",systemImage:"map",description:Text("Connect to Terra, then select a rover to set a waypoint.")).toolbar {ToolbarItem {Button("Connect") {settings=true}}}}
+        }
+        .sheet(isPresented:$settings) {ConnectionView()}
+        .alert("Operator notice",isPresented:Binding(get:{model.error != nil},set:{if !$0 {model.error=nil}})) {Button("OK") {model.error=nil}} message:{Text(model.error ?? "")}
+        .onChange(of:scenePhase) {_,phase in if phase == .active {model.startObservation()}else {model.clearInput();model.stopObservation()}}
+        .task {if ProcessInfo.processInfo.arguments.contains("--connect") {await model.connect(endpoint:endpoint,prefix:prefix)}}
+    }
 }

@@ -52,6 +52,7 @@ struct VehicleAuthority: Codable {
     }
 }
 struct HardwareState: Codable {
+    var simulated: Bool? = nil
     var ready: Bool
     var armed: Bool
     var arming: Bool
