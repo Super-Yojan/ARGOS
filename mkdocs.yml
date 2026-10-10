@@ -57,7 +57,8 @@ nav:
   - Vision and command model: vision.md
   - Two-stage VLA: vla.md
   - Operator dashboard:
-      - Design: design/operator-dashboard/README.md
+      - 3D spatial dashboard: design/3d-dashboard.md
+      - 2D design draft: design/operator-dashboard/README.md
       - Wireframes: design/operator-dashboard/wireframes/index.md
   - Zenoh interfaces: zenoh.md
   - Getting started: getting-started.md
