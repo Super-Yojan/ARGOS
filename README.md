@@ -101,3 +101,7 @@ Xcode on macOS. There is no browser dashboard in this native slice.
 Select the Terra rover in the 3D scene and use **Arm** in its panel. **Disarm** remains available during pending arming or missing authority telemetry. Terra may stay on its home screen; it forwards explicit requests to its paired rover and publishes confirmed hardware status. Driving and waypoint execution require fresh confirmed armed status. Waypoint drafting remains available while disarmed.
 
 Arm requests are bound to the current rover run and authority revision and expire after 500 ms. Both endpoints and the final phone execution check enforce freshness. No reconnect, mode selection, or drive takeover automatically arms hardware. Existing background stops, Bluetooth acknowledgement, emergency-stop and rover watchdog protections remain in effect.
+
+### Spatial dashboard and router
+
+The native Mac/iPad dashboard uses a dark spatial scene, on-demand robot inspection and camera orbit. Mac Connection settings can start a local Zenoh router with loopback, LAN (`0.0.0.0:7448`) or Tailscale sharing. iPad connects to a remote host or discovers Mac LAN routers. See [hybrid router setup](docs/deployment-router.md) and [shared scene contract](docs/design/spatial-scene-contract.md).

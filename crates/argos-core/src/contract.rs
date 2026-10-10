@@ -9,7 +9,9 @@ pub fn invalid(message: &str) -> Error {
     Error(message.into())
 }
 pub const MAX_STATE_BYTES: usize = 65_536;
-pub const STALE_SECONDS: f64 = 2.5;
+pub const STALE_SECONDS: f64 = 2.5; // Legacy/manual authority freshness; never extend for teleoperation.
+pub const SUPERVISION_STALE_SECONDS: f64 = 90.0;
+pub const GOAL_ACK_SECONDS: f64 = 150.0;
 #[derive(Clone, Debug)]
 pub struct Topics {
     pub prefix: String,

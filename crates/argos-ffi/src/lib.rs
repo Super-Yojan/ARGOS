@@ -268,3 +268,16 @@ impl ArgosClient {
         }
     }
 }
+
+/// Router lifecycle is independent of the fleet client; only this owned session is stopped.
+#[derive(uniffi::Object, Default)]
+pub struct ArgosRouter { router: argos_zenoh::router::Router }
+#[uniffi::export]
+impl ArgosRouter {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
+    pub fn start(&self, port: u16, tailscale_address: String) -> Result<(), ClientError> { self.router.start(port, &tailscale_address).map_err(Into::into) }
+    pub fn stop(&self) -> Result<(), ClientError> { self.router.stop().map_err(Into::into) }
+    pub fn running(&self) -> bool { self.router.running() }
+    pub fn logs(&self) -> Vec<String> { self.router.logs() }
+}

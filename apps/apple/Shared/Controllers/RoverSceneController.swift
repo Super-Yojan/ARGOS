@@ -54,8 +54,8 @@ import SwiftUI
     let radius = max(100, camera.extent * 8)
     let pitch = camera.dimensional ? asin(0.55) : Double.pi / 2
     cameraNode.position = SCNVector3(
-      -camera.y, sin(pitch) * radius, -camera.x + cos(pitch) * radius)
-    cameraNode.eulerAngles = SCNVector3(-pitch, 0, 0)
+      -camera.y + cos(pitch) * radius * sin(camera.dimensional ? camera.azimuth : 0), sin(pitch) * radius, -camera.x + cos(pitch) * radius * cos(camera.dimensional ? camera.azimuth : 0))
+    cameraNode.eulerAngles = SCNVector3(-pitch, camera.dimensional ? camera.azimuth : 0, 0)
     updateCloud(cloud)
     let present = Set(rovers.filter { $0.pose != nil }.map(\.id))
     for id in Array(robots.keys) where !present.contains(id) {
@@ -78,7 +78,7 @@ import SwiftUI
       // Geometry stays at physical scale at every zoom; callouts remain tappable.
       let displayScale = Self.physicalScale
       node.scale = SCNVector3(displayScale, displayScale, displayScale)
-      node.opacity = (rover.poseAge ?? 99) >= 2.5 ? 0.45 : 1
+      node.opacity = (rover.poseAge ?? 99) >= SupervisionTiming.staleAfter ? 0.45 : 1
     }
   }
   private func updateCloud(_ cloud: PointCloudFrame?) {
@@ -112,9 +112,9 @@ import SwiftUI
     let material = SCNMaterial()
     material.lightingModel = .constant
     #if os(macOS)
-      material.diffuse.contents = NSColor.darkGray
+      material.diffuse.contents = NSColor.cyan
     #else
-      material.diffuse.contents = UIColor.darkGray
+      material.diffuse.contents = UIColor.cyan
     #endif
     geometry.materials = [material]
     cloudNode.geometry = geometry

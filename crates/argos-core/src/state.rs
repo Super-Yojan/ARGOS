@@ -126,7 +126,7 @@ impl FleetCache {
             || self
                 .fleet
                 .as_ref()
-                .is_none_or(|(_, at)| now - at >= STALE_SECONDS)
+                .is_none_or(|(_, at)| now - at >= SUPERVISION_STALE_SECONDS)
         {
             return Err(invalid("rover is absent, stale, or disconnected"));
         }
@@ -144,7 +144,7 @@ impl FleetCache {
         let e = self.entries.entry(id).or_default();
         if e.command
             .as_ref()
-            .is_some_and(|c| (c.phase == "pending" || c.phase == "cancelling") && now - c.sent < 5.)
+            .is_some_and(|c| (c.phase == "pending" || c.phase == "cancelling") && now - c.sent < GOAL_ACK_SECONDS)
         {
             return Err(invalid("a command is awaiting acknowledgement"));
         }
@@ -160,7 +160,7 @@ impl FleetCache {
         let e = self.entries.entry(id).or_default();
         if e.command
             .as_ref()
-            .is_some_and(|c| c.phase == "cancelling" && now - c.sent < 5.)
+            .is_some_and(|c| c.phase == "cancelling" && now - c.sent < GOAL_ACK_SECONDS)
         {
             return Err(invalid("cancellation is awaiting acknowledgement"));
         }
@@ -183,7 +183,7 @@ impl FleetCache {
             "disconnected"
         } else if fleet_age.is_none() {
             "connecting"
-        } else if fleet_age.unwrap() >= STALE_SECONDS {
+        } else if fleet_age.unwrap() >= SUPERVISION_STALE_SECONDS {
             "stale"
         } else {
             "healthy"
@@ -196,7 +196,7 @@ impl FleetCache {
                     .command
                     .as_ref()
                     .map(|c| {
-                        if (c.phase == "pending" || c.phase == "cancelling") && now - c.sent >= 5. {
+                        if (c.phase == "pending" || c.phase == "cancelling") && now - c.sent >= GOAL_ACK_SECONDS {
                             "unconfirmed".into()
                         } else {
                             c.phase.clone()

@@ -11,3 +11,5 @@ Both the macOS and iOS targets compile these shared sources.
 Start with `Views/FleetView.swift` for the main dashboard, `Views/RoverDetailView.swift` for a selected rover, or `Controllers/FleetModel.swift` for fleet state and actions. `Views/RoverJoystick.swift` renders the joystick; `Controllers/RoverDriveController.swift` owns its driving lifecycle.
 
 The Xcode project includes each source file in both app targets. When adding files, update those target memberships; `scripts/create-apple-project.rb` discovers Swift files in these folders when regenerating the project. Generated Rust bindings and frameworks live outside this folder in `../Generated/`.
+
+`Models/FleetSceneState.swift` defines renderer-independent selection/draft state and scene vehicle records. `Controllers/RouterController.swift` owns native router lifecycle and Bonjour discovery. The same Rust router implementation backs the app and standalone `argos-router` executable; deployment details are in `docs/deployment-router.md`.

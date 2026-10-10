@@ -55,11 +55,11 @@ struct RoverDetailView: View {
       HStack(spacing: 12) {
         Text("Live map").font(.headline)
         Label(
-          rover.pose == nil ? "No pose" : (rover.poseAge ?? 99) >= 2.5 ? "Stale pose" : "Live",
+          rover.pose == nil ? "No pose" : (rover.poseAge ?? .infinity) >= SupervisionTiming.staleAfter ? "Stale pose" : "Live",
           systemImage: "circle.fill"
         )
         .font(.caption).foregroundStyle(
-          rover.pose == nil || (rover.poseAge ?? 99) >= 2.5 ? Color.orange : Color.green)
+          rover.pose == nil || (rover.poseAge ?? .infinity) >= SupervisionTiming.staleAfter ? Color.orange : Color.green)
         Spacer(minLength: 8)
         Picker("Map coordinates", selection: $geographic) {
           Text("Local").tag(false)

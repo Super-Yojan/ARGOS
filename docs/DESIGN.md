@@ -60,12 +60,12 @@ is disabled, and goal publication uses per-rover keys.
 Fleet IDs can have gaps. Membership follows `ids`; disagreement between count
 and ID length is shown as a notice. Unknown/removed members cannot receive
 commands. Membership, pose, and goal status have independent monotonic receive
-ages; 2.5 seconds is stale. Bad telemetry preserves the last good values without
+ages; 90 seconds is stale for fleet supervision and waypoint submission. Manual control retains its strict freshness limits. Bad telemetry preserves the last good values without
 refreshing their ages.
 
 Goals use exact Terra shapes, finite values, bounded coordinates/yaw/tokens,
 and a 2048-byte request cap. ARGOS generates a UUID token and publishes once;
-a matching status confirms acceptance. Unconfirmed after five seconds means
+a matching status confirms acceptance. Unconfirmed after 150 seconds means
 no acknowledgement, not failure or arrival. ARGOS does not automatically retry.
 Cancel sends exactly `{"cancel":true}` and waits for a subsequent idle status.
 This releases Terra's latched goal for debug teleop; it does not send a twist.

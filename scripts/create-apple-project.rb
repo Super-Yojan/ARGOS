@@ -24,7 +24,7 @@ test_refs=Dir[File.join(root,'apps/apple/Tests/*.swift')].sort.map { |file| test
  app.frameworks_build_phase.add_file_reference(framework)
  %w[SwiftUI MapKit SceneKit GameController SystemConfiguration Security].each { |lib| app.add_system_framework(lib) }
  app.build_configurations.each do |config|
-  config.build_settings.merge!({'PRODUCT_BUNDLE_IDENTIFIER'=>"org.argos.operator.#{platform}",'PRODUCT_MODULE_NAME'=>'ARGOS','SWIFT_VERSION'=>'5.0','CODE_SIGN_STYLE'=>'Automatic','GENERATE_INFOPLIST_FILE'=>'YES','MARKETING_VERSION'=>'0.1.0','CURRENT_PROJECT_VERSION'=>'1','INFOPLIST_KEY_CFBundleDisplayName'=>'ARGOS','INFOPLIST_KEY_NSLocalNetworkUsageDescription'=>'ARGOS connects to your Terra simulator or rover on the local network.','INFOPLIST_KEY_UILaunchScreen_Generation'=>'YES','INFOPLIST_KEY_UIApplicationSceneManifest_Generation'=>'YES','ENABLE_USER_SCRIPT_SANDBOXING'=>'YES'})
+  config.build_settings.merge!({'PRODUCT_BUNDLE_IDENTIFIER'=>"org.argos.operator.#{platform}",'PRODUCT_MODULE_NAME'=>'ARGOS','SWIFT_VERSION'=>'5.0','CODE_SIGN_STYLE'=>'Automatic','GENERATE_INFOPLIST_FILE'=>'YES','MARKETING_VERSION'=>'0.1.0','CURRENT_PROJECT_VERSION'=>'1','INFOPLIST_KEY_CFBundleDisplayName'=>'ARGOS','INFOPLIST_FILE'=>'Support/Info.plist','INFOPLIST_KEY_NSLocalNetworkUsageDescription'=>'ARGOS connects to your Terra simulator or rover on the local network.','INFOPLIST_KEY_UILaunchScreen_Generation'=>'YES','INFOPLIST_KEY_UIApplicationSceneManifest_Generation'=>'YES','ENABLE_USER_SCRIPT_SANDBOXING'=>'YES'})
   if platform==:ios
    config.build_settings['TARGETED_DEVICE_FAMILY']='1,2'
    config.build_settings['SUPPORTED_PLATFORMS']='iphoneos iphonesimulator'

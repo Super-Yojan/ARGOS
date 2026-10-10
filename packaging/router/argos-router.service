@@ -1,0 +1,16 @@
+[Unit]
+Description=ARGOS private Zenoh fleet router
+After=network-online.target tailscaled.service
+Wants=network-online.target
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/argos/router.env
+ExecStart=/usr/local/bin/argos-router --bind ${ARGOS_ROUTER_BIND}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+[Install]
+WantedBy=multi-user.target

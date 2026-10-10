@@ -1,0 +1,11 @@
+# Shared spatial dashboard contract
+
+The Mac/iPad renderer consumes reported fleet state. The platform-neutral `FleetSceneState` owns selection, inspection and unconfirmed waypoint coordinates; selection changes and coordinate-frame changes discard drafts. `FleetSceneVehicle` carries id, membership, nullable position/heading, staleness, attention reason and nullable goal. FleetModel exports the current scene as versioned JSON through `sceneDocument()` for fixture/debug consumers.
+
+Coordinates are metres in the document's `frame`; x/y follow the existing ARGOS local or north/west projection. Heading is radians. Position null means unknown, never (0,0). A goal is a reported destination, not an inferred path. Dashed target lines must not be described as planned trajectories. Occupancy and point clouds retain their existing separately versioned telemetry contracts; missing or expired data is absent.
+
+Future RealityKit and Unity/OpenXR clients reproduce selection, focus, orbit, inspection and draft confirmation using the same model semantics. Native fleet command APIs remain the authority: sendGoal, cancelGoal, operatorAction, fleetAction, and input events. Rendering or selecting never sends a command. No new Terra topic is introduced. Reconnect clears drafts and held input; rejected/unconfirmed commands are visible rather than replayed.
+
+Visual language: dark ground grid provides a coordinate reference, not reconstructed terrain; cyan selection and target cues; amber attention with text/symbols; red stop/destructive actions. Live reported perception is the only environment geometry. Detail controls are opt-in after selection. Reduced motion removes focus animation.
+
+Forest links: fleet membership, last reported pose/goal and cached geographic alignment use a 90-second supervision horizon. Waypoint acknowledgments remain pending for 150 seconds and are never automatically retried. UI displays report ages. Cached armed/ready/waypoint authority within that horizon permits high-level waypoint submission; the rover still validates current authority, safety and readiness when received. Manual driving, hardware arming, perception freshness and onboard watchdogs retain their original strict deadlines. Ages are measured since receipt; current Terra payloads do not provide a universally synchronized end-to-end message age.

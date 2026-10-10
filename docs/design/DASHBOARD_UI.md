@@ -50,3 +50,9 @@ Validation: 17 native dashboard tests (including held/released driving, telemetr
 
 
 Rover scale correction: the CAD model now uses a fixed provisional maximum dimension of 0.85 m (33.5 in), respecting the specified under-35-inch length and width. Geometry no longer grows as the camera zooms out; robot callouts remain selectable. Exact length and width can replace this bound when measured.
+
+## Spatial release and hybrid router
+
+The Mac/iPad scene now uses a dark cyan visual treatment while retaining the operator design's spatial selection. Selecting a robot reveals a compact anchored summary; Inspect & controls reveals the command/telemetry surface. Orbit buttons rotate the shared scene and preserve ground waypoint coordinates. Cyan rings identify selection; amber rings plus textual reasons identify attention. Dashed lines represent reported goal destinations, not planned paths. No reconstructed terrain is fabricated.
+
+The native Mac backend owns an optional Zenoh router; settings choose loopback, all-interface LAN sharing, or Tailscale sharing. LAN routers advertise through Bonjour and iPad can discover them. Independently hosted routers remain outside app lifecycle ownership. Session generations clear local drafts and reject in-flight telemetry from previous connections. See [router deployment](../deployment-router.md) and [portable scene contract](spatial-scene-contract.md).

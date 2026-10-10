@@ -1,7 +1,7 @@
 # Deployment
 
 !!! tip "TL;DR"
-    ARGOS dials one `tcp/` address. It does not listen.
+    ARGOS connects to one fleet `tcp/` address. The Mac app can also own a router on port 7448; see [Hybrid fleet router](deployment-router.md).
     **LAN** is what works today.
     **AWS** is a future tunnel in front of that same address.
     There is no login on the bus.

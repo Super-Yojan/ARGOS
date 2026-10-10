@@ -3,6 +3,66 @@ import XCTest
 @testable import ARGOS
 #endif
 final class FleetModelTests: XCTestCase {
+    @MainActor func testDiscardBeforeDelayedWaypointModeAckNeverDispatches() async {
+        let backend = DriveTestBackend()
+        let model = FleetModel(backend: backend)
+        await model.connect(endpoint: "test", prefix: "test"); model.stopObservation()
+        await backend.delayFirstTakeover()
+        let send = Task { await model.send(id: 8, waypoint: .local(x: 5, y: 6, yaw: nil)) }
+        for _ in 0..<100 { if model.pendingWaypointID != nil { break }; try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(model.pendingWaypointID, 8)
+        model.cancelPendingWaypoint()
+        let sent = await send.value; XCTAssertFalse(sent)
+        let count = await backend.waypointsSent; XCTAssertEqual(count, 0)
+        XCTAssertFalse(model.busy)
+        await model.disconnect()
+    }
+    @MainActor func testForestDelayAllowsWaypointButNeverManualDrive() async {
+        let backend = DriveTestBackend()
+        let model = FleetModel(backend: backend)
+        await model.connect(endpoint: "test", prefix: "test"); model.stopObservation()
+        await backend.forestDelay(age: 60); await model.refresh()
+        XCTAssertTrue(model.waypointAvailable(8)); XCTAssertFalse(model.driveAvailable(8)); XCTAssertFalse(model.motorsArmed(8))
+        await model.send(id: 8, waypoint: .local(x: 5, y: 6, yaw: nil))
+        let sent = await backend.waypointsSent; XCTAssertEqual(sent, 1)
+        await backend.forestDelay(age: 90); await model.refresh()
+        XCTAssertFalse(model.waypointAvailable(8))
+        await model.disconnect()
+    }
+    @MainActor func testDelayedRefreshCannotRestorePreviousSession() async {
+        let backend = SessionSwitchBackend()
+        let model = FleetModel(backend: backend)
+        await model.connect(endpoint: "old", prefix: "test"); model.stopObservation()
+        await backend.delayNextSnapshot()
+        let old = Task { await model.refresh() }
+        for _ in 0..<100 { if await backend.waiting { break }; try? await Task.sleep(for: .milliseconds(5)) }
+        let waiting = await backend.waiting; XCTAssertTrue(waiting)
+        let epoch = model.sessionEpoch
+        await model.connect(endpoint: "new", prefix: "test"); model.stopObservation()
+        await backend.releaseSnapshot(); await old.value
+        XCTAssertGreaterThan(model.sessionEpoch, epoch)
+        XCTAssertEqual(model.sceneRovers.map(\.id), [2])
+        XCTAssertEqual(model.selected, 2)
+        await model.disconnect()
+    }
+    func testSceneDraftInvalidation() {
+        var state = FleetSceneState()
+        state.select(8); state.draft = ScenePoint(x: 1, y: 2); state.inspecting = true
+        state.select(9); XCTAssertNil(state.draft); XCTAssertFalse(state.inspecting)
+        state.draft = ScenePoint(x: 3, y: 4)
+        state.reconcile(frame: "new-session", ids: [9])
+        XCTAssertNil(state.selectedID); XCTAssertNil(state.draft)
+        state.select(9); state.reconcile(frame: "new-session", ids: [])
+        XCTAssertNil(state.selectedID)
+    }
+    func testOrbitProjectionRoundTrip() {
+        for angle in [0.0, 0.5, 1.5, -2.0] {
+            var camera = FieldCamera(); camera.azimuth = angle
+            let point = camera.screen(x: 12, y: -7, size: CGSize(width: 1200, height: 800))
+            let world = camera.world(point, size: CGSize(width: 1200, height: 800))
+            XCTAssertEqual(world.x, 12, accuracy: 0.00001); XCTAssertEqual(world.y, -7, accuracy: 0.00001)
+        }
+    }
     @MainActor func testDelayedOldTakeoverCannotDriveNewSelection() async {
         let backend = DriveTestBackend(); await backend.delayFirstTakeover()
         let model = FleetModel(backend: backend)
@@ -100,7 +160,7 @@ final class FleetModelTests: XCTestCase {
         let local = ref.local(x: scene.x, y: scene.y, origin: origin)
         XCTAssertEqual(local.x, 8, accuracy: 0.001)
         XCTAssertEqual(local.y, 4, accuracy: 0.001)
-        ref.age = 2.5; XCTAssertFalse(ref.usable)
+        ref.age = 90; XCTAssertFalse(ref.usable)
         ref.age = 0; ref.mode = "local"; XCTAssertFalse(ref.usable)
         ref.mode = "geographic"; ref.rotation = .nan; XCTAssertFalse(ref.usable)
     }
@@ -153,8 +213,8 @@ final class FleetModelTests: XCTestCase {
                 goalAge: goalAge, commandPhase: phase, commandToken: nil)
         }
         XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: nil, goalAge: 0)), "Position unavailable")
-        XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: 3, goalAge: 0)), "Position is stale")
-        XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: 0, goalAge: 3)), "Goal status is stale")
+        XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: 90, goalAge: 0)), "Position is stale")
+        XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: 0, goalAge: 90)), "Goal status is stale")
         XCTAssertEqual(DashboardPresentation.attentionReason(rover(poseAge: 0, goalAge: 0, phase: "unconfirmed")), "Command unconfirmed")
         XCTAssertNil(DashboardPresentation.attentionReason(rover(poseAge: 0, goalAge: 0)))
     }
@@ -260,6 +320,10 @@ actor MixedPositioningBackend: FleetBackend {
 }
 
 actor DriveTestBackend: FleetBackend {
+    var reportAge = 0.0
+    var level = "teleop"
+    var waypointsSent = 0
+    func forestDelay(age: Double) { reportAge = age; level = "waypoint" }
     var movingIDs: [UInt64] = []
     var slowFirst = false
     var takeovers = 0
@@ -282,15 +346,15 @@ actor DriveTestBackend: FleetBackend {
     func loseTelemetry() { connected = false }
     func connect(endpoint: String, prefix: String) async throws { connected = true }
     func disconnect() async { connected = false }
-    func send(id: UInt64, waypoint: Waypoint) async throws -> String { "unused" }
+    func send(id: UInt64, waypoint: Waypoint) async throws -> String { waypointsSent += 1; return "unused" }
     func cancel(id: UInt64) async throws {}
     func snapshot() async -> FleetSnapshot {
-        FleetSnapshot(link: connected ? "healthy" : "stale", fleetAge: 0, rovers: [RoverView(id: 8, membership: connected ? "online" : "stale", pose: RoverPose(x: 0, y: 0, yaw: 0), poseAge: connected ? 0 : 5, goal: nil, goalAge: nil, commandPhase: "none", commandToken: nil), RoverView(id:9,membership:connected ? "online":"stale",pose:RoverPose(x:2,y:0,yaw:0),poseAge:connected ? 0:5,goal:nil,goalAge:nil,commandPhase:"none",commandToken:nil)], notice: nil)
+        FleetSnapshot(link: connected ? "healthy" : "stale", fleetAge: 0, rovers: [RoverView(id: 8, membership: connected ? "online" : "stale", pose: RoverPose(x: 0, y: 0, yaw: 0), poseAge: connected ? reportAge : 5, goal: nil, goalAge: nil, commandPhase: "none", commandToken: nil), RoverView(id:9,membership:connected ? "online":"stale",pose:RoverPose(x:2,y:0,yaw:0),poseAge:connected ? reportAge:5,goal:nil,goalAge:nil,commandPhase:"none",commandToken:nil)], notice: nil)
     }
     func operatorTelemetry() async -> String {
-        let authority: [String: Any] = ["run_id":"test","requested_level":"teleop","effective_level":"teleop","active_source":"operator","safety":"clear","reason":"ready","revision":revision,"token":token,"result":"accepted","supported_levels":["teleop","assisted_teleop","waypoint"],"age":connected ? 0 : 1]
+        let authority: [String: Any] = ["run_id":"test","requested_level":level,"effective_level":level,"active_source":"operator","safety":"clear","reason":"ready","revision":revision,"token":token,"result":"accepted","supported_levels":["teleop","assisted_teleop","waypoint"],"age":connected ? reportAge : 1]
         let cloud: [String:Any] = ["version":1,"frameID":"local-A","sequence":1,"source":"features","age":0,"points":[[0,0,0]]]
-        let hardware: [String: Any] = ["ready":true,"armed":hardwareArmed,"arming":false,"reason":hardwareArmed ? "Armed" : "Disarmed","age":connected ? 0 : 1]
+        let hardware: [String: Any] = ["ready":true,"armed":hardwareArmed,"arming":false,"reason":hardwareArmed ? "Armed" : "Disarmed","age":connected ? reportAge : 1]
         var first: [String: Any] = ["cloud":cloud,"hardware":hardware]
         var second: [String: Any] = ["hardware":hardware]
         if reportAuthority { first["authority"] = authority; second["authority"] = authority }
@@ -306,7 +370,7 @@ actor DriveTestBackend: FleetBackend {
         if kind == "autonomy" {
             takeovers += 1
             if slowFirst && takeovers == 1 { try? await Task.sleep(for:.milliseconds(300)) }
-            token = value["token"] as! String; revision += 1
+            token = value["token"] as! String; level = value["level"] as! String; revision += 1
         }
         if kind == "teleop" {
             let vector = DriveVector(linear:value["linear"] as! Double,angular:value["angular"] as! Double)
@@ -346,4 +410,23 @@ final class OccupancyMapTests:XCTestCase {
         let west=LocalMapProjection.screen(x:2,y:4,size:size,extent:10,centerX:2,centerY:3)
         XCTAssertEqual(origin.y-north.y,origin.x-west.x,accuracy:0.000001)
     }
+}
+
+actor SessionSwitchBackend: FleetBackend {
+    var id: UInt64 = 1
+    var delayed = false
+    var pending: CheckedContinuation<FleetSnapshot, Never>?
+    var held: FleetSnapshot?
+    var waiting: Bool { pending != nil }
+    func delayNextSnapshot() { delayed = true }
+    func releaseSnapshot() { if let held { pending?.resume(returning: held) }; pending = nil; held = nil }
+    func connect(endpoint: String, prefix: String) async throws { id = endpoint == "old" ? 1 : 2 }
+    func disconnect() async {}
+    func snapshot() async -> FleetSnapshot {
+        let snapshot = FleetSnapshot(link: "healthy", fleetAge: 0, rovers: [RoverView(id: id, membership: "online", pose: RoverPose(x: 0, y: 0, yaw: 0), poseAge: 0, goal: nil, goalAge: nil, commandPhase: "none", commandToken: nil)], notice: nil)
+        if delayed { delayed = false; held = snapshot; return await withCheckedContinuation { pending = $0 } }
+        return snapshot
+    }
+    func send(id: UInt64, waypoint: Waypoint) async throws -> String { "unused" }
+    func cancel(id: UInt64) async throws {}
 }

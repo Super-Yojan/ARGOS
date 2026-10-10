@@ -4,6 +4,7 @@ import SwiftUI
 struct FleetView: View {
   @EnvironmentObject var model: FleetModel
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @AppStorage("endpoint") private var endpoint = "tcp/127.0.0.1:7448"
   @AppStorage("prefix") private var prefix = "terra/phone"
   @StateObject private var drive = RoverDriveController()
@@ -13,11 +14,21 @@ struct FleetView: View {
   @State private var camera = FieldCamera()
   @State private var dragCamera: FieldCamera?
   @State private var zoomExtent: Double?
-  @State private var focused: UInt64?
-  @State private var draft: (Double, Double)?
+  @State private var sceneState = FleetSceneState()
+  private var focused: UInt64? { get { sceneState.selectedID } nonmutating set { sceneState.select(newValue) } }
+  private var draft: (Double, Double)? {
+    get { sceneState.draft.map { ($0.x, $0.y) } }
+    nonmutating set {
+      let point = newValue.map { ScenePoint(x: $0.0, y: $0.1) }
+      if point != sceneState.draft { model.cancelPendingWaypoint() }
+      sceneState.draft = point
+    }
+  }
   @State private var acknowledged: String?
   private var vehicle: RoverView? { model.sceneRovers.first { $0.id == focused } }
-  private let ink = Color(white: 0.12)
+  private let ink = Color(red: 0.75, green: 0.92, blue: 0.96)
+  private let accent = Color.cyan
+  private let surface = Color(red: 0.025, green: 0.055, blue: 0.085)
   @State private var searchClass = "survivor"
   @State private var searchMinX = "-20"
   @State private var searchMinY = "-20"
@@ -51,9 +62,9 @@ struct FleetView: View {
               DragGesture(minimumDistance: 8).onChanged { value in
                 if dragCamera == nil { dragCamera = camera }
                 guard let original = dragCamera else { return }
-                let s = camera.scale(geometry.size)
-                camera.x = original.x + value.translation.height / (s * camera.pitch)
-                camera.y = original.y + value.translation.width / s
+                let center = CGPoint(x: geometry.size.width / 2 - value.translation.width, y: geometry.size.height / 2 - value.translation.height)
+                let point = original.world(center, size: geometry.size)
+                camera.x = point.x; camera.y = point.y
               }.onEnded { _ in dragCamera = nil }
             )
             .simultaneousGesture(
@@ -98,10 +109,23 @@ struct FleetView: View {
               + (DashboardPresentation.attentionReason(vehicle) == nil ? 0 : 55)
               + (model.snapshot.notice == nil ? 0 : 45)
             let panelHeight = max(120, min(contentHeight, geometry.size.height - 80))
+            if sceneState.inspecting || draft != nil {
             ScrollView { robotControls(vehicle) }
               .frame(width: min(310, geometry.size.width - 32), height: panelHeight)
-              .background(.white).overlay { Rectangle().stroke(ink, lineWidth: 1) }
+              .background(surface.opacity(0.96)).overlay { RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.4), lineWidth: 1) }
               .position(controlPoint(anchor, size: geometry.size, height: panelHeight))
+            } else {
+              VStack(alignment: .leading, spacing: 8) {
+                Text("T-\(vehicle.id)").font(.headline)
+                Text(task(vehicle)).font(.caption)
+                if let reason = DashboardPresentation.attentionReason(vehicle) {
+                  Label(reason, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                }
+                Button("Inspect & controls") { sceneState.inspecting = true }
+                  .accessibilityIdentifier("inspect-rover")
+              }.padding(12).background(surface.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
+                .position(notePoint(anchor, size: geometry.size))
+            }
           }
           VStack(alignment: .leading, spacing: 5) {
             Text(focused == nil ? "THE PLACE" : "AROUND THIS ROBOT").font(
@@ -148,10 +172,10 @@ struct FleetView: View {
               }.accessibilityLabel("Zoom in")
             }.padding(12)
           }.buttonStyle(.bordered)
-        }.clipped().background(Color(white: 0.92))
+        }.clipped().background(surface)
       }
       bottomBar
-    }.foregroundStyle(ink).background(.white).preferredColorScheme(.light).tint(ink)
+    }.foregroundStyle(ink).background(surface).preferredColorScheme(.dark).tint(accent)
       .sheet(isPresented: $missions) { FleetMissionView() }
       .sheet(isPresented: $settings) { ConnectionView() }
       .alert(
@@ -181,6 +205,7 @@ struct FleetView: View {
       .onChange(of: model.sceneRovers.map(\.id)) { _, ids in
         if let focused, !ids.contains(focused) { wider() }
       }
+      .onChange(of: model.sessionEpoch) { _, _ in wider() }
       .onChange(of: model.frameKey) { _, _ in wider() }
       .task {
         if ProcessInfo.processInfo.arguments.contains("--connect") {
@@ -193,6 +218,10 @@ struct FleetView: View {
       Text("ARGOS").font(.system(size: 14, weight: .bold)).tracking(2)
       Text(focused == nil ? "The place" : "Around this robot").font(.caption)
       if focused != nil { Button("Wider") { wider() }.buttonStyle(.bordered) }
+      if camera.dimensional {
+        Button { camera.azimuth -= .pi / 8 } label: { Image(systemName: "rotate.left") }.accessibilityLabel("Orbit left")
+        Button { camera.azimuth += .pi / 8 } label: { Image(systemName: "rotate.right") }.accessibilityLabel("Orbit right")
+      }
       Picker("Camera", selection: $camera.dimensional) {
         Text("2D").tag(false)
         Text("3D").tag(true)
@@ -207,7 +236,7 @@ struct FleetView: View {
         "connection")
       Text(model.snapshot.link == "healthy" ? "Connected" : model.snapshot.link.capitalized).font(
         .caption)
-      Button("Mission controls") { missions = true }
+      Button { missions = true } label: { Image(systemName: "flag") }.accessibilityLabel("Mission controls")
       Button("STOP ALL") {
         drive.stop()
         model.clearInput()
@@ -218,11 +247,11 @@ struct FleetView: View {
   }
   private var bottomBar: some View {
     HStack(spacing: 12) {
-      Label("VOICE", systemImage: "mic.slash").font(.system(size: 11, weight: .semibold))
+      Label("FLEET", systemImage: "view.3d").font(.system(size: 11, weight: .semibold))
       Text(
         focused == nil
-          ? "Voice unavailable · tap a robot to give a directed order."
-          : "Voice unavailable · tap the ground to draft an order for this robot."
+          ? "Select a robot to inspect its reported state."
+          : "Tap the ground to draft a waypoint · dashed line marks a target, not a planned route."
       )
       .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
       Text(
@@ -234,13 +263,12 @@ struct FleetView: View {
   }
   private func robotNote(_ rover: RoverView) -> some View {
     VStack(alignment: .leading, spacing: 4) {
-      Text("T-\(rover.id) · \(rover.membership)").fontWeight(.semibold)
-      Text(task(rover))
+      Text("T-\(rover.id)").fontWeight(.semibold)
       if let reason = DashboardPresentation.attentionReason(rover) {
         Text("CHECK · \(reason)").fontWeight(.semibold)
       }
-    }.font(.system(size: 11)).padding(10).background(.white).overlay {
-      Rectangle().stroke(ink, lineWidth: 1)
+    }.font(.system(size: 11)).padding(8).background(surface.opacity(0.75), in: RoundedRectangle(cornerRadius: 8)).overlay {
+      RoundedRectangle(cornerRadius: 8).stroke(accent.opacity(0.25), lineWidth: 1)
     }
   }
   private func robotControls(_ rover: RoverView) -> some View {
@@ -336,15 +364,15 @@ struct FleetView: View {
         HStack {
           Button("Confirm waypoint") {
             Task {
-              await model.send(id: rover.id, waypoint: waypoint(id: rover.id, draft: draft))
-              if model.error == nil { self.draft = nil }
+              let sent = await model.send(id: rover.id, waypoint: waypoint(id: rover.id, draft: draft))
+              if sent, focused == rover.id, self.draft?.0 == draft.0, self.draft?.1 == draft.1 { self.draft = nil }
             }
           }
           .buttonStyle(.borderedProminent).disabled(
-            !model.motorsArmed(rover.id) || !canCommand(rover)
+            !model.waypointAvailable(rover.id) || !canCommand(rover)
               || (model.waypointCell(id: rover.id, x: draft.0, y: draft.1) ?? -1) >= 65
           ).accessibilityIdentifier("send-waypoint")
-          Button("Discard") { self.draft = nil }.buttonStyle(.bordered)
+          Button("Discard") { model.cancelPendingWaypoint(); self.draft = nil }.buttonStyle(.bordered)
         }
       } else {
         Text("Tap a point on the ground to draft a waypoint.").font(.caption).foregroundStyle(
@@ -353,7 +381,7 @@ struct FleetView: View {
       HStack {
         Button("Cancel goal", role: .destructive) { Task { await model.cancel(id: rover.id) } }
           .buttonStyle(.bordered).disabled(
-            rover.membership != "online" || model.snapshot.link != "healthy" || model.busy
+            rover.membership != "online" || model.snapshot.link != "healthy" || (model.busy && model.pendingWaypointID != rover.id)
               || rover.commandPhase == "cancelling"
           ).accessibilityIdentifier("cancel-goal")
         EmptyView()
@@ -538,7 +566,7 @@ struct FleetView: View {
     model.selected = rover.id
     draft = nil
     if let pose = rover.pose {
-      withAnimation(.easeInOut(duration: 0.3)) {
+      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
         camera.x = pose.x
         camera.y = pose.y
         camera.extent = 5
@@ -548,8 +576,11 @@ struct FleetView: View {
   private func wider() {
     drive.stop()
     focused = nil
+    model.selected = nil
     draft = nil
-    withAnimation(.easeInOut(duration: 0.3)) {
+    sceneState.inspecting = false
+    camera.azimuth = 0
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
       camera.x = 0
       camera.y = 0
       camera.extent = 30
@@ -647,12 +678,12 @@ struct FleetView: View {
             }
           }
         }
-        context.fill(free, with: .color(.white.opacity(0.8)))
-        context.fill(occupied, with: .color(.black.opacity(0.45)))
-        context.fill(uncertain, with: .color(.black.opacity(0.17)))
-        context.fill(unknown, with: .color(.black.opacity(0.04)))
+        context.fill(free, with: .color(.cyan.opacity(0.07)))
+        context.fill(occupied, with: .color(.cyan.opacity(0.5)))
+        context.fill(uncertain, with: .color(.orange.opacity(0.2)))
+        context.fill(unknown, with: .color(.white.opacity(0.025)))
         context.stroke(
-          unknown, with: .color(.black.opacity(0.15)),
+          unknown, with: .color(.white.opacity(0.1)),
           style: StrokeStyle(lineWidth: 0.4, dash: [1, 3]))
       }
       var grid = Path()
@@ -668,7 +699,7 @@ struct FleetView: View {
         grid.move(to: camera.screen(x: camera.x - reach, y: y, size: size))
         grid.addLine(to: camera.screen(x: camera.x + reach, y: y, size: size))
       }
-      context.stroke(grid, with: .color(.black.opacity(0.1)), lineWidth: 1)
+      context.stroke(grid, with: .color(.cyan.opacity(0.11)), lineWidth: 1)
       for rover in model.sceneRovers {
         if let goal = rover.goal, goal.state != "idle", model.canPlaceGeographically(rover.id) {
           let p = camera.screen(x: goal.x, y: goal.y, size: size)
@@ -678,7 +709,7 @@ struct FleetView: View {
             route.move(to: camera.screen(x: pose.x, y: pose.y, size: size))
             route.addLine(to: p)
             context.stroke(
-              route, with: .color(.black.opacity(0.4)),
+              route, with: .color(.cyan.opacity(0.65)),
               style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
           }
         }
@@ -707,7 +738,10 @@ struct FleetView: View {
     if DashboardPresentation.attentionReason(rover) != nil {
       context.stroke(
         Path(ellipseIn: CGRect(x: point.x - 35, y: point.y - 22, width: 70, height: 44)),
-        with: .color(ink), style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
+        with: .color(.orange), style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
+    }
+    if focused == rover.id {
+      context.stroke(Path(ellipseIn: CGRect(x: point.x - 30, y: point.y - 19, width: 60, height: 38)), with: .color(accent), lineWidth: 2)
     }
     context.draw(
       Text("T-\(rover.id)").font(.system(size: 10, weight: .semibold)),

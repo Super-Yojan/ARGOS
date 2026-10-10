@@ -320,7 +320,7 @@ fn receives_phone_pose_without_depth_pixels() {
     let command: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(command["linear"], 0);
     std::thread::sleep(Duration::from_millis(2600));
-    assert_eq!(client.localization_snapshot(), "{}");
+    assert!(client.localization_snapshot().contains("session"));
     client.disconnect();
     assert_eq!(client.localization_snapshot(), "{}");
 }
@@ -384,4 +384,33 @@ fn search_reports_are_retained_and_acknowledged_on_canonical_topics() {
     std::fs::remove_file(log_path).unwrap();
     client.disconnect();
     server.close().wait().unwrap();
+}
+
+#[test]
+fn managed_router_routes_two_clients_and_reconnect_does_not_replay_goal() {
+    use argos_zenoh::router::Router;
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port(); drop(probe);
+    let router = Router::default(); router.start(port, "").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{port}");
+    let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"client\"").unwrap();
+    config.insert_json5("connect/endpoints", &serde_json::json!([endpoint]).to_string()).unwrap();
+    config.insert_json5("scouting/multicast/enabled", "false").unwrap();
+    let phone = zenoh::open(config).wait().unwrap();
+    let goals = phone.declare_subscriber("terra/phone/8/goal").wait().unwrap();
+    let client = Client::connect(&endpoint, "terra/phone").unwrap();
+    wait_for(|| { phone.put("terra/phone/fleet/state", br#"{"count":1,"max_count":32,"ids":[8]}"#.as_slice()).wait().unwrap(); client.snapshot().link == "healthy" });
+    let token = client.send_goal(8, GoalRequest::Local { x: 3., y: 4., yaw: None }).unwrap();
+    let sample = goals.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+    assert_eq!(body["token"], token);
+    phone.put("terra/phone/8/goal/status", format!("{{\"state\":\"arrived\",\"goal_id\":1,\"distance\":0,\"x\":3,\"y\":4,\"token\":\"{token}\"}}")).wait().unwrap();
+    wait_for(|| client.snapshot().rovers[0].command_phase == "arrived");
+    client.disconnect();
+    let replacement = Client::connect(&endpoint, "terra/phone").unwrap();
+    assert!(goals.recv_timeout(Duration::from_millis(200)).unwrap().is_none());
+    assert_eq!(replacement.snapshot().link, "connecting");
+    assert!(replacement.snapshot().rovers.is_empty());
+    replacement.disconnect(); phone.close().wait().unwrap(); router.stop().unwrap();
 }

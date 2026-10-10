@@ -21,12 +21,15 @@ import SwiftUI
   @Published private(set) var autonomyPending: [UInt64: String] = [:]
   @Published private(set) var busy = false
   @Published var error: String?
-  @Published var selected: UInt64? { didSet { if oldValue != selected { clearInput() } } }
+  @Published var selected: UInt64? { didSet { if oldValue != selected { clearInput(); cancelPendingWaypoint() } } }
   @Published private(set) var operatorStates: [String: OperatorState] = [:]
   @Published private(set) var occupancyStates: [String: OccupancyState] = [:]
   @Published private(set) var changingAuthority: Set<UInt64> = []
   @Published var fleetResult: String?
   @Published var exportedLog: URL?
+  @Published private(set) var sessionEpoch: UInt64 = 0
+  @Published private(set) var pendingWaypointID: UInt64?
+  private var waypointOperation: UInt64 = 0
   private var inputSequence: UInt64 = 0
   private let backend: any FleetBackend
   private var observation: Task<Void, Never>?
@@ -35,29 +38,69 @@ import SwiftUI
   func connect(endpoint: String, prefix: String) async {
     guard !busy else { return }
     busy = true
+    cancelPendingWaypoint()
+    sessionEpoch &+= 1
+    let epoch = sessionEpoch
     error = nil
     stopObservation()
+    clearInput()
+    await backend.disconnect()
+    clearSessionState()
     defer { busy = false }
     do {
       try await backend.connect(endpoint: endpoint, prefix: prefix)
+      guard epoch == sessionEpoch else { return }
       await refresh()
       startObservation()
     } catch {
+      guard epoch == sessionEpoch else { return }
       self.error = error.localizedDescription
       await refresh()
     }
   }
   func disconnect() async {
+    cancelPendingWaypoint()
+    sessionEpoch &+= 1
     stopObservation()
+    clearInput()
     await backend.disconnect()
+    clearSessionState()
     await refresh()
   }
+  func sceneDocument() -> String {
+    struct Document: Encodable { let version = 1; let frame: String; let vehicles: [FleetSceneVehicle] }
+    let vehicles = sceneRovers.map { rover in
+      FleetSceneVehicle(id: rover.id, membership: rover.membership,
+        position: rover.pose.map { ScenePoint(x: $0.x, y: $0.y) }, heading: rover.pose?.yaw,
+        stale: rover.poseAge.map { $0 >= SupervisionTiming.staleAfter } ?? true,
+        attention: DashboardPresentation.attentionReason(rover),
+        goal: rover.goal.map { ScenePoint(x: $0.x, y: $0.y) })
+    }
+    return (try? JSONEncoder().encode(Document(frame: frameKey, vehicles: vehicles))).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+  }
+  private func clearSessionState() {
+    selected = nil
+    snapshot = FleetSnapshot(link: "disconnected", fleetAge: nil, rovers: [], notice: nil)
+    localizations = [:]; geographicOrigin = nil; frameKey = "local"
+    sceneRovers = []; hardware = [:]; hardwarePending = [:]; searchReports = [:]
+    reportAckTimes = [:]; searches = [:]; searchPending = [:]; authorities = [:]
+    occupancyMaps = [:]; clouds = [:]; autonomyPending = [:]
+    operatorStates = [:]; occupancyStates = [:]; changingAuthority = []
+    fleetResult = nil; exportedLog = nil
+  }
   func refresh() async {
-    snapshot = await backend.snapshot()
-    let data = Data((await backend.operatorState()).utf8)
+    let epoch = sessionEpoch
+    let nextSnapshot = await backend.snapshot()
+    guard epoch == sessionEpoch, !Task.isCancelled else { return }
+    snapshot = nextSnapshot
+    let operatorStatePayload = await backend.operatorState()
+    guard epoch == sessionEpoch, !Task.isCancelled else { return }
+    let data = Data(operatorStatePayload.utf8)
+    let occupancyPayload = await backend.occupancyState()
+    guard epoch == sessionEpoch, !Task.isCancelled else { return }
     occupancyStates =
       (try? JSONDecoder().decode(
-        [String: OccupancyState].self, from: Data((await backend.occupancyState()).utf8))) ?? [:]
+        [String: OccupancyState].self, from: Data(occupancyPayload.utf8))) ?? [:]
     let previous = operatorStates
     operatorStates = (try? JSONDecoder().decode([String: OperatorState].self, from: data)) ?? [:]
     if let selected,
@@ -70,12 +113,13 @@ import SwiftUI
     }
 
     let operatorPayload = await backend.operatorTelemetry()
+    guard epoch == sessionEpoch, !Task.isCancelled else { return }
     let operatorData =
       (try? JSONDecoder().decode([String: OperatorTelemetry].self, from: Data(operatorPayload.utf8)))
       ?? [:]
     hardware = Dictionary(
       uniqueKeysWithValues: operatorData.compactMap { key, value in
-        guard let id = UInt64(key), let state = value.hardware, state.fresh else { return nil }
+        guard let id = UInt64(key), let state = value.hardware, SupervisionTiming.usable(state.age) else { return nil }
         return (id, state)
       })
     for (id, started) in hardwarePending {
@@ -119,10 +163,15 @@ import SwiftUI
         ]
         if let payload = try? JSONSerialization.data(withJSONObject: ack) {
           do {
+            guard epoch == sessionEpoch, !Task.isCancelled else { return }
             try await backend.operatorCommand(
               id: id, kind: "search/report/ack", payload: String(decoding: payload, as: UTF8.self))
+            guard epoch == sessionEpoch, !Task.isCancelled else { return }
             reportAckTimes[identity] = Date()
-          } catch { self.error = "Report acknowledgement failed · \(error.localizedDescription)" }
+          } catch {
+            guard epoch == sessionEpoch, !Task.isCancelled else { return }
+            self.error = "Report acknowledgement failed · \(error.localizedDescription)"
+          }
         }
       }
     }
@@ -154,6 +203,7 @@ import SwiftUI
       autonomyPending.removeValue(forKey: id)
     }
     let payload = await backend.localization()
+    guard epoch == sessionEpoch, !Task.isCancelled else { return }
     let decoded =
       (try? JSONDecoder().decode([String: GeographicReference].self, from: Data(payload.utf8)))
       ?? [:]
@@ -163,7 +213,7 @@ import SwiftUI
     let geographic =
       !located.isEmpty
       && located.allSatisfy {
-        $0.membership == "online" && ($0.poseAge ?? .infinity) < 2.5
+        $0.membership == "online" && ($0.poseAge ?? .infinity) < SupervisionTiming.staleAfter
           && localizations[$0.id]?.usable == true
       }
     let nextKey =
@@ -233,8 +283,14 @@ import SwiftUI
         $0.id == id && $0.membership == "online" && ($0.poseAge ?? .infinity) < 0.5
       }
   }
+  func waypointAvailable(_ id: UInt64) -> Bool {
+    guard snapshot.link == "healthy", let authority = authorities[id],
+      SupervisionTiming.usable(authority.age), let hardware = hardware[id],
+      SupervisionTiming.usable(hardware.age), hardware.ready, hardware.armed else { return false }
+    return snapshot.rovers.contains { $0.id == id && $0.membership == "online" && $0.poseAge.map(SupervisionTiming.usable) == true }
+  }
   func selectAutonomy(id: UInt64, level: String) async -> String? {
-    guard driveAvailable(id), authorities[id]?.supportedLevels.contains(level) == true else {
+    guard (level == "waypoint" ? waypointAvailable(id) : driveAvailable(id)), authorities[id]?.supportedLevels.contains(level) == true else {
       error = "Fresh vehicle authority and supported level required"
       return nil
     }
@@ -387,6 +443,7 @@ import SwiftUI
     } catch { self.error = error.localizedDescription }
   }
   func fleetAction(stop: Bool) async {
+    cancelPendingWaypoint()
     clearInput()
     do {
       fleetResult = try await backend.fleetAction(
@@ -417,26 +474,36 @@ import SwiftUI
     observation?.cancel()
     observation = nil
   }
-  func send(id: UInt64, waypoint: Waypoint) async {
-    guard motorsArmed(id) else {
+  func cancelPendingWaypoint() {
+    waypointOperation &+= 1
+    pendingWaypointID = nil
+  }
+  func send(id: UInt64, waypoint: Waypoint) async -> Bool {
+    guard waypointAvailable(id) else {
       error = "Arm the rover before executing a waypoint"
-      return
+      return false
     }
-    guard !busy else { return }
+    guard !busy else { return false }
     busy = true
+    waypointOperation &+= 1
+    let operation = waypointOperation
+    let epoch = sessionEpoch
+    pendingWaypointID = id
     error = nil
-    defer { busy = false }
+    defer { busy = false; if operation == waypointOperation { pendingWaypointID = nil } }
     do {
       if authorities[id]?.requestedLevel != "waypoint" {
-        guard let token = await selectAutonomy(id: id, level: "waypoint") else { return }
-        let deadline = Date().addingTimeInterval(2)
+        guard let token = await selectAutonomy(id: id, level: "waypoint") else { return false }
+        let deadline = Date().addingTimeInterval(SupervisionTiming.acknowledgmentTimeout)
         var accepted = false
         while Date() < deadline {
+          guard operation == waypointOperation, epoch == sessionEpoch, !Task.isCancelled else { return false }
           await refresh()
+          guard operation == waypointOperation, epoch == sessionEpoch, !Task.isCancelled else { return false }
           if let authority = authorities[id], authority.token == token {
             guard authority.result == "accepted", authority.requestedLevel == "waypoint" else {
               error = "Waypoint mode rejected · \(authority.reason)"
-              return
+              return false
             }
             accepted = true
             break
@@ -445,18 +512,25 @@ import SwiftUI
         }
         guard accepted else {
           error = "Waypoint mode was not acknowledged"
-          return
+          return false
         }
       }
-      guard motorsArmed(id), driveAvailable(id) else {
+      guard operation == waypointOperation, epoch == sessionEpoch, !Task.isCancelled else { return false }
+      guard waypointAvailable(id) else {
         error = "Rover lost readiness before waypoint execution"
-        return
+        return false
       }
       _ = try await backend.send(id: id, waypoint: waypoint)
       await refresh()
-    } catch { self.error = error.localizedDescription }
+      return true
+    } catch { if operation == waypointOperation, epoch == sessionEpoch { self.error = error.localizedDescription }; return false }
   }
   func cancel(id: UInt64) async {
+    if busy, pendingWaypointID == id {
+      cancelPendingWaypoint()
+      do { try await backend.cancel(id: id) } catch { self.error = error.localizedDescription }
+      return
+    }
     guard !busy else { return }
     busy = true
     error = nil

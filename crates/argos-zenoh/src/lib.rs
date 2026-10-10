@@ -1,3 +1,4 @@
+pub mod router;
 mod session_log;
 use argos_core::*;
 use std::sync::{Arc, Mutex};
@@ -210,7 +211,7 @@ impl Client {
                 }
                 let mut entries = l.lock().unwrap();
                 entries.retain(|_, (_, received): &mut (serde_json::Value, Instant)| {
-                    received.elapsed().as_secs_f64() < 2.5
+                    received.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
                 });
                 if entries.len() < 4096 || entries.contains_key(&id) {
                     entries.insert(id, (value, Instant::now()));
@@ -286,7 +287,7 @@ impl Client {
                 };
                 let mut entries = o.lock().unwrap();
                 entries.retain(|_, (_, at): &mut (serde_json::Value, Instant)| {
-                    at.elapsed().as_secs_f64() < 2.5
+                    at.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
                 });
                 if entries.len() < 4096 || entries.contains_key(&(id, kind.into())) {
                     entries.insert((id, kind.into()), (value, Instant::now()));
@@ -390,7 +391,8 @@ impl Client {
             .unwrap_or_else(|_| serde_json::json!({}));
         for ((id, kind), (value, received)) in self.operator_states.lock().unwrap().iter() {
             let age = received.elapsed().as_secs_f64();
-            if age >= 2.5 {
+            let max_age = if kind == "authority" || kind == "hardware" { SUPERVISION_STALE_SECONDS } else { 2.5 };
+            if age >= max_age {
                 continue;
             }
             let mut value = value.clone();
@@ -467,11 +469,12 @@ impl Client {
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
+        let freshness = if kind == "autonomy" && value["level"] == "waypoint" { SUPERVISION_STALE_SECONDS } else { 0.5 };
         if !neutral {
             let snapshot = self.snapshot();
             if snapshot.link != "healthy"
                 || !snapshot.rovers.iter().any(|r| {
-                    r.id == id && r.membership == "online" && r.pose_age.is_some_and(|a| a < 0.5)
+                    r.id == id && r.membership == "online" && r.pose_age.is_some_and(|a| a < freshness)
                 })
             {
                 return Err(invalid("fresh rover telemetry required"));
@@ -482,7 +485,7 @@ impl Client {
             let (authority, received) = states
                 .get(&(id, "authority".into()))
                 .ok_or_else(|| invalid("vehicle authority unavailable"))?;
-            if received.elapsed().as_secs_f64() >= 0.5 {
+            if received.elapsed().as_secs_f64() >= freshness {
                 return Err(invalid("vehicle authority is stale"));
             }
             if kind.starts_with("search") {
@@ -552,7 +555,7 @@ impl Client {
             .iter()
             .filter_map(|(id, (value, received))| {
                 let age = received.elapsed().as_secs_f64();
-                if age >= 2.5 {
+                if age >= SUPERVISION_STALE_SECONDS {
                     return None;
                 }
                 let mut value = value.clone();
@@ -802,6 +805,9 @@ impl Client {
             let _ = session.close().wait();
         }
         self.cache.lock().unwrap().disconnected();
+        self.localizations.lock().unwrap().clear();
+        self.operator_states.lock().unwrap().clear();
+        self.maps.lock().unwrap().clear();
     }
 }
 impl Drop for Client {
@@ -824,4 +830,26 @@ fn zero_payload(
     let sequence = sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     serde_json::json!({"linear":0,"angular":0,"operator_session_id":session,"sequence":sequence,"run_id":generation.map(|g|&g.0),"authority_revision":generation.map(|g|g.1)})
         .to_string()
+}
+
+#[cfg(test)] mod forest_tests {
+    use super::*;
+    use std::time::Duration;
+    #[test] fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port(); drop(probe);
+        let router = router::Router::default(); router.start(port, "").unwrap();
+        let mut client = Client::connect(&format!("tcp/127.0.0.1:{port}"), "forest-test").unwrap();
+        client.start = Instant::now() - Duration::from_secs(60);
+        {
+            let mut cache = client.cache.lock().unwrap();
+            cache.fleet(decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(), 0.);
+            cache.pose(8, Pose { rover_id: 8, sequence: 1, x: 0., y: 0., yaw: 0. }, 0.);
+        }
+        client.operator_states.lock().unwrap().insert((8,"authority".into()),
+            (serde_json::json!({"run_id":"run","revision":1,"requested_level":"teleop","supported_levels":["teleop","waypoint"],"safety":"clear"}), Instant::now()-Duration::from_secs(60)));
+        assert!(client.operator_command(8,"autonomy",r#"{"level":"waypoint","token":"delayed"}"#).is_ok());
+        assert!(client.operator_command(8,"autonomy",r#"{"level":"teleop","token":"manual"}"#).is_err());
+        client.disconnect(); router.stop().unwrap();
+    }
 }

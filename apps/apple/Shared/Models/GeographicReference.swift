@@ -18,7 +18,7 @@ struct GeographicReference: Codable {
   var rotation: Double?
   var usable: Bool {
     version == 1 && !frameID.isEmpty && mode == "geographic" && tracking == "normal" && age.isFinite
-      && age >= 0 && age < 2.5
+      && age >= 0 && age < SupervisionTiming.staleAfter
       && gpsAccuracy.map { $0.isFinite && $0 >= 0 && $0 <= 10 } == true
       && headingAccuracy.map { $0.isFinite && $0 >= 0 && $0 <= 15 } == true
       && originLatitude.map { $0.isFinite && abs($0) <= 85 } == true
