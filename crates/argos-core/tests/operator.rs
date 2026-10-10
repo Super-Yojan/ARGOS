@@ -94,3 +94,10 @@ fn authority_heartbeats_do_not_extend_proposal_expiry() {
     .unwrap();
     assert!(c.snapshot(32.)["1"]["proposal_remaining"].as_f64().unwrap() <= 0.);
 }
+
+#[test]
+fn direct_waypoint_authority_is_retained_as_a_distinct_supported_level() {
+    let mut cache = OperatorCache::default();
+    cache.apply(8, "autonomy/status", br#"{"requested_level":"waypoint_direct","effective_level":"waypoint_direct","active_source":"waypoint","safety":"clear","reason":"active","revision":1,"supported_levels":["teleop","waypoint_direct","waypoint"]}"#, 0.).unwrap();
+    assert_eq!(cache.snapshot(0.1)["8"]["status"]["requested_level"], "waypoint_direct");
+}

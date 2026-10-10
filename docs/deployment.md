@@ -75,3 +75,5 @@ A dropped tunnel looks like a disconnect. Observation resumes when TCP returns. 
 Cancel has no token. A second client on the same prefix can replace a goal.
 
 When this is built, it should be a private forward plus the same prefix and the same anchor as the LAN path.
+
+For L2/L4, install matching updated Terra phone and ARGOS apps. L2 has no obstacle avoidance. L4 people search requires a LiDAR-equipped phone, current tracking and measured scene depth. It searches the confirmed bounds and reports a detected person without pursuing them. The actuator peripheral binary is unchanged.

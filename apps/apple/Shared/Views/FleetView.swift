@@ -29,7 +29,7 @@ struct FleetView: View {
   private let ink = Color(red: 0.75, green: 0.92, blue: 0.96)
   private let accent = Color.cyan
   private let surface = Color(red: 0.025, green: 0.055, blue: 0.085)
-  @State private var searchClass = "survivor"
+  @State private var searchClass = "person"
   @State private var searchMinX = "-20"
   @State private var searchMinY = "-20"
   @State private var searchMaxX = "20"
@@ -370,7 +370,7 @@ struct FleetView: View {
           }
           .buttonStyle(.borderedProminent).disabled(
             !model.waypointAvailable(rover.id) || !canCommand(rover)
-              || (model.waypointCell(id: rover.id, x: draft.0, y: draft.1) ?? -1) >= 65
+              || (model.authorities[rover.id]?.requestedLevel != "waypoint_direct" && (model.waypointCell(id: rover.id, x: draft.0, y: draft.1) ?? -1) >= 65)
           ).accessibilityIdentifier("send-waypoint")
           Button("Discard") { model.cancelPendingWaypoint(); self.draft = nil }.buttonStyle(.bordered)
         }
@@ -395,6 +395,7 @@ struct FleetView: View {
     }.padding(16)
   }
   private func waypointContext(id: UInt64, draft: (Double, Double)) -> String {
+    if model.authorities[id]?.requestedLevel == "waypoint_direct" { return "L2 direct waypoint · obstacles will not be avoided" }
     guard let value = model.waypointCell(id: id, x: draft.0, y: draft.1) else {
       return "Outside a fresh observed map · clearance unknown"
     }
@@ -445,7 +446,7 @@ struct FleetView: View {
                 : "Request this level; wait for vehicle acknowledgement.")
         }
       }
-      Text("L4 requires a target detector. L2 and L5 are unavailable.").font(.system(size: 10))
+      Text("L2 has no obstacle avoidance. L4 requires a LiDAR phone with live person detection. L5 is unavailable.").font(.system(size: 10))
         .foregroundStyle(.secondary)
     }
   }

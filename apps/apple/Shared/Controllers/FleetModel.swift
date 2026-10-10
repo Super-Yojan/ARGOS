@@ -290,7 +290,7 @@ import SwiftUI
     return snapshot.rovers.contains { $0.id == id && $0.membership == "online" && $0.poseAge.map(SupervisionTiming.usable) == true }
   }
   func selectAutonomy(id: UInt64, level: String) async -> String? {
-    guard (level == "waypoint" ? waypointAvailable(id) : driveAvailable(id)), authorities[id]?.supportedLevels.contains(level) == true else {
+    guard (["waypoint", "waypoint_direct"].contains(level) ? waypointAvailable(id) : driveAvailable(id)), authorities[id]?.supportedLevels.contains(level) == true else {
       error = "Fresh vehicle authority and supported level required"
       return nil
     }
@@ -492,8 +492,9 @@ import SwiftUI
     error = nil
     defer { busy = false; if operation == waypointOperation { pendingWaypointID = nil } }
     do {
-      if authorities[id]?.requestedLevel != "waypoint" {
-        guard let token = await selectAutonomy(id: id, level: "waypoint") else { return false }
+      let waypointLevel = authorities[id]?.requestedLevel == "waypoint_direct" ? "waypoint_direct" : "waypoint"
+      if authorities[id]?.requestedLevel != waypointLevel {
+        guard let token = await selectAutonomy(id: id, level: waypointLevel) else { return false }
         let deadline = Date().addingTimeInterval(SupervisionTiming.acknowledgmentTimeout)
         var accepted = false
         while Date() < deadline {
@@ -501,7 +502,7 @@ import SwiftUI
           await refresh()
           guard operation == waypointOperation, epoch == sessionEpoch, !Task.isCancelled else { return false }
           if let authority = authorities[id], authority.token == token {
-            guard authority.result == "accepted", authority.requestedLevel == "waypoint" else {
+            guard authority.result == "accepted", authority.requestedLevel == waypointLevel else {
               error = "Waypoint mode rejected · \(authority.reason)"
               return false
             }

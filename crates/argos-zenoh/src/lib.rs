@@ -457,7 +457,7 @@ impl Client {
             }
         } else if !matches!(
             value["level"].as_str(),
-            Some("teleop" | "assisted_teleop" | "waypoint" | "supervised" | "target_search")
+            Some("teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search")
         ) {
             return Err(invalid("unsupported autonomy level"));
         }
@@ -469,7 +469,7 @@ impl Client {
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
-        let freshness = if kind == "autonomy" && value["level"] == "waypoint" { SUPERVISION_STALE_SECONDS } else { 0.5 };
+        let freshness = if kind == "autonomy" && matches!(value["level"].as_str(), Some("waypoint" | "waypoint_direct")) { SUPERVISION_STALE_SECONDS } else { 0.5 };
         if !neutral {
             let snapshot = self.snapshot();
             if snapshot.link != "healthy"
@@ -847,8 +847,9 @@ fn zero_payload(
             cache.pose(8, Pose { rover_id: 8, sequence: 1, x: 0., y: 0., yaw: 0. }, 0.);
         }
         client.operator_states.lock().unwrap().insert((8,"authority".into()),
-            (serde_json::json!({"run_id":"run","revision":1,"requested_level":"teleop","supported_levels":["teleop","waypoint"],"safety":"clear"}), Instant::now()-Duration::from_secs(60)));
+            (serde_json::json!({"run_id":"run","revision":1,"requested_level":"teleop","supported_levels":["teleop","waypoint","waypoint_direct"],"safety":"clear"}), Instant::now()-Duration::from_secs(60)));
         assert!(client.operator_command(8,"autonomy",r#"{"level":"waypoint","token":"delayed"}"#).is_ok());
+        assert!(client.operator_command(8,"autonomy",r#"{"level":"waypoint_direct","token":"delayed-direct"}"#).is_ok());
         assert!(client.operator_command(8,"autonomy",r#"{"level":"teleop","token":"manual"}"#).is_err());
         client.disconnect(); router.stop().unwrap();
     }

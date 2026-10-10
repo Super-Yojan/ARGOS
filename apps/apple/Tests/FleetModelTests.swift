@@ -3,6 +3,19 @@ import XCTest
 @testable import ARGOS
 #endif
 final class FleetModelTests: XCTestCase {
+    @MainActor func testDirectWaypointPreservesL2WithDelayedTelemetry() async {
+        let backend = DriveTestBackend()
+        let model = FleetModel(backend: backend)
+        await model.connect(endpoint: "test", prefix: "test"); model.stopObservation()
+        await backend.directWaypoint(); await model.refresh()
+        let sent = await model.send(id: 8, waypoint: .local(x: 5, y: 6, yaw: nil))
+        XCTAssertTrue(sent)
+        let level = await backend.level; XCTAssertEqual(level, "waypoint_direct")
+        let takeovers = await backend.takeovers; XCTAssertEqual(takeovers, 0)
+        let count = await backend.waypointsSent; XCTAssertEqual(count, 1)
+        await model.disconnect()
+    }
+
     @MainActor func testDiscardBeforeDelayedWaypointModeAckNeverDispatches() async {
         let backend = DriveTestBackend()
         let model = FleetModel(backend: backend)
@@ -323,6 +336,7 @@ actor DriveTestBackend: FleetBackend {
     var reportAge = 0.0
     var level = "teleop"
     var waypointsSent = 0
+    func directWaypoint() { reportAge = 60; level = "waypoint_direct" }
     func forestDelay(age: Double) { reportAge = age; level = "waypoint" }
     var movingIDs: [UInt64] = []
     var slowFirst = false
@@ -352,7 +366,7 @@ actor DriveTestBackend: FleetBackend {
         FleetSnapshot(link: connected ? "healthy" : "stale", fleetAge: 0, rovers: [RoverView(id: 8, membership: connected ? "online" : "stale", pose: RoverPose(x: 0, y: 0, yaw: 0), poseAge: connected ? reportAge : 5, goal: nil, goalAge: nil, commandPhase: "none", commandToken: nil), RoverView(id:9,membership:connected ? "online":"stale",pose:RoverPose(x:2,y:0,yaw:0),poseAge:connected ? reportAge:5,goal:nil,goalAge:nil,commandPhase:"none",commandToken:nil)], notice: nil)
     }
     func operatorTelemetry() async -> String {
-        let authority: [String: Any] = ["run_id":"test","requested_level":level,"effective_level":level,"active_source":"operator","safety":"clear","reason":"ready","revision":revision,"token":token,"result":"accepted","supported_levels":["teleop","assisted_teleop","waypoint"],"age":connected ? reportAge : 1]
+        let authority: [String: Any] = ["run_id":"test","requested_level":level,"effective_level":level,"active_source":"operator","safety":"clear","reason":"ready","revision":revision,"token":token,"result":"accepted","supported_levels":["teleop","assisted_teleop","waypoint","waypoint_direct"],"age":connected ? reportAge : 1]
         let cloud: [String:Any] = ["version":1,"frameID":"local-A","sequence":1,"source":"features","age":0,"points":[[0,0,0]]]
         let hardware: [String: Any] = ["ready":true,"armed":hardwareArmed,"arming":false,"reason":hardwareArmed ? "Armed" : "Disarmed","age":connected ? reportAge : 1]
         var first: [String: Any] = ["cloud":cloud,"hardware":hardware]

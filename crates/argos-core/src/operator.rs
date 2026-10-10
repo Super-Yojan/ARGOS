@@ -115,7 +115,7 @@ impl OperatorCache {
                     .ok_or_else(|| invalid("missing level"))?;
                 if !matches!(
                     level,
-                    "teleop" | "assisted_teleop" | "waypoint" | "supervised" | "target_search"
+                    "teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search"
                 ) || v["revision"].as_u64().is_none()
                 {
                     return Err(invalid("invalid authority"));
@@ -217,7 +217,7 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
         "autonomy" => {
             if !matches!(
                 value["level"].as_str(),
-                Some("teleop" | "assisted_teleop" | "waypoint" | "supervised" | "target_search")
+                Some("teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search")
             ) {
                 return Err(invalid("invalid level"));
             }
