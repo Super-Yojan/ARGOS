@@ -5,6 +5,10 @@ path=File.join(root,'apps/apple/ARGOS.xcodeproj')
 project=Xcodeproj::Project.new(path)
 shared=project.main_group.new_group('Shared','Shared')
 source_refs=Dir[File.join(root,'apps/apple/Shared/*.swift')].sort.map { |file| shared.new_file(File.basename(file)) }
+%w[Views Models Controllers Support].each do |folder|
+ group=shared.new_group(folder,folder)
+ source_refs += Dir[File.join(root,"apps/apple/Shared/#{folder}/*.swift")].sort.map { |file| group.new_file(File.basename(file)) }
+end
 generated=project.main_group.new_group('Generated','Generated')
 swift=generated.new_file('ArgosCore.swift')
 framework=generated.new_file('ArgosCore.xcframework')
