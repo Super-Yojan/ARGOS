@@ -85,14 +85,15 @@ record_docker() {
         local ready=0
         for i in 1 2 3 4 5 6 7 8 9 10; do
           sleep 2
-          if docker info >/dev/null 2>&1; then
+          # The socket is root-owned. `docker info` without sudo is a false negative.
+          if sudo docker info >/dev/null 2>&1; then
             ready=1
             break
           fi
         done
         if [[ "$ready" == "1" ]]; then
           echo "dockerd: started"
-          docker info 2>&1 | sed -n '1,30p' || true
+          sudo docker info 2>&1 | sed -n '1,30p' || true
           echo "image tag confirmed earlier via Docker Hub API; pull is skipped here because the editor is installed from the Unity tarball."
         else
           echo "dockerd: failed to become ready"
