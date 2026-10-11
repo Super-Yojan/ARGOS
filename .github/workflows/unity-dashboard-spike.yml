@@ -1,0 +1,89 @@
+# Optional. Not on pull_request: this repo has no Unity license secrets yet, and a
+# required check would fail every push. Run it by hand after the secrets exist.
+name: unity-dashboard-spike
+
+on:
+  workflow_dispatch:
+
+jobs:
+  editmode:
+    name: EditMode tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: EditMode tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: spikes/unity-dashboard
+          unityVersion: 6000.3.26f1
+          testMode: EditMode
+          artifactsPath: spikes/unity-dashboard/artifacts/test-runner
+          customParameters: -nographics
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editmode-results
+          path: spikes/unity-dashboard/artifacts/test-runner
+          if-no-files-found: warn
+
+  linux-player:
+    name: Linux IL2CPP player and capture
+    needs: editmode
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux player
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: spikes/unity-dashboard
+          unityVersion: 6000.3.26f1
+          targetPlatform: StandaloneLinux64
+          buildsPath: spikes/unity-dashboard/artifacts/build
+          customParameters: -nographics
+      - name: Capture under Xvfb
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb ffmpeg mesa-utils libgl1-mesa-dri libglu1-mesa \
+            libgtk-3-0t64 libnss3 libxss1 libasound2t64 libcap2 libnotify4 libxtst6
+          player="$(find spikes/unity-dashboard/artifacts/build -type f -name '*.x86_64' | head -n 1)"
+          test -n "$player"
+          capture="spikes/unity-dashboard/artifacts/capture"
+          mkdir -p "$capture"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+          export MESA_GL_VERSION_OVERRIDE=4.5
+          Xvfb :99 -screen 0 1280x720x24 +extension GLX +render -noreset &
+          xvfb_pid=$!
+          sleep 1
+          DISPLAY=:99 "$player" \
+            -screen-fullscreen 0 -screen-width 1280 -screen-height 720 \
+            -force-glcore \
+            -logFile spikes/unity-dashboard/artifacts/player.log \
+            -argosCaptureDir "$capture" -argosQuit &
+          player_pid=$!
+          sleep 2
+          DISPLAY=:99 ffmpeg -y -f x11grab -video_size 1280x720 -framerate 12 -i :99 \
+            -t 12 -pix_fmt yuv420p "$capture/fleet-overview.mp4"
+          wait "$player_pid" || true
+          kill "$xvfb_pid" || true
+      - name: Upload player and capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-player-capture
+          path: |
+            spikes/unity-dashboard/artifacts/build
+            spikes/unity-dashboard/artifacts/capture
+            spikes/unity-dashboard/artifacts/player.log
+          if-no-files-found: warn
