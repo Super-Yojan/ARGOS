@@ -9,6 +9,7 @@ struct FleetView: View {
   @AppStorage("prefix") private var prefix = "terra/phone"
   @StateObject private var drive = RoverDriveController()
   @StateObject private var renderer = RoverSceneController()
+  @State private var showPlannerPaths = false
   @State private var missions = false
   @State private var settings = false
   @State private var camera = FieldCamera()
@@ -78,6 +79,9 @@ struct FleetView: View {
           )
           .frame(width: geometry.size.width, height: geometry.size.height)
           .allowsHitTesting(false).accessibilityHidden(true)
+          if showPlannerPaths, let id = focused {
+            plannerPaths(id: id, size: geometry.size).allowsHitTesting(false)
+          }
           ForEach(model.sceneRovers, id: \.id) { rover in
             if let pose = rover.pose {
               let point = camera.screen(x: pose.x, y: pose.y, size: geometry.size)
@@ -297,6 +301,25 @@ struct FleetView: View {
           .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       }
       autonomyControls(rover)
+      Toggle("Show planner paths", isOn: $showPlannerPaths)
+        .font(.caption).accessibilityIdentifier("show-planner-paths")
+      if showPlannerPaths {
+        if let route = model.authorities[rover.id]?.globalRoute, !route.isEmpty {
+          Text("A* route · \(route.count) points · dotted line")
+            .font(.caption).accessibilityIdentifier("astar-route-summary")
+        }
+        if let trace = plannerTrace(rover.id) {
+          Text("\(trace.accepted) passed · \(trace.candidates.count - trace.accepted) rejected")
+            .font(.caption).accessibilityIdentifier("planner-path-counts")
+          Text("Solid: passed · dashed: rejected · bold: selected")
+            .font(.caption2).foregroundStyle(.secondary)
+          if !trace.rejectionSummary.isEmpty {
+            Text(trace.rejectionSummary).font(.caption2).foregroundStyle(.secondary)
+          }
+        } else {
+          Text("Waiting for fresh planner paths").font(.caption).foregroundStyle(.secondary)
+        }
+      }
       searchControls(rover)
       HStack {
         Text(
@@ -645,6 +668,57 @@ struct FleetView: View {
     guard focused != nil, !drive.enabled else { return }
     let world = camera.world(point, size: size)
     draft = (world.x, world.y)
+  }
+  private func plannerTrace(_ id: UInt64) -> PlannerTrace? {
+    guard let authority = model.authorities[id], authority.fresh,
+          let trace = authority.plannerTrace, trace.valid, trace.age + authority.age < 0.5, !trace.candidates.isEmpty else { return nil }
+    return trace
+  }
+  private func plannerPaths(id: UInt64, size: CGSize) -> some View {
+    Canvas { context, size in
+      if let authority = model.authorities[id], authority.fresh,
+         let route = authority.globalRoute, !route.isEmpty, route.count <= 512,
+         route.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isFinite) }) {
+        let points = route.compactMap { point -> CGPoint? in
+          guard let projected = model.mapScenePoint(id: id, x: point[0], y: point[1]) else { return nil }
+          return camera.screen(x: projected.x, y: projected.y, size: size)
+        }
+        if let first = points.first {
+          var routePath = Path(); routePath.move(to: first)
+          points.dropFirst().forEach { routePath.addLine(to: $0) }
+          context.stroke(routePath, with: .color(.white.opacity(0.8)),
+            style: StrokeStyle(lineWidth: 2, dash: [1, 5]))
+        }
+      }
+      guard let trace = plannerTrace(id) else { return }
+      // Draw the selected candidate last so it remains visible above the fan.
+      let order = trace.candidates.indices.filter { $0 != trace.selected }
+        + (trace.selected.map { [$0] } ?? [])
+      for index in order {
+        let candidate = trace.candidates[index]
+        let selected = index == trace.selected
+        let rejected = candidate.rejection != nil
+        let points = candidate.points_mm.compactMap { offset -> CGPoint? in
+          guard let point = model.mapScenePoint(id: id,
+            x: trace.origin.x + Double(offset[0]) / 1000,
+            y: trace.origin.y + Double(offset[1]) / 1000) else { return nil }
+          return camera.screen(x: point.x, y: point.y, size: size)
+        }
+        guard let first = points.first else { continue }
+        var path = Path(); path.move(to: first)
+        points.dropFirst().forEach { path.addLine(to: $0) }
+        context.stroke(path, with: .color(.white.opacity(selected ? 1 : rejected ? 0.2 : 0.45)),
+          style: StrokeStyle(lineWidth: selected ? 3 : 1, dash: rejected ? [3, 3] : []))
+        if rejected, let end = points.last {
+          var mark = Path()
+          mark.move(to: CGPoint(x: end.x - 2, y: end.y - 2))
+          mark.addLine(to: CGPoint(x: end.x + 2, y: end.y + 2))
+          mark.move(to: CGPoint(x: end.x - 2, y: end.y + 2))
+          mark.addLine(to: CGPoint(x: end.x + 2, y: end.y - 2))
+          context.stroke(mark, with: .color(.white.opacity(0.4)), lineWidth: 1)
+        }
+      }
+    }.clipped().accessibilityHidden(true)
   }
   private func ground(size: CGSize) -> some View {
     Canvas { context, size in

@@ -6,3 +6,8 @@
 .DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Unity-generated caches, editor logs, and per-user settings.
+/spikes/unity-dashboard/Library/
+/spikes/unity-dashboard/Logs/
+/spikes/unity-dashboard/UserSettings/

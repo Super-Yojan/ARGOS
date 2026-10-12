@@ -154,6 +154,16 @@ final class FleetModelTests: XCTestCase {
         cloud.age = 0; cloud.points = [[.nan, 0, 0]]; XCTAssertFalse(cloud.usable)
         cloud.points = Array(repeating: [0,0,0], count: 4097); XCTAssertFalse(cloud.usable)
     }
+    func testPlannerTraceBoundsSelectionAndFreshness() throws {
+        let json = #"{"age":0.1,"origin":{"x":1,"y":2,"yaw":0},"candidates":[{"velocity":{"linear":0.2,"angular":0},"points_mm":[[0,0],[100,0]],"rejection":null},{"velocity":{"linear":0.3,"angular":0},"points_mm":[[0,0]],"rejection":"unknown"}],"selected":0}"#
+        var trace = try JSONDecoder().decode(PlannerTrace.self, from: Data(json.utf8))
+        XCTAssertTrue(trace.valid)
+        XCTAssertEqual(trace.accepted, 1)
+        XCTAssertEqual(trace.rejectionSummary, "1 unknown")
+        trace.selected = 1; XCTAssertFalse(trace.valid)
+        trace.selected = 0; trace.age = 0.5; XCTAssertFalse(trace.valid)
+        trace.age = 0; trace.candidates[0].points_mm = [[0]]; XCTAssertFalse(trace.valid)
+    }
     func testAutonomyRequiresFreshReportedSupportedLevelAndAcknowledgement() throws {
         var authority = VehicleAuthority(runID: "run", requestedLevel: "teleop", effectiveLevel: "teleop", activeSource: "operator", safety: "active", reason: "ready", revision: 4, token: "takeover", result: "accepted", supportedLevels: ["teleop", "waypoint"], age: 0)
         XCTAssertTrue(authority.fresh)
