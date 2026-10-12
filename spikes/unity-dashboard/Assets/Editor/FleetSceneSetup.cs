@@ -77,6 +77,7 @@ namespace Argos.Fleet.EditorTools
 
             var fleet = new GameObject("FleetDashboard");
             fleet.AddComponent<FleetDashboard>();
+            ReferenceRuntimeShaders();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[]
@@ -84,6 +85,37 @@ namespace Argos.Fleet.EditorTools
                 new EditorBuildSettingsScene(ScenePath, true),
             };
             AssetDatabase.SaveAssets();
+        }
+
+        // Disabled renderers still pull these materials into the player, so Shader.Find
+        // and Resources.Load cannot lose them to variant stripping.
+        static void ReferenceRuntimeShaders()
+        {
+            var names = new[]
+            {
+                "ArgosFleetUnlit",
+                "ArgosFleetOpaque",
+                "ArgosTerrainBasemap",
+                "ArgosOccupancyOverlay",
+            };
+            foreach (var name in names)
+            {
+                var path = "Assets/Resources/" + name + ".mat";
+                var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (material == null)
+                {
+                    Debug.LogError("ARGOS shader material missing: " + path);
+                    continue;
+                }
+
+                var marker = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                marker.name = "shader-ref-" + name;
+                marker.SetActive(false);
+                marker.GetComponent<Renderer>().sharedMaterial = material;
+                var collider = marker.GetComponent<Collider>();
+                if (collider != null)
+                    Object.DestroyImmediate(collider);
+            }
         }
     }
 }

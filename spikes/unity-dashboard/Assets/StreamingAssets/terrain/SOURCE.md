@@ -20,7 +20,7 @@ The global tile set also mixes other providers. This spike ships only the one ti
 
 ## Imagery
 
-`gmu-fairfax-naip.png` is a 1024×1024 export of USGS NAIP imagery for that tile's bounding box, from The National Map ImageServer (`USGSNAIPImagery`). NAIP is a U.S. Government work and is in the public domain.
+`gmu-fairfax-naip.png` is a 4096×4096 USGS NAIP image of that tile's bounding box, from The National Map ImageServer (`USGSNAIPImagery`). The server rejects one export above its size limit, so this file is four 2048×2048 quadrants of the same bbox stitched together. NAIP is a U.S. Government work and is in the public domain.
 
 `NAIP imagery courtesy of the U.S. Geological Survey.`
 

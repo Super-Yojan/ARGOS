@@ -6,10 +6,11 @@ Shader "Argos/FleetUnlit"
     }
     SubShader
     {
-        Tags { "Queue"="Transparent" "RenderType"="Transparent" "IgnoreProjector"="True" }
+        Tags { "Queue"="Overlay" "RenderType"="Transparent" "IgnoreProjector"="True" }
         LOD 100
         Blend SrcAlpha OneMinusSrcAlpha
         ZWrite Off
+        ZTest Always
         Cull Off
 
         Pass
@@ -45,4 +46,5 @@ Shader "Argos/FleetUnlit"
             ENDCG
         }
     }
+    Fallback "Unlit/Color"
 }

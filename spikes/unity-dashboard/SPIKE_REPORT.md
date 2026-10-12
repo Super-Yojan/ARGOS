@@ -121,7 +121,7 @@ The ground is an offline patch centered on the ARGOS / Zorvane anchor, George Ma
 
 Elevation is Terrarium tile `15/9347/12543` from the AWS Open Data bucket `elevation-tiles-prod` (Mapzen / Tilezen packaging), file `Assets/StreamingAssets/terrain/gmu-fairfax-terrarium.png`. Height is `(R * 256 + G + B / 256) - 32768`. The anchor pixel is subtracted so the campus origin is `y = 0`. Fairfax is USGS 3DEP, which The National Map places in the public domain; USGS asks for credit. The bundle says: `United States 3DEP terrain data courtesy of the U.S. Geological Survey.` Zoom 16 is not in that bucket for this tile, so the patch is the zoom-15 tile (about 4 m per pixel).
 
-Imagery is a 1024×1024 USGS NAIP export of the same bounds, `gmu-fairfax-naip.png`. NAIP is a U.S. Government work, public domain. The material dims it and pulls a little saturation out. It does not fog the photo. Attribution is in `Assets/StreamingAssets/terrain/SOURCE.md`.
+Imagery is a 4096×4096 USGS NAIP mosaic of the same bounds, `gmu-fairfax-naip.png` (four 2048 exports; the ImageServer rejects a single larger request). NAIP is a U.S. Government work, public domain. The material dims it and pulls a little saturation out. It does not fog the photo. Attribution is in `Assets/StreamingAssets/terrain/SOURCE.md`.
 
 ### Occupancy
 
@@ -158,7 +158,13 @@ TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 
 The light square beside the rovers is the fake publisher’s occupied block from that build: four cells at value 90, one metre across, painted the same pale gray as free space (`Color32` around 196, 200, 206). Free cells covered the rest of each 8 m quad at low alpha, so the grids read as flat trapezoids and the occupied block read as a stray tile. It was not a ninth rover.
 
-This revision pulls the camera to about (-24, 78, -36) m, looking at (6, 0, 10), field of view 46°, far clip 900 m. The ground in frame is about 180 m of campus around the rover cluster. The basemap is the same NAIP bounds at 1024×1024, dimmed (`tint` 0.78) and only slightly desaturated (0.75), with no fog. Grids are 24×24 at 0.5 m. Unknown stays clear, free is a faint tint, occupied cells are dark, and each quad has a hairline border. Unselected rovers darken in place instead of dropping to 0.35 alpha. Unity was not run on this VM, so the new captures still have to come from the Mac.
+`0904907` pulls the camera to about (-24, 78, -36) m, looking at (6, 0, 10), field of view 46°, far clip 900 m. The ground in frame is about 180 m of campus around the rover cluster. That basemap was 1024×1024, dimmed (`tint` 0.78) and only slightly desaturated (0.75), with no fog. Grids are 24×24 at 0.5 m. Unknown stays clear, free is a faint tint, occupied cells are dark, and each quad has a hairline border.
+
+### Mac pass at 0904907, grids were magenta
+
+The same script passed again: 8 rovers, 8 grids. The captures were one solid magenta polygon and a single rover chip. The occupancy shader was already in Always Included Shaders, and the previous build had drawn grids, so this was not a missing file reference. The new border pass returned before `tex2D`. That sample is then in non-uniform control flow, the Mac player drops the pass, and Unity draws `Hidden/InternalErrorShader` (`#FF00FF`). That shader is opaque, so it covered the other seven rovers. The overview and the selected frame looked the same because almost the whole cluster was that plate. The one visible chip did change, which is why selection was not readable.
+
+The fragment shader now samples the grid on every pixel, then blends the hairline. Runtime materials are `Assets/Resources/*.mat`, and the Mac scene build adds a disabled renderer for each, so the player keeps FleetUnlit, FleetOpaque, TerrainBasemap, and OccupancyOverlay. Rover materials use queue Overlay and `ZTest Always`, so they draw above the grids and the terrain. Unselected rovers darken to 0.35 of their color and keep alpha at 0.92, so they stay solid chips. The basemap is now 4096×4096, four NAIP quadrants of the same bounds. `check-magenta.py` fails the Mac script when either capture has more than 5000 pure `#FF00FF` pixels. Unity was not run on this VM.
 
 ### Pending on the Mac
 
@@ -166,7 +172,7 @@ This revision pulls the camera to about (-24, 78, -36) m, looking at (6, 0, 10),
 ./spikes/unity-dashboard/run-maps-mac.sh
 ```
 
-That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1 and both `overview.png` and `selected.png` are written. Stop anything already listening on `tcp/127.0.0.1:7447`. The log line `ARGOS camera: campus frame` confirms this framing.
+That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1, both captures exist, and neither has more than 5000 pure `#FF00FF` pixels. Stop anything already listening on `tcp/127.0.0.1:7447`. The log line `ARGOS shader ArgosOccupancyOverlay:` names the shader the player actually bound.
 
 ## Exact errors
 

@@ -125,12 +125,11 @@ namespace Argos.Fleet
             var filter = root.AddComponent<MeshFilter>();
             filter.sharedMesh = mesh;
             var renderer = root.AddComponent<MeshRenderer>();
-            var shader = Shader.Find("Argos/OccupancyOverlay");
-            if (shader == null)
-                shader = Shader.Find("Sprites/Default");
-            if (shader == null)
-                shader = Shader.Find("Unlit/Transparent");
-            var material = new Material(shader);
+            var material = ArgosShaders.Create(
+                "ArgosOccupancyOverlay",
+                "Argos/OccupancyOverlay",
+                "Sprites/Default",
+                "Unlit/Transparent");
             material.SetColor("_Color", Color.white);
             material.SetColor("_Border", BorderColor(id));
             material.renderQueue = 3000;

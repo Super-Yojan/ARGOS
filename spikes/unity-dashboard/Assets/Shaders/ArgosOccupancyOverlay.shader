@@ -48,20 +48,19 @@ Shader "Argos/OccupancyOverlay"
 
             fixed4 frag(v2f input) : SV_Target
             {
+                // Sample in uniform control flow. A return before tex2D made the
+                // Mac player replace this shader with the magenta error shader.
+                fixed4 cell = tex2D(_MainTex, input.uv);
+                cell.rgb *= _Color.rgb;
+                cell.a *= _Color.a;
+                fixed4 line = _Border;
+                line.a *= _Color.a;
                 float edge = min(min(input.uv.x, 1.0 - input.uv.x), min(input.uv.y, 1.0 - input.uv.y));
-                if (edge < 0.016)
-                {
-                    fixed4 line = _Border;
-                    line.a *= _Color.a;
-                    return line;
-                }
-
-                fixed4 sample = tex2D(_MainTex, input.uv);
-                sample.rgb *= _Color.rgb;
-                sample.a *= _Color.a;
-                return sample;
+                float border = 1.0 - step(0.016, edge);
+                return lerp(cell, line, border);
             }
             ENDCG
         }
     }
+    Fallback "Unlit/Transparent"
 }

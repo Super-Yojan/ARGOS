@@ -11,8 +11,9 @@
 #
 # The script builds the aarch64 dylib, builds a Mono player, starts the fake
 # publisher (no Zorvane), and runs the player with -argosSource zenoh.
-# It exits nonzero unless the log contains ARGOS occupancy grids: N for N >= 1
-# and both overview.png and selected.png were written.
+# It exits nonzero unless the log contains ARGOS occupancy grids: N for N >= 1,
+# both overview.png and selected.png were written, and neither capture contains
+# a large area of pure magenta (#FF00FF), the missing-shader color.
 #
 # Stop anything already bound to the endpoint (default tcp/127.0.0.1:7447).
 #

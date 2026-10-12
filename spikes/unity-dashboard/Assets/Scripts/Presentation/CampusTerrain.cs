@@ -149,11 +149,11 @@ namespace Argos.Fleet
 
         static Material CreateMaterial(string imageryPath)
         {
-            var shader = Shader.Find("Argos/TerrainBasemap");
-            if (shader == null)
-                shader = Shader.Find("Unlit/Texture");
-            var material = new Material(shader);
-            if (File.Exists(imageryPath) && shader != null)
+            var material = ArgosShaders.Create(
+                "ArgosTerrainBasemap",
+                "Argos/TerrainBasemap",
+                "Unlit/Texture");
+            if (File.Exists(imageryPath))
             {
                 var imagery = LoadTexture(File.ReadAllBytes(imageryPath), mipmaps: true);
                 imagery.wrapMode = TextureWrapMode.Clamp;

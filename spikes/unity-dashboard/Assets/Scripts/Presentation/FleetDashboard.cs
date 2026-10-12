@@ -458,26 +458,22 @@ namespace Argos.Fleet
 
         static Material CreateMaterial()
         {
-            var shader = Shader.Find("Argos/FleetUnlit");
-            if (shader == null)
-                shader = Shader.Find("Sprites/Default");
-            if (shader == null)
-                shader = Shader.Find("Unlit/Color");
-            if (shader == null)
-                shader = Shader.Find("Standard");
-            var material = new Material(shader);
-            material.renderQueue = 3200;
+            var material = ArgosShaders.Create(
+                "ArgosFleetUnlit",
+                "Argos/FleetUnlit",
+                "Sprites/Default",
+                "Unlit/Color");
+            // Overlay, and the shader tests depth as Always, so grids and terrain cannot cover a rover.
+            material.renderQueue = 4000;
             return material;
         }
 
         static Material CreateOpaqueMaterial()
         {
-            var shader = Shader.Find("Argos/FleetOpaque");
-            if (shader == null)
-                shader = Shader.Find("Unlit/Color");
-            if (shader == null)
-                return CreateMaterial();
-            return new Material(shader);
+            return ArgosShaders.Create(
+                "ArgosFleetOpaque",
+                "Argos/FleetOpaque",
+                "Unlit/Color");
         }
 
         void MaybeCapture()
