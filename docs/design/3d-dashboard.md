@@ -224,6 +224,8 @@ Note: the shipping Apple app uses SceneKit, not RealityKit.
 
 The spike is time-boxed (*proposed*: one week). Output: a short decision record in `docs/` that scores both options on the five criteria above, with a measured 20-rover frame time on each, and a recommendation. Issue: [ARGOS #15](https://github.com/Super-Yojan/ARGOS/issues/15).
 
+Decision record: [3d-framework-decision.md](3d-framework-decision.md) (proposed: Unity C3).
+
 ## 9. Issues
 
 | Issue | Scope |
