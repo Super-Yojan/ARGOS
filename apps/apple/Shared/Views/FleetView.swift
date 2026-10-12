@@ -108,23 +108,27 @@ struct FleetView: View {
               540.0 + (draft == nil ? 0 : 80)
               + (DashboardPresentation.attentionReason(vehicle) == nil ? 0 : 55)
               + (model.snapshot.notice == nil ? 0 : 45)
-            let panelHeight = max(120, min(contentHeight, geometry.size.height - 80))
+            let panelHeight = max(1, min(contentHeight + 55, geometry.size.height - 24))
             if sceneState.inspecting || draft != nil {
-            ScrollView { robotControls(vehicle) }
-              .frame(width: min(310, geometry.size.width - 32), height: panelHeight)
-              .background(surface.opacity(0.96)).overlay { RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.4), lineWidth: 1) }
-              .position(controlPoint(anchor, size: geometry.size, height: panelHeight))
+            MovableRobotPanel(title: "T-\(vehicle.id) · \(vehicle.membership)",
+              containerSize: geometry.size,
+              panelSize: CGSize(width: max(1, min(310, geometry.size.width - 24)), height: panelHeight),
+              initialCenter: controlPoint(anchor, size: geometry.size, height: panelHeight),
+              close: { wider() }) { robotControls(vehicle) }
+              .id(vehicle.id)
             } else {
-              VStack(alignment: .leading, spacing: 8) {
-                Text("T-\(vehicle.id)").font(.headline)
-                Text(task(vehicle)).font(.caption)
-                if let reason = DashboardPresentation.attentionReason(vehicle) {
-                  Label(reason, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
-                }
-                Button("Inspect & controls") { sceneState.inspecting = true }
-                  .accessibilityIdentifier("inspect-rover")
-              }.padding(12).background(surface.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
-                .position(notePoint(anchor, size: geometry.size))
+              MovableRobotPanel(title: "T-\(vehicle.id)", containerSize: geometry.size,
+                panelSize: CGSize(width: max(1, min(250, geometry.size.width - 24)), height: max(1, min(165, geometry.size.height - 24))),
+                initialCenter: notePoint(anchor, size: geometry.size), close: { wider() }) {
+                VStack(alignment: .leading, spacing: 8) {
+                  Text(task(vehicle)).font(.caption)
+                  if let reason = DashboardPresentation.attentionReason(vehicle) {
+                    Label(reason, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                  }
+                  Button("Inspect & controls") { sceneState.inspecting = true }
+                    .accessibilityIdentifier("inspect-rover")
+                }.padding(12)
+              }.id(vehicle.id)
             }
           }
           VStack(alignment: .leading, spacing: 5) {
@@ -273,15 +277,6 @@ struct FleetView: View {
   }
   private func robotControls(_ rover: RoverView) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("T-\(rover.id) · \(rover.membership)").font(.headline)
-        Spacer()
-        Button {
-          wider()
-        } label: {
-          Image(systemName: "xmark")
-        }.buttonStyle(.plain).accessibilityLabel("Return to the place")
-      }
       Text(task(rover)).font(.subheadline)
       Text(
         rover.pose.map {
@@ -294,6 +289,13 @@ struct FleetView: View {
       Text(model.localizations[rover.id]?.reason ?? "Geographic alignment unavailable").font(
         .caption
       ).foregroundStyle(.secondary)
+      if let location = model.localizations[rover.id],
+         let latitude = location.gpsLatitude, let longitude = location.gpsLongitude,
+         latitude.isFinite, longitude.isFinite {
+        Text(String(format: "GPS %.5f, %.5f · ±%.0f m · fix %.1f s old", latitude, longitude,
+          location.gpsAccuracy ?? -1, (location.gpsFixAge ?? 0) + location.age))
+          .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      }
       autonomyControls(rover)
       searchControls(rover)
       HStack {

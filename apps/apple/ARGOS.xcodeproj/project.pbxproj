@@ -21,6 +21,7 @@
 		2A9B7723691E19D891E5482A /* FleetMissionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B276A52ABD8AAB7BA98BA385 /* FleetMissionView.swift */; };
 		3384CE73D83C9C2AEB492616 /* RoverSceneController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82C8E271D9C03F1B49C2556 /* RoverSceneController.swift */; };
 		344F86102C5D18B8F5697A9F /* NativeBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F79B1F25F83146B96F9C47 /* NativeBackend.swift */; };
+		34AA32BC908D0F87FCC549AC /* MovableRobotPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87FCB1D31E75A2CFB1284A23 /* MovableRobotPanel.swift */; };
 		35E25E3D4DDE252E0256464D /* FieldMarkerPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1CE6BDAEE33A7DBABDE65F /* FieldMarkerPlacement.swift */; };
 		361A05B5E80D963BC28DEA13 /* NativeBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F79B1F25F83146B96F9C47 /* NativeBackend.swift */; };
 		362C7E234C60C2C0F90E10C1 /* LocalMapProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4071F44312C3D13236F2FA18 /* LocalMapProjection.swift */; };
@@ -114,6 +115,7 @@
 		EFD86D3F2E4E0EF164B54155 /* PointCloudFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ECFFC07AAF88097CD728E2 /* PointCloudFrame.swift */; };
 		F16DB855D93278CECB8FC5B0 /* RoverScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 740267B157E80A3705344214 /* RoverScene.swift */; };
 		F18207FE38067FC7A3507391 /* FleetSceneState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48544A74F0AF156D09A00920 /* FleetSceneState.swift */; };
+		F2267A7B70CC1187948B5FB2 /* MovableRobotPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87FCB1D31E75A2CFB1284A23 /* MovableRobotPanel.swift */; };
 		F4463308F4AB5CBF297295C0 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A8601AD957337D767B4F0AA2 /* SwiftUI.framework */; };
 		F530CD669B087277371B8153 /* ArgosCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8D35D4C94818A758F0E2 /* ArgosCore.swift */; };
 		F5A71021779D271C12AF54F4 /* LocalMapProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4071F44312C3D13236F2FA18 /* LocalMapProjection.swift */; };
@@ -186,6 +188,7 @@
 		7E4CEE2A6057B032DD19400F /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/GameController.framework; sourceTree = DEVELOPER_DIR; };
 		845FE4680B3A9EF13D2820C2 /* LocalMap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalMap.swift; sourceTree = "<group>"; };
 		8733544AA067A4E8181FF6B2 /* TargetSearchState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TargetSearchState.swift; sourceTree = "<group>"; };
+		87FCB1D31E75A2CFB1284A23 /* MovableRobotPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MovableRobotPanel.swift; sourceTree = "<group>"; };
 		891B53752B16E4C9F468B84F /* ProposalState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProposalState.swift; sourceTree = "<group>"; };
 		8C0E20DC1A0D0D99135B4851 /* RoverDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoverDetailView.swift; sourceTree = "<group>"; };
 		8C2E273D85C12EDB80937A11 /* OccupancyState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OccupancyState.swift; sourceTree = "<group>"; };
@@ -452,6 +455,7 @@
 				8C0E20DC1A0D0D99135B4851 /* RoverDetailView.swift */,
 				F4F93F6C74BAF5D1D16DAEEA /* RoverJoystick.swift */,
 				740267B157E80A3705344214 /* RoverScene.swift */,
+				87FCB1D31E75A2CFB1284A23 /* MovableRobotPanel.swift */,
 			);
 			name = Views;
 			path = Views;
@@ -755,6 +759,7 @@
 				94A0DD841B8FC4440485AC2E /* RouterController.swift in Sources */,
 				2278AB72A847FFE67078F003 /* FleetSceneState.swift in Sources */,
 				89578BC4B40E35099233BB46 /* SupervisionTiming.swift in Sources */,
+				F2267A7B70CC1187948B5FB2 /* MovableRobotPanel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -806,6 +811,7 @@
 				B12457DF590C9F9439615119 /* RouterController.swift in Sources */,
 				F18207FE38067FC7A3507391 /* FleetSceneState.swift in Sources */,
 				C92C5B56C05D62A1ECDE44F2 /* SupervisionTiming.swift in Sources */,
+				34AA32BC908D0F87FCC549AC /* MovableRobotPanel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

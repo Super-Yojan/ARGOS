@@ -10,6 +10,9 @@ struct GeographicReference: Codable {
   var tracking: String
   var age: Double
   var gpsAccuracy: Double?
+  var gpsLatitude: Double?
+  var gpsLongitude: Double?
+  var gpsFixAge: Double?
   var headingAccuracy: Double?
   var originLatitude: Double?
   var originLongitude: Double?
