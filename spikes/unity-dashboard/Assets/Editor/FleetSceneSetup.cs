@@ -97,6 +97,7 @@ namespace Argos.Fleet.EditorTools
                 "ArgosFleetOpaque",
                 "ArgosTerrainBasemap",
                 "ArgosOccupancyOverlay",
+                "ArgosCampusBuilding",
             };
             foreach (var name in names)
             {

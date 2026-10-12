@@ -300,6 +300,7 @@ namespace Argos.Fleet
             _terrain = CampusTerrain.TryCreate(transform);
             if (_terrain != null)
             {
+                CampusBuildings.TryCreate(transform, _terrain);
                 FrameCampus();
                 return;
             }

@@ -25,3 +25,5 @@ The global tile set also mixes other providers. This spike ships only the one ti
 `NAIP imagery courtesy of the U.S. Geological Survey.`
 
 The Unity material dims the photo and pulls a little saturation out. It does not fog it. Rover status colors stay the brightest marks in the frame.
+
+Campus blocks on this photo are a separate OpenStreetMap extract. See `Assets/StreamingAssets/buildings/SOURCE.md`.

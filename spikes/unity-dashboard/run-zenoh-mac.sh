@@ -18,8 +18,8 @@
 #
 # Stop Zorvane first if it is already bound to port 7447.
 #
-# Terrain plus occupancy (fails unless a grid arrives, both captures exist, and
-# neither capture is a large field of pure magenta #FF00FF):
+# Terrain, buildings, and occupancy (fails unless a grid and a building arrive,
+# both captures exist, and neither capture is a large field of pure magenta #FF00FF):
 #   ./spikes/unity-dashboard/run-maps-mac.sh
 #
 # Zorvane, instead of the fake publisher (not what this script does):
@@ -298,6 +298,13 @@ if [[ "${ARGOS_REQUIRE_MAPS:-}" == 1 ]]; then
     log "Look at $ARTIFACTS/player.log and $ARTIFACTS/publisher.log"
     exit 1
   fi
+  building_line="$(grep -E 'ARGOS buildings: [0-9]+' "$ARTIFACTS/player.log" | tail -1 || true)"
+  building_count="$(printf '%s\n' "$building_line" | sed -n 's/.*ARGOS buildings: \([0-9][0-9]*\).*/\1/p')"
+  log "player says: ${building_line:-<no ARGOS buildings line>}"
+  if [[ -z "${building_count:-}" || "$building_count" -lt 1 ]]; then
+    log "FAIL: no campus building was built from the bundled OpenStreetMap extract."
+    exit 1
+  fi
   if [[ "$overview_bytes" -lt 1000 || "$selected_bytes" -lt 1000 ]]; then
     log "FAIL: overview.png and selected.png were not both captured."
     exit 1
@@ -306,7 +313,7 @@ if [[ "${ARGOS_REQUIRE_MAPS:-}" == 1 ]]; then
     log "FAIL: a capture is filled with pure magenta (#FF00FF). A runtime shader is missing from the player."
     exit 1
   fi
-  log "PASS: live rovers $live_count, occupancy grids $grid_count"
+  log "PASS: live rovers $live_count, occupancy grids $grid_count, buildings $building_count"
   log "captures: $CAPTURE"
   exit 0
 fi

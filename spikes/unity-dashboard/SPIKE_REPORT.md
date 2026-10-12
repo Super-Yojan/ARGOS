@@ -144,13 +144,19 @@ TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 
 `TERRA_ROVER_COUNT` can be 15 to 20. Do not also run `argos-fleet-publisher` against that port; both write `fleet/state`.
 
+### Buildings
+
+`Assets/StreamingAssets/buildings/gmu-fairfax.json` is an offline OpenStreetMap extract, © OpenStreetMap contributors, ODbL 1.0. The Overpass query on 2026-10-12 covers about 320 m around the ARGOS anchor, which is the maps camera's ~180 m ground frame plus a margin. Attribution and the query are in `Assets/StreamingAssets/buildings/SOURCE.md`.
+
+Each footprint is projected with `CampusAnchor` (`argos_core::Anchor`: +x north, +y west) and draped on the terrain. Extrusion is the OSM `height` tag when present, otherwise `building:levels` times 3.5 m, otherwise 10.5 m. In this extract **0** footprints have `height`, **5** have `building:levels` (Johnson Center and Planetary Hall at 14 m, Engineering Building and Exploratory Hall at 17.5 m, Horizon Hall at 21 m), and **39** use the 10.5 m default. The blocks are unlit gray-blue at alpha 0.62, queue 2800, depth writes off, so occupancy grids (queue 3000) and rovers (Overlay queue, `ZTest Always`) stay in front. `Argos/CampusBuilding` is in Always Included Shaders, `Assets/Resources/ArgosCampusBuilding.mat`, and a disabled scene renderer, with `Fallback "Unlit/Transparent"`.
+
 ### Passed on this VM
 
 | Check | Result |
 | --- | --- |
 | `cargo test -p argos-unity-bridge` | **PASS**, 6 tests, Zenoh **1.10.1**. `publisher_fleet_arrives_through_the_c_api` reads four occupancy grids through `argos_bridge_poll_map`. Rover 1’s grid is 24×24, resolution 0.5 m, origin centered on its pose, age under 0.5 s, outside cell `-1`, and a north-wall cell at least `80`. `fake_grids_keep_the_rover_in_free_space_and_draw_walls` checks all eight layouts. `map_index_omits_cells_and_the_grid_poll_keeps_them` checks the version index has no cell payload. `gmu_anchor_round_trips_through_argos_core` checks `Anchor` at `38.8297, -77.3075` for local `(12, 4)`. |
 | `cargo build -p argos-unity-bridge` | **PASS**. The dylib exports `argos_bridge_poll_map` and `argos_bridge_poll_map_index`. |
-| Unity player and the new EditMode tests | **Not run**. No license on this VM. `MapTests` covers the projection, Terrarium decode, the manifest anchor, cell placement, and the 0.5 s freshness window. |
+| Unity player and the new EditMode tests | **Not run**. No license on this VM. `MapTests` covers the projection, Terrarium decode, the manifest anchor, cell placement, the 0.5 s freshness window, building height rules, footprint triangulation, and the bundled Johnson Center sitting just north of the anchor. |
 
 ### Mac pass at a43945f, then the visual fix
 
@@ -172,7 +178,7 @@ The fragment shader now samples the grid on every pixel, then blends the hairlin
 ./spikes/unity-dashboard/run-maps-mac.sh
 ```
 
-That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1, both captures exist, and neither has more than 5000 pure `#FF00FF` pixels. Stop anything already listening on `tcp/127.0.0.1:7447`. The log line `ARGOS shader ArgosOccupancyOverlay:` names the shader the player actually bound.
+That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` and `ARGOS buildings: N` for N at least 1, both captures exist, and neither has more than 5000 pure `#FF00FF` pixels. Stop anything already listening on `tcp/127.0.0.1:7447`. `ARGOS shader ArgosCampusBuilding:` names the building shader the player bound.
 
 ## Exact errors
 

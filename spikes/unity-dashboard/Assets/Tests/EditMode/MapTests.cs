@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
@@ -99,6 +100,70 @@ namespace Argos.Fleet.Tests
             Assert.Less(free.a, 80);
             Assert.Greater(occupied.a, 200);
             Assert.Less(occupied.r, free.r);
+        }
+
+        [Test]
+        public void BuildingHeightPrefersOsmHeightThenLevelsThenDefault()
+        {
+            Assert.AreEqual(12.5f, BuildingHeight.Resolve("12.5", "4", out var source), 0.01f);
+            Assert.AreEqual("height", source);
+            Assert.AreEqual(14f, BuildingHeight.Resolve(null, "4", out source), 0.01f);
+            Assert.AreEqual("levels", source);
+            Assert.AreEqual(40f * 0.3048f, BuildingHeight.Resolve("40 ft", null, out source), 0.01f);
+            Assert.AreEqual("height", source);
+            Assert.AreEqual(BuildingHeight.DefaultMeters, BuildingHeight.Resolve("", "", out source), 0.01f);
+            Assert.AreEqual("default", source);
+            Assert.AreEqual(3f * BuildingHeight.MetersPerLevel, BuildingHeight.DefaultMeters, 0.01f);
+        }
+
+        [Test]
+        public void SquareFootprintTriangulatesToTwoTriangles()
+        {
+            var square = new List<Vector2>
+            {
+                new Vector2(0f, 0f),
+                new Vector2(4f, 0f),
+                new Vector2(4f, 3f),
+                new Vector2(0f, 3f),
+            };
+            var indices = PolygonTriangulator.Triangulate(square);
+            Assert.AreEqual(6, indices.Length);
+        }
+
+        [Test]
+        public void BundledBuildingsUseTheArgosAnchorAndRecordHeightSources()
+        {
+            var path = Path.Combine(Application.streamingAssetsPath, "buildings", "gmu-fairfax.json");
+            var file = JsonUtility.FromJson<CampusBuildingFile>(File.ReadAllText(path));
+            Assert.AreEqual(0, file.withHeight);
+            Assert.AreEqual(5, file.withLevels);
+            Assert.AreEqual(39, file.withDefault);
+            Assert.AreEqual(CampusAnchor.Latitude, file.anchorLatitude, 1e-9);
+            Assert.AreEqual(CampusAnchor.Longitude, file.anchorLongitude, 1e-9);
+            CampusBuildingDto johnson = null;
+            for (var i = 0; i < file.buildings.Length; i++)
+            {
+                if (file.buildings[i].name == "Johnson Center")
+                    johnson = file.buildings[i];
+            }
+
+            Assert.NotNull(johnson);
+            Assert.AreEqual("levels", johnson.heightSource);
+            Assert.AreEqual(4f * BuildingHeight.MetersPerLevel, johnson.heightMeters, 0.01f);
+            double latitude = 0d;
+            double longitude = 0d;
+            for (var i = 0; i < johnson.outline.Length; i++)
+            {
+                latitude += johnson.outline[i].lat;
+                longitude += johnson.outline[i].lon;
+            }
+
+            latitude /= johnson.outline.Length;
+            longitude /= johnson.outline.Length;
+            CampusAnchor.ToLocal(latitude, longitude, out var north, out var west);
+            Assert.Greater(north, 20d);
+            Assert.Less(north, 55d);
+            Assert.AreEqual(0d, west, 25d);
         }
     }
 
