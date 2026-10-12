@@ -12,7 +12,9 @@ use std::thread::{JoinHandle, sleep};
 use std::time::Duration;
 use zenoh::Wait;
 
-use crate::rover_layout;
+use crate::{
+    OCCUPANCY_RESOLUTION, OCCUPANCY_SIZE, occupancy_cells, occupancy_origin, rover_layout,
+};
 
 pub struct FleetPublisher {
     stop: Arc<AtomicBool>,
@@ -191,8 +193,31 @@ fn publish_once(
                 status.into_bytes(),
             )?;
         }
+        put(
+            session,
+            &format!("{prefix}/{id}/map/occupancy"),
+            occupancy_payload(id, sequence),
+        )?;
     }
     Ok(())
+}
+
+fn occupancy_payload(id: u64, sequence: u64) -> Vec<u8> {
+    let (origin_x, origin_y) = occupancy_origin(id);
+    serde_json::json!({
+        "schema_version": 1,
+        "rover_id": id,
+        "run_id": "spike",
+        "sequence": sequence,
+        "width": OCCUPANCY_SIZE,
+        "height": OCCUPANCY_SIZE,
+        "resolution": OCCUPANCY_RESOLUTION,
+        "origin_x": origin_x,
+        "origin_y": origin_y,
+        "occupancy": occupancy_cells(id),
+    })
+    .to_string()
+    .into_bytes()
 }
 
 fn autonomy_status(id: u64) -> Option<String> {

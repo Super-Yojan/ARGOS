@@ -18,6 +18,9 @@
 #
 # Stop Zorvane first if it is already bound to port 7447.
 #
+# Terrain plus occupancy (fails unless a grid arrives, and unless both captures exist):
+#   ./spikes/unity-dashboard/run-maps-mac.sh
+#
 # Zorvane, instead of the fake publisher (not what this script does):
 #   TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 #   then run the player yourself:
@@ -273,6 +276,34 @@ fi
 if [[ ! -f "$CAPTURE/presentation.txt" ]] || ! grep -q 'terra-' "$CAPTURE/presentation.txt"; then
   log "FAIL: player log counted rovers, but presentation.txt has no terra- rover."
   exit 1
+fi
+
+if [[ "${ARGOS_REQUIRE_MAPS:-}" == 1 ]]; then
+  grid_line="$(grep -E 'ARGOS occupancy grids: [0-9]+' "$ARTIFACTS/player.log" | tail -1 || true)"
+  grid_count="$(printf '%s\n' "$grid_line" | sed -n 's/.*ARGOS occupancy grids: \([0-9][0-9]*\).*/\1/p')"
+  log "player says: ${grid_line:-<no ARGOS occupancy grids line>}"
+  overview_bytes=0
+  selected_bytes=0
+  if [[ -f "$CAPTURE/overview.png" ]]; then
+    overview_bytes="$(wc -c < "$CAPTURE/overview.png" | tr -d ' ')"
+  fi
+  if [[ -f "$CAPTURE/selected.png" ]]; then
+    selected_bytes="$(wc -c < "$CAPTURE/selected.png" | tr -d ' ')"
+  fi
+  log "overview.png: ${overview_bytes} bytes"
+  log "selected.png: ${selected_bytes} bytes"
+  if [[ -z "${grid_count:-}" || "$grid_count" -lt 1 ]]; then
+    log "FAIL: no occupancy grid was received."
+    log "Look at $ARTIFACTS/player.log and $ARTIFACTS/publisher.log"
+    exit 1
+  fi
+  if [[ "$overview_bytes" -lt 1000 || "$selected_bytes" -lt 1000 ]]; then
+    log "FAIL: overview.png and selected.png were not both captured."
+    exit 1
+  fi
+  log "PASS: live rovers $live_count, occupancy grids $grid_count"
+  log "captures: $CAPTURE"
+  exit 0
 fi
 
 log "PASS: live rovers received: $live_count"

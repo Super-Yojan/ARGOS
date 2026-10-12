@@ -1,7 +1,9 @@
 //! Publisher puts real ARGOS topics. The Unity C API reads them back.
 use argos_unity_bridge::{
-    argos_bridge_close, argos_bridge_connected, argos_bridge_last_error, argos_bridge_link,
-    argos_bridge_open, argos_bridge_poll, c_string, rover_layout, serve,
+    OCCUPANCY_RESOLUTION, OCCUPANCY_SIZE, argos_bridge_close, argos_bridge_connected,
+    argos_bridge_last_error, argos_bridge_link, argos_bridge_open, argos_bridge_poll,
+    argos_bridge_poll_map, argos_bridge_poll_map_index, c_string, occupancy_cell, occupancy_origin,
+    rover_layout, serve,
 };
 use std::ffi::c_char;
 use std::net::TcpListener;
@@ -55,6 +57,20 @@ fn publisher_fleet_arrives_through_the_c_api() {
                     && rows[1]["status"] == "attention"
                     && rows[2]["status"] == "critical"
             })
+            && {
+                let maps =
+                    argos_bridge_poll_map_index(buf.as_mut_ptr().cast::<c_char>(), buf.len());
+                if maps < 0 {
+                    return false;
+                }
+                let index: serde_json::Value = serde_json::from_str(text(&buf, maps)).unwrap();
+                index["maps"].as_array().is_some_and(|rows| {
+                    rows.len() == 4
+                        && rows
+                            .iter()
+                            .all(|row| row["age"].as_f64().unwrap_or(1.0) < 0.5)
+                })
+            }
     });
 
     let mut link_buf = [0u8; 64];
@@ -81,6 +97,25 @@ fn publisher_fleet_arrives_through_the_c_api() {
             - rover["lastUpdateUnixSeconds"].as_f64().unwrap();
         assert!(age < 2.5, "fresh publisher sample looked stale: {age}");
     }
+
+    let grid_len = argos_bridge_poll_map(1, buf.as_mut_ptr().cast::<c_char>(), buf.len());
+    let grid: serde_json::Value = serde_json::from_str(text(&buf, grid_len)).unwrap();
+    let (origin_x, origin_y) = occupancy_origin(1);
+    assert_eq!(grid["id"], "terra-01");
+    assert_eq!(grid["width"], OCCUPANCY_SIZE);
+    assert_eq!(grid["height"], OCCUPANCY_SIZE);
+    assert!((grid["resolution"].as_f64().unwrap() - OCCUPANCY_RESOLUTION).abs() < 1e-9);
+    assert!((grid["originX"].as_f64().unwrap() - origin_x).abs() < 1e-6);
+    assert!((grid["originY"].as_f64().unwrap() - origin_y).abs() < 1e-6);
+    assert!(grid["age"].as_f64().unwrap() < 0.5);
+    let cells = grid["occupancy"].as_array().unwrap();
+    assert_eq!(cells.len(), (OCCUPANCY_SIZE * OCCUPANCY_SIZE) as usize);
+    assert_eq!(
+        cells[(8 * OCCUPANCY_SIZE + 11) as usize],
+        occupancy_cell(1, 11, 8)
+    );
+    assert_eq!(cells[0], -1);
+    assert!(grid["sequence"].as_u64().unwrap() >= 1);
 
     argos_bridge_close();
     assert_eq!(argos_bridge_connected(), 0);

@@ -29,6 +29,9 @@ namespace Argos.Fleet
         float _nextPoll;
         string _presented = string.Empty;
         int _loggedLiveCount = -1;
+        int _loggedOccupancy = -1;
+        CampusTerrain _terrain;
+        OccupancyLayer _occupancy;
 
         public string SelectedId => _selectedId;
         public int RoverCount => _rovers.Count;
@@ -54,6 +57,7 @@ namespace Argos.Fleet
             {
                 _nextPoll = _elapsed + 0.1f;
                 PollLive();
+                PollMaps();
             }
             if (_autoSelectArmed && _elapsed >= 6.5f && string.IsNullOrEmpty(_selectedId))
                 Select(AutoSelectId);
@@ -117,6 +121,23 @@ namespace Argos.Fleet
             }
         }
 
+        void PollMaps()
+        {
+            if (_occupancy == null)
+                _occupancy = new OccupancyLayer(transform, _terrain);
+            var json = ZenohBridge.PollMapIndex();
+            if (string.IsNullOrEmpty(json))
+                return;
+            _occupancy.ApplyIndex(json);
+            if (_occupancy.FreshCount == _loggedOccupancy)
+                return;
+            _loggedOccupancy = _occupancy.FreshCount;
+            Debug.Log(string.Format(
+                CultureInfo.InvariantCulture,
+                "ARGOS occupancy grids: {0}",
+                _occupancy.FreshCount));
+        }
+
         void ApplySnapshot(FleetSnapshotDto snapshot)
         {
             if (snapshot == null || snapshot.rovers == null)
@@ -142,13 +163,18 @@ namespace Argos.Fleet
                     critical++;
 
                 var existing = FindRover(view.Id);
+                var placed = Place(view.Position);
                 if (existing == null)
-                    _rovers.Add(Spawn(rover, view));
+                {
+                    var visual = Spawn(rover, view);
+                    visual.Root.transform.position = placed;
+                    _rovers.Add(visual);
+                }
                 else
                 {
                     existing.Status = view.Status;
                     existing.Stale = view.IsStale;
-                    existing.Root.transform.position = view.Position;
+                    existing.Root.transform.position = placed;
                     existing.Root.transform.rotation = Quaternion.Euler(0f, view.HeadingDegrees, 0f);
                 }
             }
@@ -260,8 +286,19 @@ namespace Argos.Fleet
             return visual;
         }
 
+        Vector3 Place(Vector3 position)
+        {
+            if (_terrain != null)
+                position.y = _terrain.Sample(position.x, position.z);
+            return position;
+        }
+
         void BuildGround()
         {
+            _terrain = CampusTerrain.TryCreate(transform);
+            if (_terrain != null)
+                return;
+
             var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "ground";
             ground.transform.SetParent(transform, false);
@@ -302,6 +339,9 @@ namespace Argos.Fleet
                 planned.a *= 0.85f;
                 TintPaths(rover.Planned, planned);
             }
+
+            if (_occupancy != null)
+                _occupancy.ApplySelection(_selectedId);
         }
 
         void PulseColors()

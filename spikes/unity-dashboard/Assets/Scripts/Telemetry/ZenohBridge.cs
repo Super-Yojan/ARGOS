@@ -12,8 +12,11 @@ namespace Argos.Fleet
     public static class ZenohBridge
     {
         const int BufferBytes = 262144;
+        const int MapBufferBytes = 2 * 1024 * 1024;
 
         static readonly byte[] Buffer = new byte[BufferBytes];
+        static readonly byte[] MapIndexBuffer = new byte[BufferBytes];
+        static readonly byte[] MapBuffer = new byte[MapBufferBytes];
         static bool _open;
 
         public static bool IsOpen => _open;
@@ -121,6 +124,59 @@ namespace Argos.Fleet
             }
         }
 
+        public static string PollMapIndex()
+        {
+            return ReadNative(MapIndexBuffer, argos_bridge_poll_map_index);
+        }
+
+        public static string PollMap(ulong roverId)
+        {
+            if (!_open)
+                return null;
+            try
+            {
+                var length = argos_bridge_poll_map(roverId, MapBuffer, (UIntPtr)MapBuffer.Length);
+                return Decode(MapBuffer, length, "occupancy grid");
+            }
+            catch (DllNotFoundException exception)
+            {
+                Debug.LogError("ARGOS zenoh plugin missing: " + exception.Message);
+                _open = false;
+                return null;
+            }
+        }
+
+        static string ReadNative(byte[] buffer, PollCall poll)
+        {
+            if (!_open)
+                return null;
+            try
+            {
+                var length = poll(buffer, (UIntPtr)buffer.Length);
+                return Decode(buffer, length, "occupancy index");
+            }
+            catch (DllNotFoundException exception)
+            {
+                Debug.LogError("ARGOS zenoh plugin missing: " + exception.Message);
+                _open = false;
+                return null;
+            }
+        }
+
+        static string Decode(byte[] buffer, int length, string label)
+        {
+            if (length == -1)
+                return null;
+            if (length < 0)
+            {
+                Debug.LogError("ARGOS zenoh " + label + " needs " + (-length) + " bytes.");
+                return null;
+            }
+            return Encoding.UTF8.GetString(buffer, 0, length);
+        }
+
+        delegate int PollCall(byte[] buffer, UIntPtr capacity);
+
         public static string LastError()
         {
             try
@@ -153,6 +209,12 @@ namespace Argos.Fleet
 
         [DllImport("argos_unity_bridge", CallingConvention = CallingConvention.Cdecl)]
         static extern int argos_bridge_poll(byte[] buffer, UIntPtr capacity);
+
+        [DllImport("argos_unity_bridge", CallingConvention = CallingConvention.Cdecl)]
+        static extern int argos_bridge_poll_map_index(byte[] buffer, UIntPtr capacity);
+
+        [DllImport("argos_unity_bridge", CallingConvention = CallingConvention.Cdecl)]
+        static extern int argos_bridge_poll_map(ulong roverId, byte[] buffer, UIntPtr capacity);
 
         [DllImport("argos_unity_bridge", CallingConvention = CallingConvention.Cdecl)]
         static extern int argos_bridge_last_error(byte[] buffer, UIntPtr capacity);

@@ -75,9 +75,10 @@ fn print_help() {
 argos-fleet-publisher
 
 Publishes terra-01..terra-N on the ARGOS rover topics.
-  fleet/state, <id>/pose, <id>/camera/depth
+  fleet/state, <id>/pose, <id>/camera/depth, <id>/map/occupancy
   terra-02 autonomy/status safety=hold (attention)
   terra-03 autonomy/status safety=emergency_stop (critical)
+  Each occupancy grid is schema 1, 16x16 cells at 0.5 m, centered on that rover.
 
 Options:
   --count N                 1..=32, default 8

@@ -109,6 +109,82 @@ pub fn fleet_json(snapshot: &Snapshot, operator: &serde_json::Value, now_unix: f
     .to_string()
 }
 
+pub const OCCUPANCY_SIZE: u32 = 16;
+pub const OCCUPANCY_RESOLUTION: f64 = 0.5;
+
+pub fn occupancy_origin(id: u64) -> (f64, f64) {
+    let (x, y, _) = rover_layout(id);
+    let half = f64::from(OCCUPANCY_SIZE) * OCCUPANCY_RESOLUTION * 0.5;
+    (x - half, y - half)
+}
+
+/// Row-major cell. The border is unknown. A block just north of the rover is occupied.
+pub fn occupancy_cell(id: u64, column: u32, row: u32) -> i8 {
+    if column == 0 || row == 0 || column + 1 == OCCUPANCY_SIZE || row + 1 == OCCUPANCY_SIZE {
+        return -1;
+    }
+    let block = 10 + (id % 3) as u32;
+    if (block..block + 2).contains(&column) && (8..10).contains(&row) {
+        return 90;
+    }
+    0
+}
+
+pub fn occupancy_cells(id: u64) -> Vec<i8> {
+    let mut cells = Vec::with_capacity((OCCUPANCY_SIZE * OCCUPANCY_SIZE) as usize);
+    for row in 0..OCCUPANCY_SIZE {
+        for column in 0..OCCUPANCY_SIZE {
+            cells.push(occupancy_cell(id, column, row));
+        }
+    }
+    cells
+}
+
+fn map_entry(id: u64, entry: &serde_json::Value, include_cells: bool) -> serde_json::Value {
+    let grid = &entry["grid"];
+    let mut value = serde_json::json!({
+        "id": rover_label(id),
+        "roverId": id,
+        "sequence": grid["sequence"].as_u64().unwrap_or(0),
+        "runId": grid["run_id"].as_str().unwrap_or(""),
+        "age": entry["age"].as_f64().unwrap_or(0.0),
+        "width": grid["width"].as_u64().unwrap_or(0),
+        "height": grid["height"].as_u64().unwrap_or(0),
+        "resolution": grid["resolution"].as_f64().unwrap_or(0.0),
+        "originX": grid["origin_x"].as_f64().unwrap_or(0.0),
+        "originY": grid["origin_y"].as_f64().unwrap_or(0.0),
+    });
+    if include_cells {
+        value["occupancy"] = grid["occupancy"].clone();
+    }
+    value
+}
+
+fn occupancy_object(raw: &str) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+/// Index without cell payloads. Unity polls a grid only when `sequence` or `runId` changes.
+pub fn map_index_json(raw: &str) -> String {
+    let object = occupancy_object(raw);
+    let mut ids: Vec<u64> = object.keys().filter_map(|key| key.parse().ok()).collect();
+    ids.sort_unstable();
+    let maps: Vec<_> = ids
+        .into_iter()
+        .map(|id| map_entry(id, &object[&id.to_string()], false))
+        .collect();
+    serde_json::json!({ "maps": maps }).to_string()
+}
+
+pub fn map_grid_json(raw: &str, rover_id: u64) -> Option<String> {
+    let object = occupancy_object(raw);
+    let entry = object.get(&rover_id.to_string())?;
+    Some(map_entry(rover_id, entry, true).to_string())
+}
+
 fn write_buf(buf: *mut c_char, cap: usize, text: &str) -> i32 {
     let needed = text.len().saturating_add(1);
     if buf.is_null() || cap < needed {
@@ -205,6 +281,32 @@ pub extern "C" fn argos_bridge_poll(buf: *mut c_char, cap: usize) -> i32 {
     write_buf(buf, cap, &json)
 }
 
+/// Per-rover occupancy index: id, sequence, run id, age, origin, and size. No cells.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_poll_map_index(buf: *mut c_char, cap: usize) -> i32 {
+    let guard = BRIDGE.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(client) = guard.as_ref() else {
+        set_error("not connected");
+        return -1;
+    };
+    write_buf(buf, cap, &map_index_json(&client.occupancy_snapshot()))
+}
+
+/// One rover grid, including cells. `-4` means that rover has no grid yet.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_poll_map(rover_id: u64, buf: *mut c_char, cap: usize) -> i32 {
+    let guard = BRIDGE.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(client) = guard.as_ref() else {
+        set_error("not connected");
+        return -1;
+    };
+    let Some(json) = map_grid_json(&client.occupancy_snapshot(), rover_id) else {
+        set_error("no occupancy grid");
+        return -4;
+    };
+    write_buf(buf, cap, &json)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn argos_bridge_last_error(buf: *mut c_char, cap: usize) -> i32 {
     let message = LAST_ERROR.lock().unwrap_or_else(|p| p.into_inner()).clone();
@@ -285,5 +387,53 @@ mod tests {
         assert!((rovers[2]["lastUpdateUnixSeconds"].as_f64().unwrap() - 997.5).abs() < 1e-9);
         assert_eq!(rovers[3]["status"], "critical");
         assert!((1000.0 - rovers[3]["lastUpdateUnixSeconds"].as_f64().unwrap()) > STALE_SECONDS);
+    }
+
+    #[test]
+    fn gmu_anchor_round_trips_through_argos_core() {
+        let anchor = argos_core::Anchor {
+            latitude: 38.8297,
+            longitude: -77.3075,
+        };
+        let (latitude, longitude) = anchor.geographic(12.0, 4.0).unwrap();
+        assert!(latitude > anchor.latitude);
+        assert!(longitude < anchor.longitude);
+        let (x, y) = anchor.local(latitude, longitude).unwrap();
+        assert!((x - 12.0).abs() < 1e-6);
+        assert!((y - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn map_index_omits_cells_and_the_grid_poll_keeps_them() {
+        let (origin_x, origin_y) = occupancy_origin(1);
+        let snapshot = serde_json::json!({
+            "1": {
+                "age": 0.1,
+                "grid": {
+                    "schema_version": 1,
+                    "rover_id": 1,
+                    "run_id": "spike",
+                    "sequence": 4,
+                    "width": OCCUPANCY_SIZE,
+                    "height": OCCUPANCY_SIZE,
+                    "resolution": OCCUPANCY_RESOLUTION,
+                    "origin_x": origin_x,
+                    "origin_y": origin_y,
+                    "occupancy": occupancy_cells(1),
+                }
+            }
+        })
+        .to_string();
+        let index: serde_json::Value = serde_json::from_str(&map_index_json(&snapshot)).unwrap();
+        assert!(index["maps"][0].get("occupancy").is_none());
+        assert_eq!(index["maps"][0]["id"], "terra-01");
+        assert_eq!(index["maps"][0]["sequence"], 4);
+        let grid: serde_json::Value =
+            serde_json::from_str(&map_grid_json(&snapshot, 1).unwrap()).unwrap();
+        assert_eq!(grid["occupancy"][0], -1);
+        let occupied = (8 * OCCUPANCY_SIZE + 11) as usize;
+        assert_eq!(grid["occupancy"][occupied], occupancy_cell(1, 11, 8));
+        assert!((grid["originX"].as_f64().unwrap() - origin_x).abs() < 1e-9);
+        assert!(map_grid_json(&snapshot, 9).is_none());
     }
 }

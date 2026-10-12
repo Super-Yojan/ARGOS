@@ -111,6 +111,55 @@ The owner runs:
 
 `Assets/Tests/EditMode/ZenohSnapshotTests.cs` parses a bridge-shaped snapshot through `TelemetryParser` and checks attention, critical, and the ghost after 2.5 s. It does not load the native plugin. It has not been executed on this VM. The Mac script does not run EditMode; the previous `-runTests` invocation will pick the new test up.
 
+## Maps
+
+Two layers. The owner’s Zenoh player run had already passed (8 live rovers, status colors correct) before this section.
+
+### Terrain
+
+The ground is an offline patch centered on the ARGOS / Zorvane anchor, George Mason University Fairfax, `38.8297, -77.3075`. Local metres match `argos_core::Anchor` and Swift `MapProjection`: `+x` north, `+y` west, scale `40075016.686 / 360`. Unity stores north in `x` and west in `z`. Rover roots sample the mesh so they sit on the surface.
+
+Elevation is Terrarium tile `15/9347/12543` from the AWS Open Data bucket `elevation-tiles-prod` (Mapzen / Tilezen packaging), file `Assets/StreamingAssets/terrain/gmu-fairfax-terrarium.png`. Height is `(R * 256 + G + B / 256) - 32768`. The anchor pixel is subtracted so the campus origin is `y = 0`. Fairfax is USGS 3DEP, which The National Map places in the public domain; USGS asks for credit. The bundle says: `United States 3DEP terrain data courtesy of the U.S. Geological Survey.` Zoom 16 is not in that bucket for this tile, so the patch is the zoom-15 tile (about 4 m per pixel).
+
+Imagery is a 512×512 USGS NAIP export of the same bounds, `gmu-fairfax-naip.png`. NAIP is a U.S. Government work, public domain. The material desaturates and darkens it so cyan, amber, and red stay readable. Attribution is in `Assets/StreamingAssets/terrain/SOURCE.md`.
+
+### Occupancy
+
+Per-rover grids, not a merged fleet map. Terra #36 (shared fleet map, and the Zorvane work in Zorvane #5) is still a gap. The key that exists is `<prefix>/<id>/map/occupancy`, schema 1: `width`, `height`, `resolution`, `origin_x`, `origin_y`, row-major cells `-1…100`. `Client::occupancy_snapshot` already keeps the latest grid per fleet member.
+
+The C API stays polling-only:
+
+| Entry | Role |
+| --- | --- |
+| `argos_bridge_poll_map_index` | One JSON object per rover: id, sequence, run id, age, origin, size. No cells. |
+| `argos_bridge_poll_map(rover_id)` | That rover’s cells. `-4` if it has no grid. |
+
+Unity uploads a texture only when `sequence` or `runId` changes. A grid older than 0.5 s is dropped, matching `OccupancyFrame.usable` in the Swift app. The quad is translucent gray in world metres (`+x` columns, `+y` rows). Unknown cells are clear. Selection dims the other grids. The fake publisher sends a 16×16 grid at 0.5 m, centered on each rover, with an occupied block just north of it.
+
+Zorvane, without the fake publisher:
+
+```sh
+TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
+```
+
+`TERRA_ROVER_COUNT` can be 15 to 20. Do not also run `argos-fleet-publisher` against that port; both write `fleet/state`.
+
+### Passed on this VM
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p argos-unity-bridge` | **PASS**, 5 tests, Zenoh **1.10.1**. `publisher_fleet_arrives_through_the_c_api` now also reads four occupancy grids through `argos_bridge_poll_map`. Rover 1’s grid is 16×16, resolution 0.5 m, origin centered on its pose, age under 0.5 s, border cell `-1`, occupied cell `90`. `map_index_omits_cells_and_the_grid_poll_keeps_them` checks the version index has no cell payload. `gmu_anchor_round_trips_through_argos_core` checks `Anchor` at `38.8297, -77.3075` for local `(12, 4)`. |
+| `cargo build -p argos-unity-bridge` | **PASS**. The dylib exports `argos_bridge_poll_map` and `argos_bridge_poll_map_index`. |
+| Unity player and the new EditMode tests | **Not run**. No license on this VM. `MapTests` covers the projection, Terrarium decode, the manifest anchor, cell placement, and the 0.5 s freshness window. |
+
+### Pending on the Mac
+
+```sh
+./spikes/unity-dashboard/run-maps-mac.sh
+```
+
+That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1 and both `overview.png` and `selected.png` are written. Stop anything already listening on `tcp/127.0.0.1:7447`.
+
 ## Exact errors
 
 Host editor (`spikes/unity-dashboard/artifacts/editmode.log`), and the same text from the GameCI `unity-editor -quit` entrypoint:
