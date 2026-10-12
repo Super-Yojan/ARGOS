@@ -1,3 +1,6 @@
+//! Fleet membership, latest telemetry, and goal acknowledgement tracking.
+//! Freshness uses caller-supplied monotonic seconds, keeping this cache deterministic.
+
 use crate::*;
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug)]
@@ -42,7 +45,7 @@ impl FleetCache {
         let previous = self
             .fleet
             .as_ref()
-            .map(|(f, _)| f.ids.iter().copied().collect::<BTreeSet<_>>())
+            .map(|(fleet, _)| fleet.ids.iter().copied().collect::<BTreeSet<_>>())
             .unwrap_or_default();
         for id in &state.ids {
             let entry = self.entries.entry(*id).or_default();
@@ -70,7 +73,7 @@ impl FleetCache {
     fn member(&self, id: u64) -> bool {
         self.fleet
             .as_ref()
-            .is_some_and(|(f, _)| f.ids.contains(&id))
+            .is_some_and(|(fleet, _)| fleet.ids.contains(&id))
             && !self.disconnected
     }
     pub fn pose(&mut self, id: u64, pose: Pose, now: f64) {
@@ -82,8 +85,8 @@ impl FleetCache {
         if !self.member(id) {
             return;
         }
-        let e = self.entries.entry(id).or_default();
-        if let Some(command) = &mut e.command {
+        let entry = self.entries.entry(id).or_default();
+        if let Some(command) = &mut entry.command {
             if command.phase == "cancelling"
                 && now > command.sent
                 && status.state == GoalState::Idle
@@ -103,7 +106,7 @@ impl FleetCache {
                 command.phase = "superseded".into();
             }
         }
-        e.goal = Some((status, now));
+        entry.goal = Some((status, now));
     }
     pub fn notice(&mut self, message: String) {
         self.notice = Some(message);
@@ -111,13 +114,15 @@ impl FleetCache {
     pub fn disconnected(&mut self) {
         self.disconnected = true;
         self.fleet = None;
-        for e in self.entries.values_mut() {
-            e.pose = None;
-            e.goal = None;
-            if let Some(c) = &mut e.command
-                && (c.phase == "pending" || c.phase == "cancelling" || c.phase == "active")
+        for entry in self.entries.values_mut() {
+            entry.pose = None;
+            entry.goal = None;
+            if let Some(command) = &mut entry.command
+                && (command.phase == "pending"
+                    || command.phase == "cancelling"
+                    || command.phase == "active")
             {
-                c.phase = "unconfirmed".into();
+                command.phase = "unconfirmed".into();
             }
         }
     }
@@ -141,14 +146,14 @@ impl FleetCache {
     ) -> Result<Vec<u8>> {
         self.ready(id, now)?;
         let bytes = request.encode(token)?;
-        let e = self.entries.entry(id).or_default();
-        if e.command
-            .as_ref()
-            .is_some_and(|c| (c.phase == "pending" || c.phase == "cancelling") && now - c.sent < GOAL_ACK_SECONDS)
-        {
+        let entry = self.entries.entry(id).or_default();
+        if entry.command.as_ref().is_some_and(|command| {
+            (command.phase == "pending" || command.phase == "cancelling")
+                && now - command.sent < GOAL_ACK_SECONDS
+        }) {
             return Err(invalid("a command is awaiting acknowledgement"));
         }
-        e.command = Some(Command {
+        entry.command = Some(Command {
             token: Some(token.into()),
             phase: "pending".into(),
             sent: now,
@@ -157,14 +162,13 @@ impl FleetCache {
     }
     pub fn prepare_cancel(&mut self, id: u64, now: f64) -> Result<()> {
         self.ready(id, now)?;
-        let e = self.entries.entry(id).or_default();
-        if e.command
-            .as_ref()
-            .is_some_and(|c| c.phase == "cancelling" && now - c.sent < GOAL_ACK_SECONDS)
-        {
+        let entry = self.entries.entry(id).or_default();
+        if entry.command.as_ref().is_some_and(|command| {
+            command.phase == "cancelling" && now - command.sent < GOAL_ACK_SECONDS
+        }) {
             return Err(invalid("cancellation is awaiting acknowledgement"));
         }
-        e.command = Some(Command {
+        entry.command = Some(Command {
             token: None,
             phase: "cancelling".into(),
             sent: now,
@@ -172,8 +176,12 @@ impl FleetCache {
         Ok(())
     }
     pub fn publish_failed(&mut self, id: u64, message: String) {
-        if let Some(c) = self.entries.get_mut(&id).and_then(|e| e.command.as_mut()) {
-            c.phase = "failed".into();
+        if let Some(command) = self
+            .entries
+            .get_mut(&id)
+            .and_then(|entry| entry.command.as_mut())
+        {
+            command.phase = "failed".into();
         }
         self.notice = Some(message);
     }
@@ -191,15 +199,17 @@ impl FleetCache {
         let rovers = self
             .entries
             .iter()
-            .map(|(&id, e)| {
-                let command_phase = e
+            .map(|(&id, entry)| {
+                let command_phase = entry
                     .command
                     .as_ref()
-                    .map(|c| {
-                        if (c.phase == "pending" || c.phase == "cancelling") && now - c.sent >= GOAL_ACK_SECONDS {
+                    .map(|command| {
+                        if (command.phase == "pending" || command.phase == "cancelling")
+                            && now - command.sent >= GOAL_ACK_SECONDS
+                        {
                             "unconfirmed".into()
                         } else {
-                            c.phase.clone()
+                            command.phase.clone()
                         }
                     })
                     .unwrap_or_else(|| "none".into());
@@ -213,12 +223,15 @@ impl FleetCache {
                         "online"
                     }
                     .into(),
-                    pose: e.pose.as_ref().map(|(p, _)| p.clone()),
-                    pose_age: e.pose.as_ref().map(|(_, at)| (now - at).max(0.)),
-                    goal: e.goal.as_ref().map(|(g, _)| g.clone()),
-                    goal_age: e.goal.as_ref().map(|(_, at)| (now - at).max(0.)),
+                    pose: entry.pose.as_ref().map(|(p, _)| p.clone()),
+                    pose_age: entry.pose.as_ref().map(|(_, at)| (now - at).max(0.)),
+                    goal: entry.goal.as_ref().map(|(g, _)| g.clone()),
+                    goal_age: entry.goal.as_ref().map(|(_, at)| (now - at).max(0.)),
                     command_phase,
-                    command_token: e.command.as_ref().and_then(|c| c.token.clone()),
+                    command_token: entry
+                        .command
+                        .as_ref()
+                        .and_then(|command| command.token.clone()),
                 }
             })
             .collect();

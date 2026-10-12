@@ -1,3 +1,10 @@
+//! Transport-independent fleet state and operator command policy.
+//!
+//! `contract` defines topic and message rules; `state` tracks fleet membership,
+//! goals, and freshness; `operator` tracks authority and ordered held input.
+//! `telemetry`, `occupancy`, and `search` decode their respective reports. Keep
+//! networking and native UI bindings in `argos-zenoh` and `argos-ffi`.
+
 mod contract;
 mod state;
 mod telemetry;

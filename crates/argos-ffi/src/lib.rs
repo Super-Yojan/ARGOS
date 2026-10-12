@@ -1,3 +1,10 @@
+//! Thread-safe UniFFI facade used by the native operator applications.
+//!
+//! [`ArgosClient`] owns an optional `argos-zenoh` connection behind a mutex.
+//! The records in this module convert core snapshots into binding-friendly values;
+//! policy and transport stay in their owning crates. Replacing a connection
+//! discards the old session instead of retaining its pending commands.
+
 use std::sync::{Arc, Mutex};
 uniffi::setup_scaffolding!();
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -118,6 +125,7 @@ impl ArgosClient {
         })?;
         Ok(client.cancel_goal(rover_id)?)
     }
+    /// Return the current observed grids as JSON for the native map renderer.
     pub fn occupancy_snapshot(&self) -> String {
         self.client
             .lock()
@@ -271,13 +279,27 @@ impl ArgosClient {
 
 /// Router lifecycle is independent of the fleet client; only this owned session is stopped.
 #[derive(uniffi::Object, Default)]
-pub struct ArgosRouter { router: argos_zenoh::router::Router }
+pub struct ArgosRouter {
+    router: argos_zenoh::router::Router,
+}
 #[uniffi::export]
 impl ArgosRouter {
     #[uniffi::constructor]
-    pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
-    pub fn start(&self, port: u16, tailscale_address: String) -> Result<(), ClientError> { self.router.start(port, &tailscale_address).map_err(Into::into) }
-    pub fn stop(&self) -> Result<(), ClientError> { self.router.stop().map_err(Into::into) }
-    pub fn running(&self) -> bool { self.router.running() }
-    pub fn logs(&self) -> Vec<String> { self.router.logs() }
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn start(&self, port: u16, tailscale_address: String) -> Result<(), ClientError> {
+        self.router
+            .start(port, &tailscale_address)
+            .map_err(Into::into)
+    }
+    pub fn stop(&self) -> Result<(), ClientError> {
+        self.router.stop().map_err(Into::into)
+    }
+    pub fn running(&self) -> bool {
+        self.router.running()
+    }
+    pub fn logs(&self) -> Vec<String> {
+        self.router.logs()
+    }
 }

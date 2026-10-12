@@ -1,3 +1,11 @@
+//! Zenoh fleet client, telemetry subscriptions, and operator commands.
+//!
+//! [`Client::connect`] installs subscribers and starts the held-input worker.
+//! The client keeps bounded latest-state caches and checks freshness and authority
+//! before issuing commands. `router` manages the local router; `session_log`
+//! writes session evidence off the command path. [`Client::disconnect`] retires
+//! the session and stops its worker rather than replaying input on reconnect.
+
 pub mod router;
 mod session_log;
 use argos_core::*;
@@ -6,7 +14,13 @@ use std::time::Instant;
 use zenoh::Wait;
 type SharedTelemetry =
     Arc<Mutex<std::collections::BTreeMap<(u64, String), (serde_json::Value, Instant)>>>;
-type InputState = (Option<u64>, HeldInput, Option<(String, u64)>);
+/// Held keys belong to one rover and the authority generation that admitted them.
+#[derive(Default)]
+struct InputState {
+    rover_id: Option<u64>,
+    keys: HeldInput,
+    authority_generation: Option<(String, u64)>,
+}
 /// One native session; subscriptions retain only latest parsed telemetry.
 pub struct Client {
     session: Arc<Mutex<Option<zenoh::Session>>>,
@@ -58,12 +72,12 @@ impl Client {
             .map_err(|e| Error(format!("could not connect: {e}")))?;
         let cache = Arc::new(Mutex::new(FleetCache::default()));
         let start = Instant::now();
-        let c = cache.clone();
+        let fleet_cache = cache.clone();
         let fleet = session
             .declare_subscriber(topics.fleet())
             .callback(move |sample| {
                 let payload = sample.payload().to_bytes();
-                let mut cache = c.lock().unwrap();
+                let mut cache = fleet_cache.lock().unwrap();
                 match decode_fleet(&payload) {
                     Ok(f) => cache.fleet(f, start.elapsed().as_secs_f64()),
                     Err(e) => cache.notice(e.to_string()),
@@ -71,16 +85,18 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
-        let c = cache.clone();
-        let t = topics.clone();
+        let fleet_cache = cache.clone();
+        let subscribed_topics = topics.clone();
         let status = session
             .declare_subscriber(topics.statuses())
             .callback(move |sample| {
-                let Some(id) = t.rover_from_key(sample.key_expr().as_str(), "/goal/status") else {
+                let Some(id) =
+                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/goal/status")
+                else {
                     return;
                 };
                 let payload = sample.payload().to_bytes();
-                let mut cache = c.lock().unwrap();
+                let mut cache = fleet_cache.lock().unwrap();
                 match decode_status(&payload) {
                     Ok(s) => cache.status(id, s, start.elapsed().as_secs_f64()),
                     Err(e) => cache.notice(e.to_string()),
@@ -88,16 +104,18 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
-        let c = cache.clone();
-        let t = topics.clone();
+        let fleet_cache = cache.clone();
+        let subscribed_topics = topics.clone();
         let depth = session
             .declare_subscriber(topics.depth())
             .callback(move |sample| {
-                let Some(id) = t.rover_from_key(sample.key_expr().as_str(), "/camera/depth") else {
+                let Some(id) =
+                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/camera/depth")
+                else {
                     return;
                 };
                 let payload = sample.payload().to_bytes();
-                let mut cache = c.lock().unwrap();
+                let mut cache = fleet_cache.lock().unwrap();
                 match decode_pose(&payload) {
                     Ok(Some(p)) => cache.pose(id, p, start.elapsed().as_secs_f64()),
                     Ok(None) => {}
@@ -161,42 +179,89 @@ impl Client {
         let restart_input = held.clone();
         let session_id = uuid::Uuid::new_v4().to_string();
         let log_path = std::env::temp_dir().join(format!("argos-session-{session_id}.jsonl"));
-        let recorder=Arc::new(session_log::RunRecorder::create(&log_path,serde_json::json!({"session_id":session_id,"utc":utc(),"platform":"argos","clock":"session_relative_monotonic"}),8192).unwrap_or_else(|_|session_log::RunRecorder::unavailable()));
-        let op = operator.clone();
+        let recorder = Arc::new(
+            session_log::RunRecorder::create(
+                &log_path,
+                serde_json::json!({
+                    "session_id": session_id,
+                    "utc": utc(),
+                    "platform": "argos",
+                    "clock": "session_relative_monotonic",
+                }),
+                8192,
+            )
+            .unwrap_or_else(|_| session_log::RunRecorder::unavailable()),
+        );
+        let authority_cache = operator.clone();
         let log = recorder.clone();
-        let t = topics.clone();
-        let c = cache.clone();
-        let sid = session_id.clone();
-        let authority=session.declare_subscriber(format!("{}/*/**",topics.prefix))
-            .callback(move |sample|{
-                for kind in ["autonomy/status","goal/proposal","mission/status","experiment/status"] {
-                    let Some(id)=t.rover_from_key(sample.key_expr().as_str(),&format!("/{kind}"))else{continue};
-                    if !c.lock().unwrap().snapshot(start.elapsed().as_secs_f64()).rovers.iter().any(|r|r.id==id&&r.membership!="absent"){return;}
-                    let bytes=sample.payload().to_bytes();
-                    let now=start.elapsed().as_secs_f64();
-                    let (ok,changed)={
-                        let mut state=op.lock().unwrap();
-                        let previous=state.run_id(id);
-                        let ok=state.apply(id,kind,&bytes,now).is_ok();
-                        (ok,previous!=state.run_id(id))
+        let subscribed_topics = topics.clone();
+        let fleet_cache = cache.clone();
+        let callback_session_id = session_id.clone();
+        let authority = session
+            .declare_subscriber(format!("{}/*/**", topics.prefix))
+            .callback(move |sample| {
+                for kind in [
+                    "autonomy/status",
+                    "goal/proposal",
+                    "mission/status",
+                    "experiment/status",
+                ] {
+                    let Some(id) = subscribed_topics
+                        .rover_from_key(sample.key_expr().as_str(), &format!("/{kind}"))
+                    else {
+                        continue;
+                    };
+                    if !fleet_cache
+                        .lock()
+                        .unwrap()
+                        .snapshot(start.elapsed().as_secs_f64())
+                        .rovers
+                        .iter()
+                        .any(|r| r.id == id && r.membership != "absent")
+                    {
+                        return;
+                    }
+                    let bytes = sample.payload().to_bytes();
+                    let now = start.elapsed().as_secs_f64();
+                    let (ok, changed) = {
+                        let mut state = authority_cache.lock().unwrap();
+                        let previous = state.run_id(id);
+                        let ok = state.apply(id, kind, &bytes, now).is_ok();
+                        (ok, previous != state.run_id(id))
                     };
                     if changed {
-                        let mut input=restart_input.lock().unwrap();
-                        if input.0==Some(id){input.0=None;input.1.clear();input.2=None;}
+                        let mut input = restart_input.lock().unwrap();
+                        if input.rover_id == Some(id) {
+                            input.rover_id = None;
+                            input.keys.clear();
+                            input.authority_generation = None;
+                        }
                     }
                     if ok {
-                        let _=log.record(serde_json::json!({"kind":"state_observed","topic":kind,"rover_id":id,"time":now,"utc":utc(),"session_id":sid,"payload":serde_json::from_slice::<serde_json::Value>(&bytes).ok()}));
+                        let _ = log.record(serde_json::json!({
+                            "kind": "state_observed",
+                            "topic": kind,
+                            "rover_id": id,
+                            "time": now,
+                            "utc": utc(),
+                            "session_id": callback_session_id,
+                            "payload": serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+                        }));
                     }
                     return;
                 }
-            }).wait().map_err(|e|Error(e.to_string()))?;
+            })
+            .wait()
+            .map_err(|e| Error(e.to_string()))?;
         let localizations = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let l = localizations.clone();
-        let t = topics.clone();
+        let subscribed_topics = topics.clone();
         let localization = session
             .declare_subscriber(format!("{}/*/localization", topics.prefix))
             .callback(move |sample| {
-                let Some(id) = t.rover_from_key(sample.key_expr().as_str(), "/localization") else {
+                let Some(id) =
+                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/localization")
+                else {
                     return;
                 };
                 let bytes = sample.payload().to_bytes();
@@ -221,8 +286,8 @@ impl Client {
             .map_err(|e| Error(e.to_string()))?;
         let operator_states: SharedTelemetry =
             Arc::new(Mutex::new(std::collections::BTreeMap::new()));
-        let o = operator_states.clone();
-        let t = topics.clone();
+        let telemetry_cache = operator_states.clone();
+        let subscribed_topics = topics.clone();
         let search_log = recorder.clone();
         let search_session = session_id.clone();
         let operator_feed = session
@@ -239,11 +304,10 @@ impl Client {
                     "/search/report"
                 } else if key.ends_with("/search/status") {
                     "/search/status"
-
                 } else {
                     return;
                 };
-                let Some(id) = t.rover_from_key(key, suffix) else {
+                let Some(id) = subscribed_topics.rover_from_key(key, suffix) else {
                     return;
                 };
                 let bytes = sample.payload().to_bytes();
@@ -256,8 +320,19 @@ impl Client {
                 if !value.is_object() {
                     return;
                 }
-                if matches!(suffix, "/search/status" | "/search/report" | "/hardware/status") {
-                    let _ = search_log.record(serde_json::json!({"kind":"state_observed","topic":suffix.trim_start_matches('/'),"rover_id":id,"time":start.elapsed().as_secs_f64(),"utc":utc(),"session_id":search_session,"payload":value}));
+                if matches!(
+                    suffix,
+                    "/search/status" | "/search/report" | "/hardware/status"
+                ) {
+                    let _ = search_log.record(serde_json::json!({
+                        "kind": "state_observed",
+                        "topic": suffix.trim_start_matches('/'),
+                        "rover_id": id,
+                        "time": start.elapsed().as_secs_f64(),
+                        "utc": utc(),
+                        "session_id": search_session,
+                        "payload": value,
+                    }));
                 }
                 let kind = if suffix == "/search/report" {
                     let Some(search) = value["search_id"].as_str() else {
@@ -268,7 +343,7 @@ impl Client {
                     }
                     // Each search retains one report; batches replay on the canonical topic.
                     let kind = format!("search_report:{search}");
-                    let mut entries = o.lock().unwrap();
+                    let mut entries = telemetry_cache.lock().unwrap();
                     entries.retain(|_, (_, at)| at.elapsed().as_secs_f64() < 2.5);
                     if entries.len() < 4096 || entries.contains_key(&(id, kind.clone())) {
                         entries.insert((id, kind), (value, Instant::now()));
@@ -285,7 +360,7 @@ impl Client {
                 } else {
                     "authority"
                 };
-                let mut entries = o.lock().unwrap();
+                let mut entries = telemetry_cache.lock().unwrap();
                 entries.retain(|_, (_, at): &mut (serde_json::Value, Instant)| {
                     at.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
                 });
@@ -302,43 +377,61 @@ impl Client {
             let packet_sequence = teleop_sequence.clone();
             let session = session.clone();
             let held = held.clone();
-            let op = operator.clone();
-            let c = cache.clone();
+            let authority_cache = operator.clone();
+            let fleet_cache = cache.clone();
             let stop = shutdown.clone();
             let prefix = topics.prefix.clone();
-            let sid = session_id.clone();
+            let callback_session_id = session_id.clone();
             let log = recorder.clone();
             std::thread::spawn(move || {
                 let mut last: Option<u64> = None;
                 while !stop.load(std::sync::atomic::Ordering::Acquire) {
                     let now = start.elapsed().as_secs_f64();
                     let mut input = held.lock().unwrap();
-                    let active = input.0.filter(|id| {
-                        let authority = op.lock().unwrap();
+                    let active = input.rover_id.filter(|id| {
+                        let authority = authority_cache.lock().unwrap();
                         let permitted = authority.can_drive(*id, now)
-                            && input.2.as_ref().is_none_or(|(run, revision)| {
-                                authority.matches_authority(*id, run, *revision)
-                            });
+                            && input
+                                .authority_generation
+                                .as_ref()
+                                .is_none_or(|(run, revision)| {
+                                    authority.matches_authority(*id, run, *revision)
+                                });
                         drop(authority);
-                        permitted && c.lock().unwrap().snapshot(now).link == "healthy"
+                        permitted && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
                     });
                     if active.is_none() {
-                        input.0 = None;
-                        input.1.clear();
+                        input.rover_id = None;
+                        input.keys.clear();
                     }
-                    let sample = input.1.sample();
+                    let sample = input.keys.sample();
                     if let Some(id) = active {
                         if sample != (0., 0.) || last.is_some() {
                             let sequence = packet_sequence
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                                 + 1;
-                            let payload = serde_json::json!({"linear":sample.0,"angular":sample.1,"operator_session_id":sid,"sequence":sequence,"run_id":input.2.as_ref().map(|g|&g.0),"authority_revision":input.2.as_ref().map(|g|g.1)});
+                            let payload = serde_json::json!({
+                                "linear": sample.0,
+                                "angular": sample.1,
+                                "operator_session_id": callback_session_id,
+                                "sequence": sequence,
+                                "run_id": input.authority_generation.as_ref().map(|g|&g.0),
+                                "authority_revision": input.authority_generation.as_ref().map(|g|g.1),
+                            });
                             if let Some(s) = session.lock().unwrap().as_ref() {
                                 let _ = s
                                     .put(format!("{prefix}/{id}/teleop"), payload.to_string())
                                     .wait();
                             }
-                            let _=log.record(serde_json::json!({"kind":"teleop_sent","rover_id":id,"time":now,"utc":utc(),"sequence":sequence,"session_id":sid,"payload":payload}));
+                            let _ = log.record(serde_json::json!({
+                                "kind": "teleop_sent",
+                                "rover_id": id,
+                                "time": now,
+                                "utc": utc(),
+                                "sequence": sequence,
+                                "session_id": callback_session_id,
+                                "payload": payload,
+                            }));
                             last = if sample == (0., 0.) { None } else { Some(id) };
                         }
                     } else if let Some(id) = last.take()
@@ -347,7 +440,11 @@ impl Client {
                         let _ = s
                             .put(
                                 format!("{prefix}/{id}/teleop"),
-                                zero_payload(&sid, &packet_sequence, input.2.as_ref()),
+                                zero_payload(
+                                    &callback_session_id,
+                                    &packet_sequence,
+                                    input.authority_generation.as_ref(),
+                                ),
                             )
                             .wait();
                     }
@@ -391,7 +488,11 @@ impl Client {
             .unwrap_or_else(|_| serde_json::json!({}));
         for ((id, kind), (value, received)) in self.operator_states.lock().unwrap().iter() {
             let age = received.elapsed().as_secs_f64();
-            let max_age = if kind == "authority" || kind == "hardware" { SUPERVISION_STALE_SECONDS } else { 2.5 };
+            let max_age = if kind == "authority" || kind == "hardware" {
+                SUPERVISION_STALE_SECONDS
+            } else {
+                2.5
+            };
             if age >= max_age {
                 continue;
             }
@@ -457,7 +558,14 @@ impl Client {
             }
         } else if !matches!(
             value["level"].as_str(),
-            Some("teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search")
+            Some(
+                "teleop"
+                    | "assisted_teleop"
+                    | "waypoint"
+                    | "waypoint_direct"
+                    | "supervised"
+                    | "target_search"
+            )
         ) {
             return Err(invalid("unsupported autonomy level"));
         }
@@ -469,12 +577,22 @@ impl Client {
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
-        let freshness = if kind == "autonomy" && matches!(value["level"].as_str(), Some("waypoint" | "waypoint_direct")) { SUPERVISION_STALE_SECONDS } else { 0.5 };
+        let freshness = if kind == "autonomy"
+            && matches!(
+                value["level"].as_str(),
+                Some("waypoint" | "waypoint_direct")
+            ) {
+            SUPERVISION_STALE_SECONDS
+        } else {
+            0.5
+        };
         if !neutral {
             let snapshot = self.snapshot();
             if snapshot.link != "healthy"
                 || !snapshot.rovers.iter().any(|r| {
-                    r.id == id && r.membership == "online" && r.pose_age.is_some_and(|a| a < freshness)
+                    r.id == id
+                        && r.membership == "online"
+                        && r.pose_age.is_some_and(|a| a < freshness)
                 })
             {
                 return Err(invalid("fresh rover telemetry required"));
@@ -543,7 +661,16 @@ impl Client {
             .wait()
             .map_err(|e| Error(e.to_string()));
         if result.is_ok() {
-            let _ = self.recorder.record(serde_json::json!({"kind":if kind == "teleop" {"teleop_sent"} else {"action_sent"},"topic":kind,"rover_id":id,"token":value["token"],"time":self.start.elapsed().as_secs_f64(),"utc":utc(),"session_id":self.session_id,"payload":value}));
+            let _ = self.recorder.record(serde_json::json!({
+                "kind": if kind == "teleop" {"teleop_sent"} else {"action_sent"},
+                "topic": kind,
+                "rover_id": id,
+                "token": value["token"],
+                "time": self.start.elapsed().as_secs_f64(),
+                "utc": utc(),
+                "session_id": self.session_id,
+                "payload": value,
+            }));
         }
         result
     }
@@ -574,7 +701,7 @@ impl Client {
             if let Some((grid, time)) = maps.get(&rover.id) {
                 result.insert(
                     rover.id.to_string(),
-                    serde_json::json!({"grid":grid,"age":(now-time).max(0.)}),
+                    serde_json::json!({"grid": grid,"age": (now-time).max(0.)}),
                 );
             }
         }
@@ -618,7 +745,16 @@ impl Client {
         )
         .wait()
         .map_err(|e| Error(e.to_string()))?;
-        let _=self.recorder.record(serde_json::json!({"kind":"action_sent","rover_id":id,"token":token,"topic":kind,"time":now,"utc":utc(),"session_id":self.session_id,"payload":serde_json::from_slice::<serde_json::Value>(&payload).unwrap()}));
+        let _ = self.recorder.record(serde_json::json!({
+            "kind": "action_sent",
+            "rover_id": id,
+            "token": token,
+            "topic": kind,
+            "time": now,
+            "utc": utc(),
+            "session_id": self.session_id,
+            "payload": serde_json::from_slice::<serde_json::Value>(&payload).unwrap(),
+        }));
         Ok(token)
     }
     pub fn fleet_action(&self, kind: &str, value: serde_json::Value) -> Vec<(u64, String)> {
@@ -629,7 +765,13 @@ impl Client {
             .into_iter()
             .map(|r| r.id)
             .collect::<Vec<_>>();
-        let _=self.recorder.record(serde_json::json!({"kind":"fleet_action","parent_action_id":parent,"targets":targets,"time":self.start.elapsed().as_secs_f64(),"utc":utc()}));
+        let _ = self.recorder.record(serde_json::json!({
+            "kind": "fleet_action",
+            "parent_action_id": parent,
+            "targets": targets,
+            "time": self.start.elapsed().as_secs_f64(),
+            "utc": utc(),
+        }));
         targets
             .into_iter()
             .map(|id| {
@@ -694,47 +836,62 @@ impl Client {
             }
             authority.generation(id)
         };
-        if held.0 != Some(id) {
-            if let Some(previous) = held.0
+        if held.rover_id != Some(id) {
+            if let Some(previous) = held.rover_id
                 && let Some(s) = self.session.lock().unwrap().as_ref()
             {
                 let _ = s
                     .put(
                         format!("{}/{previous}/teleop", self.topics.prefix),
-                        zero_payload(&self.session_id, &self.teleop_sequence, held.2.as_ref()),
+                        zero_payload(
+                            &self.session_id,
+                            &self.teleop_sequence,
+                            held.authority_generation.as_ref(),
+                        ),
                     )
                     .wait();
             }
-            held.1.clear();
+            held.keys.clear();
         }
-        held.0 = Some(id);
-        held.2 = accepted_generation;
+        held.rover_id = Some(id);
+        held.authority_generation = accepted_generation;
         if down {
-            held.1.press(key);
+            held.keys.press(key);
         } else {
-            held.1.release(key);
+            held.keys.release(key);
         }
         Ok(())
     }
     pub fn clear_input(&self) {
         let mut held = self.held.lock().unwrap();
-        let id = held.0.take();
-        held.1.clear();
+        let id = held.rover_id.take();
+        held.keys.clear();
         if let Some(id) = id
             && let Some(s) = self.session.lock().unwrap().as_ref()
         {
             let _ = s
                 .put(
                     format!("{}/{id}/teleop", self.topics.prefix),
-                    zero_payload(&self.session_id, &self.teleop_sequence, held.2.as_ref()),
+                    zero_payload(
+                        &self.session_id,
+                        &self.teleop_sequence,
+                        held.authority_generation.as_ref(),
+                    ),
                 )
                 .wait();
         }
     }
+    /// Flush and export recorded session events as complete JSONL records.
+    /// This exports the event log, not the live occupancy or point-cloud caches.
     pub fn export_session(&self, destination: &str) -> Result<()> {
         let log = &self.recorder;
         log.flush().map_err(|e| Error(e.to_string()))?;
-        let _=log.record(serde_json::json!({"kind":"session_snapshot","recording_failed":log.failed(),"time":self.start.elapsed().as_secs_f64(),"utc":utc()}));
+        let _ = log.record(serde_json::json!({
+            "kind": "session_snapshot",
+            "recording_failed": log.failed(),
+            "time": self.start.elapsed().as_secs_f64(),
+            "utc": utc(),
+        }));
         log.flush().map_err(|e| Error(e.to_string()))?;
         let bytes = std::fs::read(&self.log_path).map_err(|e| Error(e.to_string()))?;
         {
@@ -764,7 +921,15 @@ impl Client {
             self.start.elapsed().as_secs_f64(),
         )?;
         self.publish(id, payload.clone())?;
-        let _=self.recorder.record(serde_json::json!({"kind":"goal_sent","rover_id":id,"token":token,"time":self.start.elapsed().as_secs_f64(),"utc":utc(),"session_id":self.session_id,"payload":serde_json::from_slice::<serde_json::Value>(&payload).ok()}));
+        let _ = self.recorder.record(serde_json::json!({
+            "kind": "goal_sent",
+            "rover_id": id,
+            "token": token,
+            "time": self.start.elapsed().as_secs_f64(),
+            "utc": utc(),
+            "session_id": self.session_id,
+            "payload": serde_json::from_slice::<serde_json::Value>(&payload).ok(),
+        }));
         Ok(token)
     }
     pub fn cancel_goal(&self, id: u64) -> Result<()> {
@@ -773,7 +938,13 @@ impl Client {
             .lock()
             .unwrap()
             .prepare_cancel(id, self.start.elapsed().as_secs_f64())?;
-        let _=self.recorder.record(serde_json::json!({"kind":"goal_cancel_sent","rover_id":id,"time":self.start.elapsed().as_secs_f64(),"utc":utc(),"session_id":self.session_id}));
+        let _ = self.recorder.record(serde_json::json!({
+            "kind": "goal_cancel_sent",
+            "rover_id": id,
+            "time": self.start.elapsed().as_secs_f64(),
+            "utc": utc(),
+            "session_id": self.session_id,
+        }));
         self.publish(id, cancel_payload().to_vec())
     }
     fn publish(&self, id: u64, payload: Vec<u8>) -> Result<()> {
@@ -828,29 +999,81 @@ fn zero_payload(
     generation: Option<&(String, u64)>,
 ) -> String {
     let sequence = sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    serde_json::json!({"linear":0,"angular":0,"operator_session_id":session,"sequence":sequence,"run_id":generation.map(|g|&g.0),"authority_revision":generation.map(|g|g.1)})
-        .to_string()
+    serde_json::json!({
+        "linear": 0,
+        "angular": 0,
+        "operator_session_id": session,
+        "sequence": sequence,
+        "run_id": generation.map(|g|&g.0),
+        "authority_revision": generation.map(|g|g.1),
+    })
+    .to_string()
 }
 
-#[cfg(test)] mod forest_tests {
+#[cfg(test)]
+mod forest_tests {
     use super::*;
     use std::time::Duration;
-    #[test] fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
+    #[test]
+    fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
         let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port(); drop(probe);
-        let router = router::Router::default(); router.start(port, "").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let router = router::Router::default();
+        router.start(port, "").unwrap();
         let mut client = Client::connect(&format!("tcp/127.0.0.1:{port}"), "forest-test").unwrap();
         client.start = Instant::now() - Duration::from_secs(60);
         {
             let mut cache = client.cache.lock().unwrap();
-            cache.fleet(decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(), 0.);
-            cache.pose(8, Pose { rover_id: 8, sequence: 1, x: 0., y: 0., yaw: 0. }, 0.);
+            cache.fleet(
+                decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(),
+                0.,
+            );
+            cache.pose(
+                8,
+                Pose {
+                    rover_id: 8,
+                    sequence: 1,
+                    x: 0.,
+                    y: 0.,
+                    yaw: 0.,
+                },
+                0.,
+            );
         }
-        client.operator_states.lock().unwrap().insert((8,"authority".into()),
-            (serde_json::json!({"run_id":"run","revision":1,"requested_level":"teleop","supported_levels":["teleop","waypoint","waypoint_direct"],"safety":"clear"}), Instant::now()-Duration::from_secs(60)));
-        assert!(client.operator_command(8,"autonomy",r#"{"level":"waypoint","token":"delayed"}"#).is_ok());
-        assert!(client.operator_command(8,"autonomy",r#"{"level":"waypoint_direct","token":"delayed-direct"}"#).is_ok());
-        assert!(client.operator_command(8,"autonomy",r#"{"level":"teleop","token":"manual"}"#).is_err());
-        client.disconnect(); router.stop().unwrap();
+        client.operator_states.lock().unwrap().insert(
+            (8, "authority".into()),
+            (
+                serde_json::json!({
+                    "run_id": "run",
+                    "revision": 1,
+                    "requested_level": "teleop",
+                    "supported_levels": ["teleop","waypoint","waypoint_direct"],
+                    "safety": "clear",
+                }),
+                Instant::now() - Duration::from_secs(60),
+            ),
+        );
+        assert!(
+            client
+                .operator_command(8, "autonomy", r#"{"level":"waypoint","token":"delayed"}"#)
+                .is_ok()
+        );
+        assert!(
+            client
+                .operator_command(
+                    8,
+                    "autonomy",
+                    r#"{"level":"waypoint_direct","token":"delayed-direct"}"#
+                )
+                .is_ok()
+        );
+        assert!(
+            client
+                .operator_command(8, "autonomy", r#"{"level":"teleop","token":"manual"}"#)
+                .is_err()
+        );
+        client.disconnect();
+        router.stop().unwrap();
     }
 }

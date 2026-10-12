@@ -1,3 +1,5 @@
+//! Fleet topic construction, message decoding, and shared validation limits.
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -79,7 +81,7 @@ impl GoalRequest {
                         "local coordinates must be finite and within 20000 metres",
                     ));
                 }
-                (json!({"frame":"local","x":x,"y":y}), yaw)
+                (json!({"frame": "local","x": x,"y": y}), yaw)
             }
             Self::Geographic {
                 latitude,
@@ -94,7 +96,7 @@ impl GoalRequest {
                     return Err(invalid("geographic coordinates outside Terra bounds"));
                 }
                 (
-                    json!({"frame":"wgs84","latitude":latitude,"longitude":longitude}),
+                    json!({"frame": "wgs84","latitude": latitude,"longitude": longitude}),
                     yaw,
                 )
             }

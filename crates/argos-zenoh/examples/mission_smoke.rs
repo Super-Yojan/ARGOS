@@ -38,13 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut evidence = Vec::new();
     for level in ["teleop", "assisted_teleop", "waypoint", "supervised"] {
         let at = Instant::now();
-        let token = c.action(id, "autonomy", json!({"level":level}))?;
+        let token = c.action(id, "autonomy", json!({"level": level}))?;
         let s = wait(&c, id, |s| {
             s["status"]["token"] == token
                 && s["status"]["result"] == "accepted"
                 && s["status"]["safety"] == "clear"
         });
-        evidence.push(json!({"level":level,"ack_latency":at.elapsed().as_secs_f64(),"state":s}));
+        evidence.push(json!({"level": level,"ack_latency": at.elapsed().as_secs_f64(),"state": s}));
         if level == "teleop" || level == "assisted_teleop" {
             c.input(id, "w", true)?;
             std::thread::sleep(Duration::from_millis(800));
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let snapshot = c.snapshot();
                 let r = snapshot.rovers.iter().find(|r| r.id == id).unwrap();
                 if r.command_phase == "arrived" {
-                    evidence.push(json!({"goal_token":token,"phase":"arrived","distance":r.goal.as_ref().unwrap().distance}));
+                    evidence.push(json!({"goal_token": token,"phase": "arrived","distance": r.goal.as_ref().unwrap().distance}));
                     break;
                 }
                 assert!(start.elapsed().as_secs() < 30, "goal failed: {r:?}");
@@ -83,32 +83,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if level == "supervised" {
             let s = wait(&c, id, |s| s["proposal"]["proposal_id"].as_u64().is_some());
             let proposal = s["proposal"]["proposal_id"].as_u64().unwrap();
-            let token=c.action(id,"goal/decision",json!({"decision":"approve","proposal_id":proposal,"run_id":s["proposal"]["run_id"]}))?;
+            let token=c.action(id,"goal/decision",json!({"decision": "approve","proposal_id": proposal,"run_id": s["proposal"]["run_id"]}))?;
             let approved = wait(&c, id, |s| {
                 s["status"]["token"] == token && s["status"]["result"] == "accepted"
             });
             std::thread::sleep(Duration::from_secs(2));
-            evidence.push(json!({"proposal_id":proposal,"decision":approved}));
+            evidence.push(json!({"proposal_id": proposal,"decision": approved}));
         }
     }
-    let takeover = c.fleet_action("autonomy", json!({"level":"teleop"}));
+    let takeover = c.fleet_action("autonomy", json!({"level": "teleop"}));
     for (id, token) in &takeover {
         wait(&c, *id, |s| {
             s["status"]["token"] == *token && s["status"]["requested_level"] == "teleop"
         });
     }
-    let stopped = c.fleet_action("safety", json!({"action":"stop"}));
+    let stopped = c.fleet_action("safety", json!({"action": "stop"}));
     for (id, token) in &stopped {
         wait(&c, *id, |s| {
             s["status"]["token"] == *token && s["status"]["safety"] == "emergency_stop"
         });
     }
-    evidence.push(json!({"fleet_takeover":takeover,"fleet_stop":stopped}));
+    evidence.push(json!({"fleet_takeover": takeover,"fleet_stop": stopped}));
     let path = "/private/tmp/argos-mission-operator-session.jsonl";
     c.export_session(path)?;
     println!(
         "{}",
-        serde_json::to_string_pretty(&json!({"evidence":evidence,"operator_log":path}))?
+        serde_json::to_string_pretty(&json!({"evidence": evidence,"operator_log": path}))?
     );
     c.disconnect();
     Ok(())

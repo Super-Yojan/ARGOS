@@ -1,3 +1,5 @@
+//! Bounded asynchronous session recording and complete-line recovery for export.
+
 use serde_json::Value;
 use std::{
     fs::File,
@@ -64,7 +66,11 @@ impl RunRecorder {
                         Ok(Message::Close) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             line(
                                 &mut w,
-                                &serde_json::json!({"kind":"run_end","complete":!state.load(Ordering::Acquire),"dropped_events":drops.load(Ordering::Acquire)}),
+                                &serde_json::json!({
+                                    "kind": "run_end",
+                                    "complete": !state.load(Ordering::Acquire),
+                                    "dropped_events": drops.load(Ordering::Acquire),
+                                }),
                             )?;
                             w.flush()?;
                             return Ok(());
@@ -151,7 +157,7 @@ mod tests {
     fn unavailable_recorder_exposes_incomplete_without_control_dependencies() {
         let log = RunRecorder::unavailable();
         assert!(log.failed());
-        assert!(log.record(serde_json::json!({"kind":"action"})).is_err());
+        assert!(log.record(serde_json::json!({"kind": "action"})).is_err());
         assert!(log.flush().is_err());
     }
     #[test]
@@ -159,7 +165,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("argos-writer-test-{}.jsonl", std::process::id()));
         let log = RunRecorder::create(&path, serde_json::json!({}), 16).unwrap();
-        log.record(serde_json::json!({"kind":"action","token":"correlated"}))
+        log.record(serde_json::json!({"kind": "action","token": "correlated"}))
             .unwrap();
         log.flush().unwrap();
         let mut bytes = std::fs::read(&path).unwrap();

@@ -40,7 +40,18 @@ fn receives_fleet_and_publishes_one_correlated_goal() {
         .unwrap();
         client.snapshot().link == "healthy"
     });
-    let grid = serde_json::json!({"schema_version":1,"rover_id":8,"run_id":"map-run","sequence":2,"width":2,"height":2,"resolution":0.5,"origin_x":-1,"origin_y":3,"occupancy":[-1,0,65,100]});
+    let grid = serde_json::json!({
+        "schema_version": 1,
+        "rover_id": 8,
+        "run_id": "map-run",
+        "sequence": 2,
+        "width": 2,
+        "height": 2,
+        "resolution": 0.5,
+        "origin_x": -1,
+        "origin_y": 3,
+        "occupancy": [-1,0,65,100],
+    });
     wait_for(|| {
         peer.put("terra/rover/8/map/occupancy", grid.to_string())
             .wait()
@@ -127,7 +138,7 @@ fn authority_teleop_release_and_export_are_correlated() {
         c.snapshot().link == "healthy"
     });
     let token = c
-        .action(8, "autonomy", serde_json::json!({"level":"teleop"}))
+        .action(8, "autonomy", serde_json::json!({"level": "teleop"}))
         .unwrap();
     assert!(
         actions
@@ -136,10 +147,29 @@ fn authority_teleop_release_and_export_are_correlated() {
             .is_some()
     );
     wait_for(|| {
-        peer.put("terra/rover/8/autonomy/status",serde_json::json!({"requested_level":"teleop","effective_level":"teleop","active_source":"none","safety":"clear","reason":"idle","revision":1,"run_id":"run","token":token,"result":"accepted","supported_levels":["teleop"],"paused":false,"assigned_level":null}).to_string()).wait().unwrap();
+        peer.put(
+            "terra/rover/8/autonomy/status",
+            serde_json::json!({
+                "requested_level": "teleop",
+                "effective_level": "teleop",
+                "active_source": "none",
+                "safety": "clear",
+                "reason": "idle",
+                "revision": 1,
+                "run_id": "run",
+                "token": token,
+                "result": "accepted",
+                "supported_levels": ["teleop"],
+                "paused": false,
+                "assigned_level": null,
+            })
+            .to_string(),
+        )
+        .wait()
+        .unwrap();
         c.operator_snapshot().contains("accepted")
     });
-    c.action(8, "mission/report", serde_json::json!({"survivor_id":1}))
+    c.action(8, "mission/report", serde_json::json!({"survivor_id": 1}))
         .unwrap();
     // Observational reporting does not create an authority gate without an authority receipt.
     c.input(8, "w", true).unwrap();
@@ -350,7 +380,24 @@ fn search_reports_are_retained_and_acknowledged_on_canonical_topics() {
     let start = Instant::now();
     loop {
         for id in ["first", "second"] {
-            server.put("search/7/search/report",serde_json::json!({"version":1,"run_id":"run","search_id":id,"report_id":format!("{id}:report"),"target_class":"survivor","world_x":1,"world_y":2,"frame_ids":[1,2,3],"evidence_ids":["a","b","c"]}).to_string()).wait().unwrap();
+            server
+                .put(
+                    "search/7/search/report",
+                    serde_json::json!({
+                        "version": 1,
+                        "run_id": "run",
+                        "search_id": id,
+                        "report_id": format!("{id}:report"),
+                        "target_class": "survivor",
+                        "world_x": 1,
+                        "world_y": 2,
+                        "frame_ids": [1,2,3],
+                        "evidence_ids": ["a","b","c"],
+                    })
+                    .to_string(),
+                )
+                .wait()
+                .unwrap();
         }
         let v: serde_json::Value = serde_json::from_str(&client.operator_snapshot()).unwrap();
         if v["7"]["reports"].as_array().is_some_and(|r| r.len() == 2) {
@@ -390,18 +437,48 @@ fn search_reports_are_retained_and_acknowledged_on_canonical_topics() {
 fn managed_router_routes_two_clients_and_reconnect_does_not_replay_goal() {
     use argos_zenoh::router::Router;
     let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = probe.local_addr().unwrap().port(); drop(probe);
-    let router = Router::default(); router.start(port, "").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let router = Router::default();
+    router.start(port, "").unwrap();
     let endpoint = format!("tcp/127.0.0.1:{port}");
     let mut config = zenoh::Config::default();
     config.insert_json5("mode", "\"client\"").unwrap();
-    config.insert_json5("connect/endpoints", &serde_json::json!([endpoint]).to_string()).unwrap();
-    config.insert_json5("scouting/multicast/enabled", "false").unwrap();
+    config
+        .insert_json5(
+            "connect/endpoints",
+            &serde_json::json!([endpoint]).to_string(),
+        )
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
     let phone = zenoh::open(config).wait().unwrap();
-    let goals = phone.declare_subscriber("terra/phone/8/goal").wait().unwrap();
+    let goals = phone
+        .declare_subscriber("terra/phone/8/goal")
+        .wait()
+        .unwrap();
     let client = Client::connect(&endpoint, "terra/phone").unwrap();
-    wait_for(|| { phone.put("terra/phone/fleet/state", br#"{"count":1,"max_count":32,"ids":[8]}"#.as_slice()).wait().unwrap(); client.snapshot().link == "healthy" });
-    let token = client.send_goal(8, GoalRequest::Local { x: 3., y: 4., yaw: None }).unwrap();
+    wait_for(|| {
+        phone
+            .put(
+                "terra/phone/fleet/state",
+                br#"{"count":1,"max_count":32,"ids":[8]}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        client.snapshot().link == "healthy"
+    });
+    let token = client
+        .send_goal(
+            8,
+            GoalRequest::Local {
+                x: 3.,
+                y: 4.,
+                yaw: None,
+            },
+        )
+        .unwrap();
     let sample = goals.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
     let body: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(body["token"], token);
@@ -409,8 +486,15 @@ fn managed_router_routes_two_clients_and_reconnect_does_not_replay_goal() {
     wait_for(|| client.snapshot().rovers[0].command_phase == "arrived");
     client.disconnect();
     let replacement = Client::connect(&endpoint, "terra/phone").unwrap();
-    assert!(goals.recv_timeout(Duration::from_millis(200)).unwrap().is_none());
+    assert!(
+        goals
+            .recv_timeout(Duration::from_millis(200))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(replacement.snapshot().link, "connecting");
     assert!(replacement.snapshot().rovers.is_empty());
-    replacement.disconnect(); phone.close().wait().unwrap(); router.stop().unwrap();
+    replacement.disconnect();
+    phone.close().wait().unwrap();
+    router.stop().unwrap();
 }

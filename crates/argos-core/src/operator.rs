@@ -1,3 +1,6 @@
+//! Ordered held-key input, authority generations, and operator message validation.
+//! Run changes retire old authority so delayed reports cannot revive old commands.
+
 use crate::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,7 +46,7 @@ impl InputOrder {
             return false;
         }
         self.cleared = sequence;
-        self.keys.retain(|_, s| *s > sequence);
+        self.keys.retain(|_, status| *status > sequence);
         true
     }
 }
@@ -63,19 +66,23 @@ pub struct OperatorCache {
 }
 impl OperatorCache {
     pub fn generation(&self, id: u64) -> Option<(String, u64)> {
-        let (s, _) = self.entries.get(&id)?.status.as_ref()?;
-        Some((s["run_id"].as_str()?.into(), s["revision"].as_u64()?))
+        let (status, _) = self.entries.get(&id)?.status.as_ref()?;
+        Some((
+            status["run_id"].as_str()?.into(),
+            status["revision"].as_u64()?,
+        ))
     }
     pub fn matches_authority(&self, id: u64, run: &str, revision: u64) -> bool {
         self.entries
             .get(&id)
-            .and_then(|e| e.status.as_ref())
-            .is_some_and(|(s, _)| {
-                s["run_id"].as_str() == Some(run) && s["revision"].as_u64() == Some(revision)
+            .and_then(|entry| entry.status.as_ref())
+            .is_some_and(|(status, _)| {
+                status["run_id"].as_str() == Some(run)
+                    && status["revision"].as_u64() == Some(revision)
             })
     }
     pub fn run_id(&self, id: u64) -> Option<String> {
-        self.entries.get(&id).and_then(|e| e.run_id.clone())
+        self.entries.get(&id).and_then(|entry| entry.run_id.clone())
     }
     pub fn pending(&mut self, id: u64, token: String, now: f64) {
         self.entries.entry(id).or_default().pending = Some((token, now, "pending".into()));
@@ -84,72 +91,79 @@ impl OperatorCache {
         if bytes.len() > MAX_STATE_BYTES || !now.is_finite() {
             return Err(invalid("invalid operator state"));
         }
-        let v: Value =
+        let value: Value =
             serde_json::from_slice(bytes).map_err(|_| invalid("malformed operator state"))?;
-        let e = self.entries.entry(id).or_default();
+        let entry = self.entries.entry(id).or_default();
         if matches!(kind, "autonomy/status" | "experiment/status")
-            && let Some(run) = v["run_id"].as_str()
+            && let Some(run) = value["run_id"].as_str()
         {
-            if e.retired_runs.contains(run) {
+            if entry.retired_runs.contains(run) {
                 return Ok(());
             }
-            if e.run_id.as_deref() != Some(run) {
-                let mut retired = std::mem::take(&mut e.retired_runs);
-                if let Some(old) = e.run_id.take() {
+            if entry.run_id.as_deref() != Some(run) {
+                let mut retired = std::mem::take(&mut entry.retired_runs);
+                if let Some(old) = entry.run_id.take() {
                     retired.insert(old);
                 }
-                *e = OperatorEntry {
+                *entry = OperatorEntry {
                     run_id: Some(run.into()),
                     retired_runs: retired,
                     ..Default::default()
                 };
             }
         }
-        if kind == "goal/proposal" && !v.is_null() && e.run_id.as_deref() != v["run_id"].as_str() {
+        if kind == "goal/proposal"
+            && !value.is_null()
+            && entry.run_id.as_deref() != value["run_id"].as_str()
+        {
             return Ok(());
         }
         match kind {
             "autonomy/status" => {
-                let level = v["requested_level"]
+                let level = value["requested_level"]
                     .as_str()
                     .ok_or_else(|| invalid("missing level"))?;
                 if !matches!(
                     level,
-                    "teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search"
-                ) || v["revision"].as_u64().is_none()
+                    "teleop"
+                        | "assisted_teleop"
+                        | "waypoint"
+                        | "waypoint_direct"
+                        | "supervised"
+                        | "target_search"
+                ) || value["revision"].as_u64().is_none()
                 {
                     return Err(invalid("invalid authority"));
                 }
-                if e.status
-                    .as_ref()
-                    .is_some_and(|(s, _)| s["revision"].as_u64() > v["revision"].as_u64())
-                {
+                if entry.status.as_ref().is_some_and(|(status, _)| {
+                    status["revision"].as_u64() > value["revision"].as_u64()
+                }) {
                     return Ok(());
                 }
-                if let Some((token, at, phase)) = &mut e.pending
-                    && v["token"].as_str() == Some(token)
+                if let Some((token, at, phase)) = &mut entry.pending
+                    && value["token"].as_str() == Some(token)
                     && now >= *at
                 {
-                    *phase = v["result"].as_str().unwrap_or("unconfirmed").into();
+                    *phase = value["result"].as_str().unwrap_or("unconfirmed").into();
                 }
-                e.status = Some((v, now));
+                entry.status = Some((value, now));
             }
             "goal/proposal" => {
-                e.proposal = if v.is_null() {
+                entry.proposal = if value.is_null() {
                     None
                 } else {
-                    if v["proposal_id"].as_u64().is_none()
+                    if value["proposal_id"].as_u64().is_none()
                         || ["x", "y", "expires_at"]
                             .iter()
-                            .any(|k| v[*k].as_f64().is_none_or(|n| !n.is_finite()))
+                            .any(|k| value[*k].as_f64().is_none_or(|n| !n.is_finite()))
                     {
                         return Err(invalid("invalid proposal"));
                     }
-                    Some(v)
+                    Some(value)
                 };
             }
-            "mission/status" => e.mission = Some(v),
-            "experiment/status" => e.experiment = Some((v, now)),
+            "mission/status" => entry.mission = Some(value),
+            "experiment/status" => entry.experiment = Some((value, now)),
             _ => return Err(invalid("unknown state topic")),
         }
         Ok(())
@@ -157,17 +171,18 @@ impl OperatorCache {
     pub fn can_drive(&self, id: u64, now: f64) -> bool {
         self.entries
             .get(&id)
-            .filter(|e| {
-                e.pending
+            .filter(|entry| {
+                entry
+                    .pending
                     .as_ref()
                     .is_none_or(|p| p.2 == "accepted" || p.2 == "rejected")
             })
-            .and_then(|e| e.status.as_ref())
-            .is_some_and(|(s, t)| {
+            .and_then(|entry| entry.status.as_ref())
+            .is_some_and(|(status, t)| {
                 now - *t < STALE_SECONDS
-                    && s["safety"] == "clear"
+                    && status["safety"] == "clear"
                     && matches!(
-                        s["effective_level"].as_str(),
+                        status["effective_level"].as_str(),
                         Some("teleop" | "assisted_teleop")
                     )
             })
@@ -180,8 +195,8 @@ impl OperatorCache {
     }
     pub fn snapshot(&self, now: f64) -> Value {
         let mut out = serde_json::Map::new();
-        for (id, e) in &self.entries {
-            let phase = e
+        for (id, entry) in &self.entries {
+            let phase = entry
                 .pending
                 .as_ref()
                 .map(|(_, t, p)| {
@@ -192,19 +207,38 @@ impl OperatorCache {
                     }
                 })
                 .unwrap_or("none");
-            let remaining = e
+            let remaining = entry
                 .proposal
                 .as_ref()
                 .and_then(|p| p["expires_at"].as_f64())
                 .zip(
-                    e.experiment
+                    entry
+                        .experiment
                         .as_ref()
-                        .and_then(|s| s.0["run_elapsed"].as_f64()),
+                        .and_then(|status| status.0["run_elapsed"].as_f64()),
                 )
                 .map(|(expiry, elapsed)| {
-                    expiry - elapsed - e.experiment.as_ref().map(|s| now - s.1).unwrap_or(0.)
+                    expiry
+                        - elapsed
+                        - entry
+                            .experiment
+                            .as_ref()
+                            .map(|status| now - status.1)
+                            .unwrap_or(0.)
                 });
-            out.insert(id.to_string(),json!({"proposal_remaining":remaining,"status":e.status.as_ref().map(|s|&s.0),"age":e.status.as_ref().map(|s|now-s.1),"proposal":e.proposal,"mission":e.mission,"experiment":e.experiment.as_ref().map(|s|&s.0),"action_phase":phase,"action_token":e.pending.as_ref().map(|p|&p.0)}));
+            out.insert(
+                id.to_string(),
+                json!({
+                    "proposal_remaining": remaining,
+                    "status": entry.status.as_ref().map(|status|&status.0),
+                    "age": entry.status.as_ref().map(|status|now-status.1),
+                    "proposal": entry.proposal,
+                    "mission": entry.mission,
+                    "experiment": entry.experiment.as_ref().map(|status|&status.0),
+                    "action_phase": phase,
+                    "action_token": entry.pending.as_ref().map(|p|&p.0),
+                }),
+            );
         }
         Value::Object(out)
     }
@@ -217,7 +251,14 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
         "autonomy" => {
             if !matches!(
                 value["level"].as_str(),
-                Some("teleop" | "assisted_teleop" | "waypoint" | "waypoint_direct" | "supervised" | "target_search")
+                Some(
+                    "teleop"
+                        | "assisted_teleop"
+                        | "waypoint"
+                        | "waypoint_direct"
+                        | "supervised"
+                        | "target_search"
+                )
             ) {
                 return Err(invalid("invalid level"));
             }
@@ -239,7 +280,10 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
             if value["decision"] != "resume" && value["proposal_id"].as_u64().is_none() {
                 return Err(invalid("missing proposal ID"));
             }
-            if value["run_id"].as_str().is_none_or(|s| !valid_token(s)) {
+            if value["run_id"]
+                .as_str()
+                .is_none_or(|status| !valid_token(status))
+            {
                 return Err(invalid("missing run identity"));
             }
             &["decision", "proposal_id", "run_id"]
@@ -261,5 +305,5 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
         return Err(invalid("unexpected action field"));
     }
     value["token"] = token.into();
-    serde_json::to_vec(&value).map_err(|e| Error(e.to_string()))
+    serde_json::to_vec(&value).map_err(|entry| Error(entry.to_string()))
 }

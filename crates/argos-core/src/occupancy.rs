@@ -1,3 +1,6 @@
+//! Decode and validate observed occupancy grids before caching or rendering them.
+//! Unknown cells retain -1; they must not be presented as observed free space.
+
 use crate::{Result, invalid};
 use serde::{Deserialize, Serialize};
 /// Observed world XY cells; row-major, +X columns and +Y rows.
@@ -18,24 +21,24 @@ pub fn decode_occupancy(bytes: &[u8]) -> Result<OccupancyGrid> {
     if bytes.len() > 2_000_000 {
         return Err(invalid("oversized occupancy grid"));
     }
-    let g: OccupancyGrid =
+    let grid: OccupancyGrid =
         serde_json::from_slice(bytes).map_err(|_| invalid("invalid occupancy JSON"))?;
-    let cells = u64::from(g.width) * u64::from(g.height);
-    if g.schema_version != 1
-        || g.run_id.is_empty()
-        || g.run_id.len() > 256
+    let cells = u64::from(grid.width) * u64::from(grid.height);
+    if grid.schema_version != 1
+        || grid.run_id.is_empty()
+        || grid.run_id.len() > 256
         || cells == 0
         || cells > 250_000
-        || cells != g.occupancy.len() as u64
-        || !g.resolution.is_finite()
-        || g.resolution <= 0.
-        || !g.origin_x.is_finite()
-        || !g.origin_y.is_finite()
-        || !(g.origin_x + f64::from(g.width) * g.resolution).is_finite()
-        || !(g.origin_y + f64::from(g.height) * g.resolution).is_finite()
-        || g.occupancy.iter().any(|v| !(-1..=100).contains(v))
+        || cells != grid.occupancy.len() as u64
+        || !grid.resolution.is_finite()
+        || grid.resolution <= 0.
+        || !grid.origin_x.is_finite()
+        || !grid.origin_y.is_finite()
+        || !(grid.origin_x + f64::from(grid.width) * grid.resolution).is_finite()
+        || !(grid.origin_y + f64::from(grid.height) * grid.resolution).is_finite()
+        || grid.occupancy.iter().any(|v| !(-1..=100).contains(v))
     {
         return Err(invalid("invalid occupancy geometry or cells"));
     }
-    Ok(g)
+    Ok(grid)
 }

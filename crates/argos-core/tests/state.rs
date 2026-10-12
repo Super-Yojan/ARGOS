@@ -35,7 +35,10 @@ fn stale_and_removed_members_cannot_receive_commands() {
         y: 0.,
         yaw: None,
     };
-    assert!(c.prepare_goal(8, &r, "a", SUPERVISION_STALE_SECONDS).is_err());
+    assert!(
+        c.prepare_goal(8, &r, "a", SUPERVISION_STALE_SECONDS)
+            .is_err()
+    );
     assert!(c.prepare_goal(2, &r, "b", 0.1).is_err());
     c.fleet(
         decode_fleet(br#"{"count":1,"max_count":32,"ids":[0]}"#).unwrap(),
@@ -89,7 +92,10 @@ fn pending_timeout_and_disconnect_do_not_replay() {
         0.1,
     )
     .unwrap();
-    assert_eq!(c.snapshot(GOAL_ACK_SECONDS + 0.1).rovers[0].command_phase, "unconfirmed");
+    assert_eq!(
+        c.snapshot(GOAL_ACK_SECONDS + 0.1).rovers[0].command_phase,
+        "unconfirmed"
+    );
     c.disconnected();
     assert_eq!(c.snapshot(0.2).link, "disconnected");
     assert!(c.prepare_cancel(0, 0.2).is_err());
@@ -139,7 +145,11 @@ fn retired_rovers_do_not_grow_snapshots_without_bound() {
 #[test]
 fn forest_gap_accepts_waypoint_and_delayed_ack_without_retry() {
     let mut c = cache();
-    let goal = GoalRequest::Local { x: 10., y: 20., yaw: None };
+    let goal = GoalRequest::Local {
+        x: 10.,
+        y: 20.,
+        yaw: None,
+    };
     assert_eq!(c.snapshot(60.).link, "healthy");
     c.prepare_goal(8, &goal, "forest", 60.).unwrap();
     assert_eq!(c.snapshot(120.).rovers[1].command_phase, "pending");

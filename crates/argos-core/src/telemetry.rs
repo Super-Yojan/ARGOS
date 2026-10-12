@@ -1,3 +1,5 @@
+//! Decode rover pose and localization evidence from phone and depth messages.
+
 use crate::{MAX_STATE_BYTES, Result, contract::finite, invalid};
 use serde_json::Value;
 #[derive(Clone, Debug)]

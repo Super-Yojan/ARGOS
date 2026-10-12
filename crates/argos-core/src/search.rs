@@ -1,3 +1,5 @@
+//! Validate target-search status and report messages for operator supervision.
+
 use crate::{Result, invalid, valid_token};
 /// Validate user intent without accepting sensor evidence from an operator client.
 pub fn validate_search_command(kind: &str, payload: &str) -> Result<serde_json::Value> {

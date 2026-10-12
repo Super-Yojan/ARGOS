@@ -19,7 +19,7 @@ fn bounded_search_commands_require_session_and_valid_geometry() {
 fn mission_operator_preserves_target_search_authority_without_enabling_teleop() {
     let payload = argos_core::operator_payload(
         "autonomy",
-        serde_json::json!({"level":"target_search"}),
+        serde_json::json!({"level": "target_search"}),
         "l4-mode",
     )
     .unwrap();

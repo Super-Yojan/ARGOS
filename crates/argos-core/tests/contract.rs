@@ -13,7 +13,7 @@ fn goal_shapes_and_bounds_match_terra() {
             .unwrap()
         )
         .unwrap(),
-        json!({"frame":"local","x":12.,"y":-4.,"token":"g-1"})
+        json!({"frame": "local","x": 12.,"y": -4.,"token": "g-1"})
     );
     assert!(
         GoalRequest::Local {

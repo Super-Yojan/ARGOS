@@ -99,5 +99,8 @@ fn authority_heartbeats_do_not_extend_proposal_expiry() {
 fn direct_waypoint_authority_is_retained_as_a_distinct_supported_level() {
     let mut cache = OperatorCache::default();
     cache.apply(8, "autonomy/status", br#"{"requested_level":"waypoint_direct","effective_level":"waypoint_direct","active_source":"waypoint","safety":"clear","reason":"active","revision":1,"supported_levels":["teleop","waypoint_direct","waypoint"]}"#, 0.).unwrap();
-    assert_eq!(cache.snapshot(0.1)["8"]["status"]["requested_level"], "waypoint_direct");
+    assert_eq!(
+        cache.snapshot(0.1)["8"]["status"]["requested_level"],
+        "waypoint_direct"
+    );
 }
