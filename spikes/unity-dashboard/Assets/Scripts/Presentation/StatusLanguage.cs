@@ -39,10 +39,11 @@ namespace Argos.Fleet
             if (!dimmed)
                 return color;
 
-            color.r *= 0.35f;
-            color.g *= 0.35f;
-            color.b *= 0.35f;
-            color.a *= 0.35f;
+            // Stay opaque enough that the chip remains a status color on the photo.
+            color.r *= 0.5f;
+            color.g *= 0.5f;
+            color.b *= 0.5f;
+            color.a *= 0.92f;
             return color;
         }
     }

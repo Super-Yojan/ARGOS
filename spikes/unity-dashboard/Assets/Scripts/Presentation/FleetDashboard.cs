@@ -242,6 +242,8 @@ namespace Argos.Fleet
             root.transform.SetParent(transform, false);
             root.transform.position = view.Position;
             root.transform.rotation = Quaternion.Euler(0f, view.HeadingDegrees, 0f);
+            if (_terrain != null)
+                root.transform.localScale = new Vector3(1.65f, 1.65f, 1.65f);
 
             var body = GameObject.CreatePrimitive(PrimitiveType.Cube);
             body.name = "body";
@@ -297,7 +299,10 @@ namespace Argos.Fleet
         {
             _terrain = CampusTerrain.TryCreate(transform);
             if (_terrain != null)
+            {
+                FrameCampus();
                 return;
+            }
 
             var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "ground";
@@ -429,6 +434,28 @@ namespace Argos.Fleet
             return world;
         }
 
+        void FrameCampus()
+        {
+            var camera = Camera.main;
+            if (camera == null)
+                return;
+
+            RenderSettings.fog = false;
+            QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.02f, 0.025f, 0.03f, 1f);
+            camera.fieldOfView = 46f;
+            camera.nearClipPlane = 0.3f;
+            camera.farClipPlane = 900f;
+            // South-east of the anchor, looking across the rover cluster into campus.
+            // +x is north, +z is west. The framed ground is about 180 m on a side.
+            var position = new Vector3(-24f, 78f, -36f);
+            var focus = new Vector3(6f, 0f, 10f);
+            camera.transform.position = position;
+            camera.transform.LookAt(focus, Vector3.up);
+            Debug.Log("ARGOS camera: campus frame " + position.ToString("F0") + " focus " + focus.ToString("F0"));
+        }
+
         static Material CreateMaterial()
         {
             var shader = Shader.Find("Argos/FleetUnlit");
@@ -438,7 +465,9 @@ namespace Argos.Fleet
                 shader = Shader.Find("Unlit/Color");
             if (shader == null)
                 shader = Shader.Find("Standard");
-            return new Material(shader);
+            var material = new Material(shader);
+            material.renderQueue = 3200;
+            return material;
         }
 
         static Material CreateOpaqueMaterial()

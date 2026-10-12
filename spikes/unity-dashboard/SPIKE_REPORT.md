@@ -121,7 +121,7 @@ The ground is an offline patch centered on the ARGOS / Zorvane anchor, George Ma
 
 Elevation is Terrarium tile `15/9347/12543` from the AWS Open Data bucket `elevation-tiles-prod` (Mapzen / Tilezen packaging), file `Assets/StreamingAssets/terrain/gmu-fairfax-terrarium.png`. Height is `(R * 256 + G + B / 256) - 32768`. The anchor pixel is subtracted so the campus origin is `y = 0`. Fairfax is USGS 3DEP, which The National Map places in the public domain; USGS asks for credit. The bundle says: `United States 3DEP terrain data courtesy of the U.S. Geological Survey.` Zoom 16 is not in that bucket for this tile, so the patch is the zoom-15 tile (about 4 m per pixel).
 
-Imagery is a 512×512 USGS NAIP export of the same bounds, `gmu-fairfax-naip.png`. NAIP is a U.S. Government work, public domain. The material desaturates and darkens it so cyan, amber, and red stay readable. Attribution is in `Assets/StreamingAssets/terrain/SOURCE.md`.
+Imagery is a 1024×1024 USGS NAIP export of the same bounds, `gmu-fairfax-naip.png`. NAIP is a U.S. Government work, public domain. The material dims it and pulls a little saturation out. It does not fog the photo. Attribution is in `Assets/StreamingAssets/terrain/SOURCE.md`.
 
 ### Occupancy
 
@@ -134,7 +134,7 @@ The C API stays polling-only:
 | `argos_bridge_poll_map_index` | One JSON object per rover: id, sequence, run id, age, origin, size. No cells. |
 | `argos_bridge_poll_map(rover_id)` | That rover’s cells. `-4` if it has no grid. |
 
-Unity uploads a texture only when `sequence` or `runId` changes. A grid older than 0.5 s is dropped, matching `OccupancyFrame.usable` in the Swift app. The quad is translucent gray in world metres (`+x` columns, `+y` rows). Unknown cells are clear. Selection dims the other grids. The fake publisher sends a 16×16 grid at 0.5 m, centered on each rover, with an occupied block just north of it.
+Unity uploads a texture only when `sequence` or `runId` changes. A grid older than 0.5 s is dropped, matching `OccupancyFrame.usable` in the Swift app. The quad sits in world metres (`+x` columns, `+y` rows). Unknown cells are clear, free cells are a faint tint, occupied cells are dark and solid, and each grid has a hairline border. Selection keeps the chosen rover and its grid at full strength and darkens the others without turning them into a wash. The fake publisher sends a 24×24 grid at 0.5 m, centered on each rover. The rover sits in free space. Beyond about 5.4 m is unknown. A north wall and a west wall, each with a gap, plus a small obstacle, are occupied.
 
 Zorvane, without the fake publisher:
 
@@ -148,9 +148,17 @@ TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 
 | Check | Result |
 | --- | --- |
-| `cargo test -p argos-unity-bridge` | **PASS**, 5 tests, Zenoh **1.10.1**. `publisher_fleet_arrives_through_the_c_api` now also reads four occupancy grids through `argos_bridge_poll_map`. Rover 1’s grid is 16×16, resolution 0.5 m, origin centered on its pose, age under 0.5 s, border cell `-1`, occupied cell `90`. `map_index_omits_cells_and_the_grid_poll_keeps_them` checks the version index has no cell payload. `gmu_anchor_round_trips_through_argos_core` checks `Anchor` at `38.8297, -77.3075` for local `(12, 4)`. |
+| `cargo test -p argos-unity-bridge` | **PASS**, 6 tests, Zenoh **1.10.1**. `publisher_fleet_arrives_through_the_c_api` reads four occupancy grids through `argos_bridge_poll_map`. Rover 1’s grid is 24×24, resolution 0.5 m, origin centered on its pose, age under 0.5 s, outside cell `-1`, and a north-wall cell at least `80`. `fake_grids_keep_the_rover_in_free_space_and_draw_walls` checks all eight layouts. `map_index_omits_cells_and_the_grid_poll_keeps_them` checks the version index has no cell payload. `gmu_anchor_round_trips_through_argos_core` checks `Anchor` at `38.8297, -77.3075` for local `(12, 4)`. |
 | `cargo build -p argos-unity-bridge` | **PASS**. The dylib exports `argos_bridge_poll_map` and `argos_bridge_poll_map_index`. |
 | Unity player and the new EditMode tests | **Not run**. No license on this VM. `MapTests` covers the projection, Terrarium decode, the manifest anchor, cell placement, and the 0.5 s freshness window. |
+
+### Mac pass at a43945f, then the visual fix
+
+`./spikes/unity-dashboard/run-maps-mac.sh` on the owner’s Mac at `a43945f` passed: 8 live rovers and 8 occupancy grids. The frame did not read. The camera sat about 38 m from the anchor at a 72° pitch with a 250 m far clip, so the 1280×720 view was a few dozen metres of NAIP, bilinear-blurred, then multiplied by a 0.42 gray tint at 0.28 saturation. That is the gray wash. Fog is off in the scene.
+
+The light square beside the rovers is the fake publisher’s occupied block from that build: four cells at value 90, one metre across, painted the same pale gray as free space (`Color32` around 196, 200, 206). Free cells covered the rest of each 8 m quad at low alpha, so the grids read as flat trapezoids and the occupied block read as a stray tile. It was not a ninth rover.
+
+This revision pulls the camera to about (-24, 78, -36) m, looking at (6, 0, 10), field of view 46°, far clip 900 m. The ground in frame is about 180 m of campus around the rover cluster. The basemap is the same NAIP bounds at 1024×1024, dimmed (`tint` 0.78) and only slightly desaturated (0.75), with no fog. Grids are 24×24 at 0.5 m. Unknown stays clear, free is a faint tint, occupied cells are dark, and each quad has a hairline border. Unselected rovers darken in place instead of dropping to 0.35 alpha. Unity was not run on this VM, so the new captures still have to come from the Mac.
 
 ### Pending on the Mac
 
@@ -158,7 +166,7 @@ TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
 ./spikes/unity-dashboard/run-maps-mac.sh
 ```
 
-That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1 and both `overview.png` and `selected.png` are written. Stop anything already listening on `tcp/127.0.0.1:7447`.
+That is `run-zenoh-mac.sh` with the maps check turned on. Default Unity is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (`UNITY_EDITOR` overrides it). The script exits nonzero unless the player logs `ARGOS occupancy grids: N` for N at least 1 and both `overview.png` and `selected.png` are written. Stop anything already listening on `tcp/127.0.0.1:7447`. The log line `ARGOS camera: campus frame` confirms this framing.
 
 ## Exact errors
 

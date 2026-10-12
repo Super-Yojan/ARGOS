@@ -88,6 +88,18 @@ namespace Argos.Fleet.Tests
             Assert.IsTrue(OccupancyMapParser.IsFresh(index.maps[0].age));
         }
 
+        [Test]
+        public void OccupancyColorsSeparateUnknownFreeAndOccupied()
+        {
+            var unknown = OccupancyStyle.ColorFor(-1);
+            var free = OccupancyStyle.ColorFor(0);
+            var occupied = OccupancyStyle.ColorFor(90);
+            Assert.AreEqual(0, unknown.a);
+            Assert.Greater(free.a, 0);
+            Assert.Less(free.a, 80);
+            Assert.Greater(occupied.a, 200);
+            Assert.Less(occupied.r, free.r);
+        }
     }
 
     [Serializable]

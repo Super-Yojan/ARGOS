@@ -7,7 +7,7 @@ namespace Argos.Fleet
 {
     /// <summary>
     /// Offline GMU Fairfax patch. Elevation is the bundled Terrarium tile.
-    /// The photo is darkened so rover status colors remain the brightest marks in the frame.
+    /// The photo stays dim and slightly desaturated so status colors read first.
     /// </summary>
     public sealed class CampusTerrain
     {
@@ -39,7 +39,7 @@ namespace Argos.Fleet
                     return null;
                 }
 
-                var elevation = LoadTexture(File.ReadAllBytes(elevationPath));
+                var elevation = LoadTexture(File.ReadAllBytes(elevationPath), mipmaps: false);
                 var pixels = elevation.GetPixels32();
                 var width = elevation.width;
                 var height = elevation.height;
@@ -155,21 +155,22 @@ namespace Argos.Fleet
             var material = new Material(shader);
             if (File.Exists(imageryPath) && shader != null)
             {
-                var imagery = LoadTexture(File.ReadAllBytes(imageryPath));
+                var imagery = LoadTexture(File.ReadAllBytes(imageryPath), mipmaps: true);
                 imagery.wrapMode = TextureWrapMode.Clamp;
-                imagery.filterMode = FilterMode.Bilinear;
+                imagery.filterMode = FilterMode.Trilinear;
+                imagery.anisoLevel = 8;
                 material.mainTexture = imagery;
             }
             if (material.HasProperty("_Tint"))
-                material.SetColor("_Tint", new Color(0.42f, 0.46f, 0.5f, 1f));
+                material.SetColor("_Tint", new Color(0.78f, 0.80f, 0.82f, 1f));
             if (material.HasProperty("_Saturation"))
-                material.SetFloat("_Saturation", 0.28f);
+                material.SetFloat("_Saturation", 0.75f);
             return material;
         }
 
-        static Texture2D LoadTexture(byte[] bytes)
+        static Texture2D LoadTexture(byte[] bytes, bool mipmaps)
         {
-            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, mipmaps);
             texture.LoadImage(bytes);
             return texture;
         }

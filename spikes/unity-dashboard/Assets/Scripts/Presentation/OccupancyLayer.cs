@@ -96,7 +96,7 @@ namespace Argos.Fleet
             {
                 if (pair.Value.Material == null)
                     continue;
-                var alpha = dimOthers && pair.Key != selectedId ? 0.22f : 1f;
+                var alpha = dimOthers && pair.Key != selectedId ? 0.32f : 1f;
                 pair.Value.Material.SetColor("_Color", new Color(1f, 1f, 1f, alpha));
             }
         }
@@ -132,6 +132,8 @@ namespace Argos.Fleet
                 shader = Shader.Find("Unlit/Transparent");
             var material = new Material(shader);
             material.SetColor("_Color", Color.white);
+            material.SetColor("_Border", BorderColor(id));
+            material.renderQueue = 3000;
             renderer.sharedMaterial = material;
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             renderer.receiveShadows = false;
@@ -166,19 +168,20 @@ namespace Argos.Fleet
 
             var pixels = new Color32[grid.occupancy.Length];
             for (var i = 0; i < pixels.Length; i++)
-                pixels[i] = CellColor(grid.occupancy[i]);
+                pixels[i] = OccupancyStyle.ColorFor(grid.occupancy[i]);
             overlay.Texture.SetPixels32(pixels);
             overlay.Texture.Apply(false);
         }
 
-        static Color32 CellColor(int cell)
+        static Color BorderColor(string id)
         {
-            if (cell < 0)
-                return new Color32(0, 0, 0, 0);
-            if (cell == 0)
-                return new Color32(176, 184, 192, 28);
-            var alpha = (byte)Mathf.Clamp(70 + cell, 70, 170);
-            return new Color32(196, 200, 206, alpha);
+            var hash = 17;
+            for (var i = 0; i < id.Length; i++)
+                hash = hash * 31 + id[i];
+            var shift = (hash & 7) / 7f;
+            var color = Color.HSVToRGB(0.54f + shift * 0.06f, 0.18f, 0.86f);
+            color.a = 0.72f;
+            return color;
         }
 
         sealed class Overlay

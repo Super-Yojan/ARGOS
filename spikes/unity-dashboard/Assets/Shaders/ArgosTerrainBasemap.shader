@@ -3,8 +3,8 @@ Shader "Argos/TerrainBasemap"
     Properties
     {
         _MainTex ("Basemap", 2D) = "gray" {}
-        _Tint ("Tint", Color) = (0.45, 0.48, 0.52, 1)
-        _Saturation ("Saturation", Range(0, 1)) = 0.28
+        _Tint ("Tint", Color) = (0.78, 0.80, 0.82, 1)
+        _Saturation ("Saturation", Range(0, 1)) = 0.75
     }
     SubShader
     {
@@ -49,6 +49,7 @@ Shader "Argos/TerrainBasemap"
                 fixed4 sample = tex2D(_MainTex, input.uv);
                 float luma = dot(sample.rgb, float3(0.30, 0.52, 0.18));
                 float3 muted = lerp(float3(luma, luma, luma), sample.rgb, _Saturation);
+                muted = saturate((muted - 0.5) * 1.08 + 0.5);
                 return fixed4(muted * _Tint.rgb, 1);
             }
             ENDCG

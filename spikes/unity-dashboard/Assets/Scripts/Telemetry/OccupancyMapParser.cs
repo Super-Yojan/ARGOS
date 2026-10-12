@@ -91,4 +91,23 @@ namespace Argos.Fleet
                 grid.originY + (row + 0.5f) * grid.resolution);
         }
     }
+
+    /// <summary>
+    /// Unknown is clear, free space is a faint tint, occupied cells are dark and solid.
+    /// </summary>
+    public static class OccupancyStyle
+    {
+        public static Color32 ColorFor(int cell)
+        {
+            if (cell < 0)
+                return new Color32(0, 0, 0, 0);
+            if (cell == 0)
+                return new Color32(148, 186, 196, 40);
+
+            var t = Mathf.Clamp01(cell / 100f);
+            var shade = (byte)Mathf.Lerp(64f, 14f, t);
+            var alpha = (byte)Mathf.Lerp(210f, 245f, t);
+            return new Color32(shade, (byte)(shade + 2), (byte)(shade + 8), alpha);
+        }
+    }
 }

@@ -4,6 +4,7 @@ Shader "Argos/OccupancyOverlay"
     {
         _MainTex ("Grid", 2D) = "black" {}
         _Color ("Tint", Color) = (1, 1, 1, 1)
+        _Border ("Border", Color) = (0.75, 0.82, 0.86, 0.72)
     }
     SubShader
     {
@@ -23,6 +24,7 @@ Shader "Argos/OccupancyOverlay"
 
             sampler2D _MainTex;
             fixed4 _Color;
+            fixed4 _Border;
 
             struct appdata
             {
@@ -46,6 +48,14 @@ Shader "Argos/OccupancyOverlay"
 
             fixed4 frag(v2f input) : SV_Target
             {
+                float edge = min(min(input.uv.x, 1.0 - input.uv.x), min(input.uv.y, 1.0 - input.uv.y));
+                if (edge < 0.016)
+                {
+                    fixed4 line = _Border;
+                    line.a *= _Color.a;
+                    return line;
+                }
+
                 fixed4 sample = tex2D(_MainTex, input.uv);
                 sample.rgb *= _Color.rgb;
                 sample.a *= _Color.a;

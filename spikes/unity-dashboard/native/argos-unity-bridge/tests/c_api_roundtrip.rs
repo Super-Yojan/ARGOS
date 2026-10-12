@@ -111,9 +111,10 @@ fn publisher_fleet_arrives_through_the_c_api() {
     let cells = grid["occupancy"].as_array().unwrap();
     assert_eq!(cells.len(), (OCCUPANCY_SIZE * OCCUPANCY_SIZE) as usize);
     assert_eq!(
-        cells[(8 * OCCUPANCY_SIZE + 11) as usize],
-        occupancy_cell(1, 11, 8)
+        cells[(12 * OCCUPANCY_SIZE + 16) as usize],
+        occupancy_cell(1, 16, 12)
     );
+    assert!(occupancy_cell(1, 16, 12) >= 80);
     assert_eq!(cells[0], -1);
     assert!(grid["sequence"].as_u64().unwrap() >= 1);
 

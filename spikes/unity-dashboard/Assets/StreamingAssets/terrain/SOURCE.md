@@ -20,8 +20,8 @@ The global tile set also mixes other providers. This spike ships only the one ti
 
 ## Imagery
 
-`gmu-fairfax-naip.png` is a 512×512 export of USGS NAIP imagery for that tile's bounding box, from The National Map ImageServer (`USGSNAIPImagery`). NAIP is a U.S. Government work and is in the public domain.
+`gmu-fairfax-naip.png` is a 1024×1024 export of USGS NAIP imagery for that tile's bounding box, from The National Map ImageServer (`USGSNAIPImagery`). NAIP is a U.S. Government work and is in the public domain.
 
 `NAIP imagery courtesy of the U.S. Geological Survey.`
 
-The Unity material darkens and desaturates this photo so rover status colors stay readable.
+The Unity material dims the photo and pulls a little saturation out. It does not fog it. Rover status colors stay the brightest marks in the frame.

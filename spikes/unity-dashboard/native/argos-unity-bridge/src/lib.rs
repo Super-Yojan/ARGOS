@@ -109,7 +109,7 @@ pub fn fleet_json(snapshot: &Snapshot, operator: &serde_json::Value, now_unix: f
     .to_string()
 }
 
-pub const OCCUPANCY_SIZE: u32 = 16;
+pub const OCCUPANCY_SIZE: u32 = 24;
 pub const OCCUPANCY_RESOLUTION: f64 = 0.5;
 
 pub fn occupancy_origin(id: u64) -> (f64, f64) {
@@ -118,14 +118,32 @@ pub fn occupancy_origin(id: u64) -> (f64, f64) {
     (x - half, y - half)
 }
 
-/// Row-major cell. The border is unknown. A block just north of the rover is occupied.
+fn cell_offset(index: u32) -> f64 {
+    (f64::from(index) + 0.5) * OCCUPANCY_RESOLUTION
+        - f64::from(OCCUPANCY_SIZE) * OCCUPANCY_RESOLUTION * 0.5
+}
+
+/// Row-major cell in the rover's local frame. +column is north, +row is west.
+/// The rover sits in free space at the centre. Beyond the sensed radius is unknown.
+/// A north wall and a west wall, each with a gap, plus a small obstacle, are occupied.
 pub fn occupancy_cell(id: u64, column: u32, row: u32) -> i8 {
-    if column == 0 || row == 0 || column + 1 == OCCUPANCY_SIZE || row + 1 == OCCUPANCY_SIZE {
+    let x = cell_offset(column);
+    let y = cell_offset(row);
+    let sensed = 5.4;
+    if x * x + y * y > sensed * sensed {
         return -1;
     }
-    let block = 10 + (id % 3) as u32;
-    if (block..block + 2).contains(&column) && (8..10).contains(&row) {
-        return 90;
+    let gap = ((id % 5) as f64 - 2.0) * 0.8;
+    if (2.0..3.0).contains(&x) && (-3.2..3.2).contains(&y) && (y - gap).abs() > 0.6 {
+        return 92;
+    }
+    if (2.0..3.0).contains(&y) && (-3.2..1.2).contains(&x) && (x - gap).abs() > 0.6 {
+        return 88;
+    }
+    let obstacle_x = -1.6 + (id % 3) as f64 * 0.5;
+    let obstacle_y = -1.4;
+    if (obstacle_x..obstacle_x + 1.0).contains(&x) && (obstacle_y..obstacle_y + 1.0).contains(&y) {
+        return 96;
     }
     0
 }
@@ -431,9 +449,41 @@ mod tests {
         let grid: serde_json::Value =
             serde_json::from_str(&map_grid_json(&snapshot, 1).unwrap()).unwrap();
         assert_eq!(grid["occupancy"][0], -1);
-        let occupied = (8 * OCCUPANCY_SIZE + 11) as usize;
-        assert_eq!(grid["occupancy"][occupied], occupancy_cell(1, 11, 8));
+        let occupied = (12 * OCCUPANCY_SIZE + 16) as usize;
+        assert_eq!(grid["occupancy"][occupied], occupancy_cell(1, 16, 12));
+        assert!(occupancy_cell(1, 16, 12) >= 80);
         assert!((grid["originX"].as_f64().unwrap() - origin_x).abs() < 1e-9);
         assert!(map_grid_json(&snapshot, 9).is_none());
+    }
+
+    #[test]
+    fn fake_grids_keep_the_rover_in_free_space_and_draw_walls() {
+        for id in 1..=8 {
+            let (origin_x, origin_y) = occupancy_origin(id);
+            let (x, y, _) = rover_layout(id);
+            let half = f64::from(OCCUPANCY_SIZE) * OCCUPANCY_RESOLUTION * 0.5;
+            assert!((origin_x - (x - half)).abs() < 1e-9);
+            assert!((origin_y - (y - half)).abs() < 1e-9);
+            for (column, row) in [(11u32, 11u32), (11, 12), (12, 11), (12, 12)] {
+                assert_eq!(
+                    occupancy_cell(id, column, row),
+                    0,
+                    "rover {id} centre cell {column},{row} should be free"
+                );
+            }
+            assert_eq!(occupancy_cell(id, 0, 0), -1);
+            let north = (0..OCCUPANCY_SIZE)
+                .filter(|row| occupancy_cell(id, 16, *row) >= 80)
+                .count();
+            assert!(north >= 6, "north wall for rover {id} was {north} cells");
+            let walls = occupancy_cells(id)
+                .into_iter()
+                .filter(|cell| *cell >= 80)
+                .count();
+            assert!(
+                walls >= 20,
+                "rover {id} occupied structure was {walls} cells"
+            );
+        }
     }
 }
