@@ -35,3 +35,5 @@ Assets/Plugins/**/*.dylib
 Assets/Plugins/**/*.so
 Assets/Plugins/**/*.bundle
 Assets/Plugins/**/*.dll
+__pycache__/
+*.pyc
