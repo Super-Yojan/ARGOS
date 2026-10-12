@@ -32,11 +32,11 @@ Two compile/build fixes were required before that run, and they are in this bran
 1. `Assets/Editor/FleetSceneSetup.cs` needs `using UnityEditor.Build;`. Without it, `NamedBuildTarget` is unresolved (`CS0103` at the `SetScriptingBackend` call).
 2. `ProjectSettings/ProjectSettings.asset` had `scriptingBackend` Standalone set to `1` (IL2CPP). The Mac has no IL2CPP module, so the player build failed with `Currently selected scripting backend (IL2CPP) is not installed`. The committed default is Mono (`0`). `PrepareLinuxPlayer` still sets IL2CPP immediately before the Linux player build.
 
-The overview frame shows about 10 of the 20 rovers. The other two rows are inside the old frustum on paper, but they do not appear in the capture: the fleet sits in the lower half of the 1280×720 image, and the ground used the same ZWrite-off transparent shader as the rovers, so the ground quad could paint over the far markers. The scene camera is now at `(0, 36, -12)`, pitched 72°, field of view 40, which places all four rows between roughly 27% and 73% of the frame height. The ground uses an opaque unlit shader so it draws before the rovers. That framing change has not been re-captured; the images below are the owner's build from before it.
+The first Mac capture showed about 10 of the 20 rovers, crowded into the lower half of the 1280×720 frame. The scene camera is now at `(0, 36, -12)`, pitched 72°, field of view 40, and the ground uses an opaque unlit shader so it draws before the rovers. The owner rebuilt the scene and the Mac player from commit `76785ab` on Unity `6000.6.5f1`. That framing fix is verified: the new overview and selection captures show all 20 rovers in frame.
 
-![Mac overview, before the framing change](docs/mac-overview.png)
+![Mac overview, all 20 rovers framed](docs/mac-overview.png)
 
-![Mac selection, terra-07 ring, other rovers dimmed](docs/mac-selected.png)
+![Mac selection, terra-07 ring, other rovers dimmed, full fleet still in frame](docs/mac-selected.png)
 
 ## Exact errors
 
