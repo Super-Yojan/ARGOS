@@ -31,3 +31,7 @@ crashlytics-buildid.txt
 *.unitypackage
 ~UnityDirMonSyncFile~*
 .DS_Store
+Assets/Plugins/**/*.dylib
+Assets/Plugins/**/*.so
+Assets/Plugins/**/*.bundle
+Assets/Plugins/**/*.dll

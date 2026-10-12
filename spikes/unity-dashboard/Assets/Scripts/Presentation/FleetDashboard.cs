@@ -8,7 +8,9 @@ using UnityEngine;
 namespace Argos.Fleet
 {
     /// <summary>
-    /// Rough level-1 / level-2 fleet view. Mock JSON only. No Zenoh.
+    /// Rough level-1 / level-2 fleet view.
+    /// Mock JSON is the default. `-argosSource zenoh` polls the native bridge
+    /// and feeds the same status colors and 2.5 s ghost rule.
     /// </summary>
     public sealed class FleetDashboard : MonoBehaviour
     {
@@ -23,6 +25,10 @@ namespace Argos.Fleet
         bool _autoSelectArmed = true;
         string _captureDir = string.Empty;
         bool _quitAfterCapture;
+        bool _live;
+        float _nextPoll;
+        string _presented = string.Empty;
+        int _loggedLiveCount = -1;
 
         public string SelectedId => _selectedId;
         public int RoverCount => _rovers.Count;
@@ -33,13 +39,22 @@ namespace Argos.Fleet
             _quitAfterCapture = SpikeArgs.Has("-argosQuit");
             _autoSelectArmed = !SpikeArgs.Has("-argosNoDemo");
             BuildGround();
-            LoadAndSpawn();
-            WritePresentationDump();
+            var source = SpikeArgs.Get("-argosSource", "mock");
+            _live = string.Equals(source, "zenoh", StringComparison.OrdinalIgnoreCase);
+            if (_live)
+                OpenLive();
+            else
+                LoadMock();
         }
 
         void Update()
         {
             _elapsed += Time.unscaledDeltaTime;
+            if (_live && _elapsed >= _nextPoll)
+            {
+                _nextPoll = _elapsed + 0.1f;
+                PollLive();
+            }
             if (_autoSelectArmed && _elapsed >= 6.5f && string.IsNullOrEmpty(_selectedId))
                 Select(AutoSelectId);
 
@@ -57,32 +72,97 @@ namespace Argos.Fleet
             Debug.Log("ARGOS select: '" + _selectedId + "'");
         }
 
-        void LoadAndSpawn()
+        void OnApplicationQuit()
+        {
+            if (_live)
+                ZenohBridge.Close();
+        }
+
+        void OpenLive()
+        {
+            var endpoint = SpikeArgs.Get("-argosEndpoint", "tcp/127.0.0.1:7447");
+            var prefix = SpikeArgs.Get("-argosPrefix", "terra/rover");
+            Debug.Log("ARGOS zenoh: connecting endpoint=" + endpoint + " prefix=" + prefix);
+            if (!ZenohBridge.Open(endpoint, prefix))
+                return;
+            Debug.Log("ARGOS zenoh link: " + ZenohBridge.Link());
+            PollLive();
+        }
+
+        void LoadMock()
         {
             var path = Path.Combine(Application.streamingAssetsPath, TelemetryFileName);
             if (!File.Exists(path))
             {
                 Debug.LogError("ARGOS telemetry file missing: " + path);
+                WritePresentationDump();
                 return;
             }
 
-            var snapshot = TelemetryParser.Parse(File.ReadAllText(path));
+            ApplySnapshot(TelemetryParser.Parse(File.ReadAllText(path)));
+        }
+
+        void PollLive()
+        {
+            var json = ZenohBridge.PollJson();
+            if (string.IsNullOrEmpty(json))
+                return;
+            try
+            {
+                ApplySnapshot(TelemetryParser.Parse(json));
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError("ARGOS zenoh snapshot rejected: " + exception.Message);
+            }
+        }
+
+        void ApplySnapshot(FleetSnapshotDto snapshot)
+        {
+            if (snapshot == null || snapshot.rovers == null)
+                return;
+
             var now = snapshot.snapshotUnixSeconds;
             var stale = 0;
             var attention = 0;
             var critical = 0;
+            var seen = new HashSet<string>();
 
             foreach (var rover in snapshot.rovers)
             {
                 var view = TelemetryParser.Evaluate(rover, now);
+                if (string.IsNullOrEmpty(view.Id))
+                    continue;
+                seen.Add(view.Id);
                 if (view.IsStale)
                     stale++;
                 if (view.Status == RoverStatus.Attention)
                     attention++;
                 if (view.Status == RoverStatus.Critical)
                     critical++;
-                _rovers.Add(Spawn(rover, view));
+
+                var existing = FindRover(view.Id);
+                if (existing == null)
+                    _rovers.Add(Spawn(rover, view));
+                else
+                {
+                    existing.Status = view.Status;
+                    existing.Stale = view.IsStale;
+                    existing.Root.transform.position = view.Position;
+                    existing.Root.transform.rotation = Quaternion.Euler(0f, view.HeadingDegrees, 0f);
+                }
             }
+
+            foreach (var rover in _rovers)
+            {
+                if (!seen.Contains(rover.Id))
+                    rover.Stale = true;
+            }
+
+            var signature = PresentationSignature();
+            if (signature == _presented)
+                return;
+            _presented = signature;
 
             Debug.Log(string.Format(
                 CultureInfo.InvariantCulture,
@@ -92,6 +172,42 @@ namespace Argos.Fleet
                 attention,
                 critical,
                 now));
+            if (_live && _rovers.Count != _loggedLiveCount)
+            {
+                _loggedLiveCount = _rovers.Count;
+                Debug.Log(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "ARGOS live rovers: {0}",
+                    _rovers.Count));
+                Debug.Log("ARGOS zenoh link: " + ZenohBridge.Link());
+            }
+            WritePresentationDump();
+        }
+
+        RoverVisual FindRover(string id)
+        {
+            for (var i = 0; i < _rovers.Count; i++)
+            {
+                if (_rovers[i].Id == id)
+                    return _rovers[i];
+            }
+
+            return null;
+        }
+
+        string PresentationSignature()
+        {
+            var builder = new StringBuilder();
+            foreach (var rover in _rovers)
+            {
+                builder.Append(rover.Id);
+                builder.Append(':');
+                builder.Append(rover.Status);
+                builder.Append(rover.Stale ? 's' : 'f');
+                builder.Append(';');
+            }
+
+            return builder.ToString();
         }
 
         RoverVisual Spawn(RoverDto rover, RoverView view)

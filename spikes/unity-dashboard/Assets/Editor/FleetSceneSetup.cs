@@ -18,6 +18,20 @@ namespace Argos.Fleet.EditorTools
             EditorApplication.Exit(0);
         }
 
+        public static void PrepareMacPlayer()
+        {
+            BuildSceneAsset();
+            PlayerSettings.companyName = "ARGOS";
+            PlayerSettings.productName = "ArgosFleetDashboard";
+            PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
+            PlayerSettings.defaultScreenWidth = 1280;
+            PlayerSettings.defaultScreenHeight = 720;
+            PlayerSettings.runInBackground = true;
+            PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x);
+            AssetDatabase.SaveAssets();
+            EditorApplication.Exit(0);
+        }
+
         public static void PrepareLinuxPlayer()
         {
             BuildSceneAsset();

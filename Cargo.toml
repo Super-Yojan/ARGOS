@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/argos-core", "crates/argos-zenoh", "crates/argos-ffi"]
+members = [
+    "crates/argos-core",
+    "crates/argos-zenoh",
+    "crates/argos-ffi",
+    "spikes/unity-dashboard/native/argos-unity-bridge",
+]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

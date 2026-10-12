@@ -1,6 +1,6 @@
 # Unity dashboard spike report
 
-Feasibility only. A cloud agent tried to build a rough ARGOS 3D fleet view in Unity 6 LTS and run the headless loop on this VM. Mock telemetry only. No Zenoh. No edits to ARGOS Rust or Swift.
+Feasibility only. A cloud agent tried to build a rough ARGOS 3D fleet view in Unity 6 LTS and run the headless loop on this VM. The first pass used mock telemetry. A later section records the Zenoh native-plugin follow-up. No edits to existing ARGOS Rust or Swift behavior. The new crate only consumes `argos-zenoh` and `argos-core`.
 
 The design source is `docs/design/3d-dashboard.md` on `main` (merged from PR #23). The prototype is `spikes/unity-dashboard/`: Unity `6000.3.26f1` (`de8167e7440c`), 20 placeholder rovers from `Assets/StreamingAssets/fleet-telemetry.json`, cyan / amber / red status color, solid completed paths, dashed planned paths, ghosted when the pose is older than 2.5 s, and a selection that dims the rest. EditMode tests for that stale rule live in `Assets/Tests/EditMode/TelemetryParserTests.cs`. `run-spike.sh` is the local a–e loop. `.github/workflows/unity-dashboard-spike.yml` is the optional GameCI loop (`workflow_dispatch` only).
 
@@ -38,6 +38,79 @@ The first Mac capture showed about 10 of the 20 rovers, crowded into the lower h
 
 ![Mac selection, terra-07 ring, other rovers dimmed, full fleet still in frame](docs/mac-selected.png)
 
+## Zenoh bridge
+
+Unity has no usable current C# Zenoh binding. This follow-up adds `spikes/unity-dashboard/native/argos-unity-bridge`, a cdylib Unity polls from the main thread. It calls `argos_zenoh::Client::connect` and `Client::snapshot`, so the session mode, connect timeout, multicast-off setting, and topic set stay the ones ARGOS already uses. `argos-core`, `argos-zenoh`, and `argos-ffi` are unchanged.
+
+Zenoh version: **1.10.1**, the workspace pin `zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp"] }`. One Zenoh crate, shared with `argos-zenoh`. The VM proof used rustc 1.99.0. The image default, 1.83.0, cannot parse edition 2024; this repo already requires Rust 1.85 or newer.
+
+Default endpoint `tcp/127.0.0.1:7447`, prefix `terra/rover`. The client subscribes to `fleet/state`, `*/pose`, `*/camera/depth`, and the operator topics `Client` already keeps (`autonomy/status` among them).
+
+The C API is polling only. There is no native-to-managed callback, so the same entry points stay valid under Mono and IL2CPP.
+
+| Entry | Role |
+| --- | --- |
+| `argos_bridge_open(endpoint, prefix)` | Connect. `0` on success, negative on failure. |
+| `argos_bridge_close` | Drop the session. |
+| `argos_bridge_connected` | `1` while a session is open. |
+| `argos_bridge_link` | `connecting`, `healthy`, `stale`, or `disconnected`. |
+| `argos_bridge_poll` | Copy a JSON fleet snapshot into a caller buffer. |
+| `argos_bridge_last_error` | Text for the last open failure. |
+
+The JSON matches the mock file `TelemetryParser` already reads: `snapshotUnixSeconds`, `rovers[].id`, `position` `{x,y,z}`, `headingDegrees`, `status`, `lastUpdateUnixSeconds`. Pose `x` stays Unity `x`. Pose `y` becomes Unity `z`. Unity `y` is `0`. Yaw radians become degrees. Ids are `terra-01` for rover `1`. `lastUpdateUnixSeconds` is wall-clock now minus pose age, so a pose older than 2.5 s takes the existing ghost path. Status strings:
+
+| JSON `status` | When |
+| --- | --- |
+| `critical` | `safety` is `emergency_stop`, `reason` is `map_stale` / `sensor_unhealthy` / `invalid_time`, pose age is over 2.5 s, or membership is not `online` |
+| `attention` | `safety` is `hold`, a `goal/proposal` is waiting, or autonomy `result` is `rejected` with `request_reason` `authority_required` |
+| `normal` | a fresh pose with none of the above |
+
+`-argosSource zenoh -argosEndpoint tcp/127.0.0.1:7447` selects the live source. `-argosPrefix` overrides the prefix (default `terra/rover`). Any other value, including omitting the flag, keeps the mock JSON file. `FleetDashboard` still evaluates rovers with `TelemetryParser` and colors them with `StatusLanguage`.
+
+Fake fleet, no Zorvane (this process listens):
+
+```sh
+cargo run -p argos-unity-bridge --bin argos-fleet-publisher -- --count 8 --listen
+```
+
+It publishes `terra/rover/fleet/state`, `terra/rover/<id>/pose`, and `terra/rover/<id>/camera/depth`. `terra-02` sends `autonomy/status` with `safety=hold` (attention). `terra-03` sends `safety=emergency_stop` (critical). `--count` is 1..=32. `--endpoint` and `--prefix` override the defaults.
+
+Zorvane already owns `fleet/state`. Do not point the fake publisher at a running Zorvane. From a Zorvane checkout, raise the rover count and point the player at the simulator:
+
+```sh
+TERRA_ROVER_COUNT=8 TERRA_TILES=1 TERRA_TILES_FETCH=0 cargo run -p zorvane
+```
+
+```sh
+ArgosFleetDashboard.app/Contents/MacOS/ArgosFleetDashboard \
+  -argosSource zenoh \
+  -argosEndpoint tcp/127.0.0.1:7447 \
+  -argosCaptureDir /tmp/argos-zenoh \
+  -argosQuit
+```
+
+`TERRA_ROVER_COUNT` can be 15 to 20. The maximum ARGOS keeps in one fleet message is 32.
+
+### Passed on this VM
+
+| Check | Result |
+| --- | --- |
+| `cargo build -p argos-unity-bridge` | **PASS**. `target/debug/libargos_unity_bridge.so` exports `argos_bridge_open`, `argos_bridge_close`, `argos_bridge_connected`, `argos_bridge_link`, `argos_bridge_poll`, and `argos_bridge_last_error`. `argos-fleet-publisher` builds in the same crate. |
+| `cargo test -p argos-unity-bridge` | **PASS**, 3 tests, rustc 1.99.0. `publisher_fleet_arrives_through_the_c_api` listens with the publisher and reads the fleet back through the C API: 4 rovers, link `healthy`, `terra-01` at the grid pose with heading 90°, `terra-02` attention, `terra-03` critical, `terra-04` normal, each sample younger than 2.5 s. `rejected_endpoint_is_reported_without_opening` returns `-3` for a non-tcp endpoint and stays disconnected. The JSON unit test checks the 2.5 s timestamp boundary. |
+| Unity player, EditMode, screenshots | **Not run**. This VM still has no Unity license. The editor was not started. |
+
+### Pending on the Mac
+
+The owner runs:
+
+```sh
+./spikes/unity-dashboard/run-zenoh-mac.sh
+```
+
+`UNITY_EDITOR` overrides the editor. The default is `/Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app` (the script also accepts `Contents/MacOS/Unity`). The script builds the dylib for `aarch64-apple-darwin`, copies it to `Assets/Plugins/macOS` with ARM64 import settings, builds a Mono Mac player, starts the fake publisher on `tcp/127.0.0.1:7447`, and runs the player with `-argosSource zenoh -argosCaptureDir -argosQuit`. It exits nonzero unless the player log contains `ARGOS live rovers: N` for N at least 1 and `presentation.txt` lists a `terra-` rover. Stop Zorvane first if port 7447 is taken. `ARGOS_ROVER_COUNT` (default 8), `ARGOS_ENDPOINT`, and `ARGOS_PREFIX` are optional.
+
+`Assets/Tests/EditMode/ZenohSnapshotTests.cs` parses a bridge-shaped snapshot through `TelemetryParser` and checks attention, critical, and the ghost after 2.5 s. It does not load the native plugin. It has not been executed on this VM. The Mac script does not run EditMode; the previous `-runTests` invocation will pick the new test up.
+
 ## Exact errors
 
 Host editor (`spikes/unity-dashboard/artifacts/editmode.log`), and the same text from the GameCI `unity-editor -quit` entrypoint:
@@ -65,7 +138,7 @@ Checked env names, all unset: `UNITY_LICENSE`, `UNITY_LICENSE_FILE`, `UNITY_EMAI
 | Display tools | `xvfb-run` and `ffmpeg` are installed. They were not asked to capture a window. |
 | Init | PID 1 is `tini`, not systemd. `invoke-rc.d` refused to start `docker.service` (`policy-rc.d` denied, no sysv script). |
 | Editor install | Official tarball `Unity-6000.3.26f1.tar.xz` (4,540,380,840 bytes) plus `LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.3.26f1.tar.xz` (59,392,156 bytes). The old `TargetSupportInstaller/` URL for that module returns 404. Installed under `/opt/unity/6000.3.26f1` (about 8.4 GiB). `ldd` on `Editor/Unity` reported no missing libraries after the apt packages in `run-spike.sh`'s notes (GTK, NSS, Mesa, clang 18, lld). |
-| Linux player module | The IL2CPP support archive contains both IL2CPP and Mono player variations. The project sets Standalone scripting backend to IL2CPP (`scriptingBackend: Standalone: 1`). The build never got that far. |
+| Linux player module | The IL2CPP support archive contains both IL2CPP and Mono player variations. The committed Standalone scripting backend is Mono (`0`), after the Mac build fix. `PrepareLinuxPlayer` still switches that build to IL2CPP. The Linux player build never got that far on this VM. |
 | Docker | Not installed at boot. `sudo apt-get install -y docker.io` installed Docker 29.1.3. Manual `sudo dockerd --iptables=false --storage-driver=vfs` reaches `sudo docker info` (cgroup v2, vfs). The first `run-spike.sh` probe recorded "failed to become ready" because it called `docker info` without sudo; the socket is root-owned. That probe is fixed to use sudo. |
 | GameCI image | `docker pull unityci/editor:ubuntu-6000.3.26f1-linux-il2cpp-3.2.2` succeeded. `docker images` reported the image at 10.4 GiB. vfs storage grew `/var/lib/docker` to about 194 GiB while unpacking it (disk 85% full, 40 GiB free). The image was deleted after the version and license checks. Disk returned to about 20 GiB used. Do not leave this image on the vfs driver. |
 

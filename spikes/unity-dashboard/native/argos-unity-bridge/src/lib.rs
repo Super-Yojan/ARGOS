@@ -1,0 +1,289 @@
+//! Polling C API for the Unity fleet spike.
+//!
+//! Unity calls `argos_bridge_open`, then `argos_bridge_poll` from the main thread.
+//! The poll buffer is caller-owned JSON in the same shape as `fleet-telemetry.json`.
+//! There are no native-to-managed callbacks.
+
+mod publish;
+
+use argos_core::{RoverSnapshot, STALE_SECONDS, Snapshot};
+use argos_zenoh::Client;
+use std::ffi::{CStr, CString, c_char};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub use publish::{FleetPublisher, connect_publisher, serve};
+
+static BRIDGE: Mutex<Option<Client>> = Mutex::new(None);
+static LAST_ERROR: Mutex<String> = Mutex::new(String::new());
+
+fn set_error(message: impl Into<String>) {
+    *LAST_ERROR.lock().unwrap_or_else(|p| p.into_inner()) = message.into();
+}
+
+fn take_client() -> Option<Client> {
+    BRIDGE.lock().unwrap_or_else(|p| p.into_inner()).take()
+}
+
+fn unix_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+pub fn rover_label(id: u64) -> String {
+    if id < 100 {
+        format!("terra-{id:02}")
+    } else {
+        format!("terra-{id}")
+    }
+}
+
+/// Ground-plane pose used by the fake publisher and the Mac framing grid.
+/// `(x, y, yaw)` with yaw in radians. Unity maps `y` onto `z`.
+pub fn rover_layout(id: u64) -> (f64, f64, f64) {
+    let index = id.saturating_sub(1);
+    let col = (index % 5) as f64;
+    let row = (index / 5) as f64;
+    let x = (col - 2.0) * 4.6;
+    let y = (row - 1.5) * 4.4;
+    let yaw = if id == 1 {
+        std::f64::consts::FRAC_PI_2
+    } else {
+        (id as f64) * 0.17
+    };
+    (x, y, yaw)
+}
+
+fn lost_link(rover: &RoverSnapshot) -> bool {
+    rover.membership != "online" || rover.pose_age.is_none_or(|age| age > STALE_SECONDS)
+}
+
+fn visual_status(rover: &RoverSnapshot, operator: &serde_json::Value) -> &'static str {
+    let entry = &operator[rover.id.to_string()];
+    let age = entry["age"].as_f64().unwrap_or(0.0);
+    let fresh_operator = entry["status"].is_object() && age <= STALE_SECONDS;
+    let status = if fresh_operator {
+        &entry["status"]
+    } else {
+        &serde_json::Value::Null
+    };
+    let safety = status["safety"].as_str().unwrap_or("");
+    let reason = status["reason"].as_str().unwrap_or("");
+    if safety == "emergency_stop"
+        || matches!(reason, "map_stale" | "sensor_unhealthy" | "invalid_time")
+        || lost_link(rover)
+    {
+        return "critical";
+    }
+    let proposal = entry.get("proposal").is_some_and(|value| !value.is_null());
+    let rejected = status["result"].as_str() == Some("rejected")
+        && status["request_reason"].as_str() == Some("authority_required");
+    if safety == "hold" || proposal || rejected {
+        return "attention";
+    }
+    "normal"
+}
+
+pub fn fleet_json(snapshot: &Snapshot, operator: &serde_json::Value, now_unix: f64) -> String {
+    let mut rovers = Vec::new();
+    for rover in &snapshot.rovers {
+        let Some(pose) = rover.pose.as_ref() else {
+            continue;
+        };
+        let age = rover.pose_age.unwrap_or(STALE_SECONDS + 1.0).max(0.0);
+        rovers.push(serde_json::json!({
+            "id": rover_label(rover.id),
+            "position": {"x": pose.x, "y": 0.0, "z": pose.y},
+            "headingDegrees": pose.yaw.to_degrees(),
+            "status": visual_status(rover, operator),
+            "lastUpdateUnixSeconds": now_unix - age,
+        }));
+    }
+    serde_json::json!({
+        "snapshotUnixSeconds": now_unix,
+        "link": snapshot.link,
+        "rovers": rovers,
+    })
+    .to_string()
+}
+
+fn write_buf(buf: *mut c_char, cap: usize, text: &str) -> i32 {
+    let needed = text.len().saturating_add(1);
+    if buf.is_null() || cap < needed {
+        return -(needed.min(i32::MAX as usize) as i32);
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), buf.cast(), text.len());
+        *buf.add(text.len()) = 0;
+    }
+    text.len() as i32
+}
+
+fn read_cstr<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
+    if ptr.is_null() {
+        set_error("null string");
+        return Err(-1);
+    }
+    match unsafe { CStr::from_ptr(ptr) }.to_str() {
+        Ok(text) => Ok(text),
+        Err(_) => {
+            set_error("string is not utf-8");
+            Err(-2)
+        }
+    }
+}
+
+/// Open a Zenoh client. `endpoint` is `tcp/host:port`. `prefix` is `terra/rover`.
+/// Returns 0, or a negative code. The message is available from `argos_bridge_last_error`.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_open(endpoint: *const c_char, prefix: *const c_char) -> i32 {
+    let endpoint = match read_cstr(endpoint) {
+        Ok(value) => value,
+        Err(code) => return code,
+    };
+    let prefix = match read_cstr(prefix) {
+        Ok(value) => value,
+        Err(code) => return code,
+    };
+    if let Some(previous) = take_client() {
+        previous.disconnect();
+    }
+    match Client::connect(endpoint, prefix) {
+        Ok(client) => {
+            set_error("");
+            *BRIDGE.lock().unwrap_or_else(|p| p.into_inner()) = Some(client);
+            0
+        }
+        Err(error) => {
+            set_error(error.to_string());
+            -3
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_close() {
+    if let Some(client) = take_client() {
+        client.disconnect();
+    }
+}
+
+/// 1 when a session is open, otherwise 0. This does not mean fleet data has arrived.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_connected() -> i32 {
+    i32::from(BRIDGE.lock().unwrap_or_else(|p| p.into_inner()).is_some())
+}
+
+/// Writes the ARGOS link word: `connecting`, `healthy`, `stale`, or `disconnected`.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_link(buf: *mut c_char, cap: usize) -> i32 {
+    let link = BRIDGE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .map(|client| client.snapshot().link)
+        .unwrap_or_else(|| "disconnected".to_string());
+    write_buf(buf, cap, &link)
+}
+
+/// Copy the latest fleet JSON into `buf`, including a trailing NUL.
+/// Returns the byte length excluding the NUL, or a negative code.
+/// `-1` means there is no session. A larger negative value is the required capacity.
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_poll(buf: *mut c_char, cap: usize) -> i32 {
+    let guard = BRIDGE.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(client) = guard.as_ref() else {
+        set_error("not connected");
+        return -1;
+    };
+    let snapshot = client.snapshot();
+    let operator = serde_json::from_str::<serde_json::Value>(&client.operator_snapshot())
+        .unwrap_or_else(|_| serde_json::json!({}));
+    let json = fleet_json(&snapshot, &operator, unix_now());
+    write_buf(buf, cap, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn argos_bridge_last_error(buf: *mut c_char, cap: usize) -> i32 {
+    let message = LAST_ERROR.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    write_buf(buf, cap, &message)
+}
+
+pub fn c_string(text: &str) -> CString {
+    CString::new(text).expect("interior nul")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use argos_core::{Pose, Snapshot};
+
+    fn rover(id: u64, age: f64, membership: &str) -> RoverSnapshot {
+        let (x, y, yaw) = rover_layout(id);
+        RoverSnapshot {
+            id,
+            membership: membership.into(),
+            pose: Some(Pose {
+                rover_id: id,
+                sequence: 1,
+                x,
+                y,
+                yaw,
+            }),
+            pose_age: Some(age),
+            goal: None,
+            goal_age: None,
+            command_phase: "none".into(),
+            command_token: None,
+        }
+    }
+
+    #[test]
+    fn snapshot_json_matches_the_unity_parser_and_the_two_and_a_half_second_window() {
+        let snapshot = Snapshot {
+            link: "healthy".into(),
+            fleet_age: Some(0.1),
+            rovers: vec![
+                rover(1, 0.1, "online"),
+                rover(2, 0.2, "online"),
+                rover(3, 2.5, "online"),
+                rover(4, 2.6, "online"),
+            ],
+            notice: None,
+        };
+        let operator = serde_json::json!({
+            "2": {
+                "age": 0.2,
+                "status": {"safety": "hold", "reason": "obstacle_blocked", "revision": 1},
+                "proposal": null
+            },
+            "3": {
+                "age": 0.2,
+                "status": {"safety": "emergency_stop", "reason": "estop", "revision": 1},
+                "proposal": null
+            }
+        });
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fleet_json(&snapshot, &operator, 1_000.0)).unwrap();
+        assert_eq!(parsed["link"], "healthy");
+        assert_eq!(parsed["snapshotUnixSeconds"], 1_000.0);
+        let rovers = parsed["rovers"].as_array().unwrap();
+        assert_eq!(rovers.len(), 4);
+        let (x, y, yaw) = rover_layout(1);
+        assert_eq!(rovers[0]["id"], "terra-01");
+        assert!((rovers[0]["position"]["x"].as_f64().unwrap() - x).abs() < 1e-9);
+        assert_eq!(rovers[0]["position"]["y"], 0.0);
+        assert!((rovers[0]["position"]["z"].as_f64().unwrap() - y).abs() < 1e-9);
+        assert!((rovers[0]["headingDegrees"].as_f64().unwrap() - yaw.to_degrees()).abs() < 1e-6);
+        assert_eq!(rovers[0]["status"], "normal");
+        assert!((rovers[0]["lastUpdateUnixSeconds"].as_f64().unwrap() - 999.9).abs() < 1e-9);
+        assert_eq!(rovers[1]["status"], "attention");
+        // Exactly 2.5 s is still fresh, matching TelemetryParser.IsStale.
+        assert_eq!(rovers[2]["status"], "critical");
+        assert!((rovers[2]["lastUpdateUnixSeconds"].as_f64().unwrap() - 997.5).abs() < 1e-9);
+        assert_eq!(rovers[3]["status"], "critical");
+        assert!((1000.0 - rovers[3]["lastUpdateUnixSeconds"].as_f64().unwrap()) > STALE_SECONDS);
+    }
+}

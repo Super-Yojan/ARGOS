@@ -1,0 +1,19 @@
+[package]
+name = "argos-unity-bridge"
+version.workspace = true
+edition.workspace = true
+description = "Thin cdylib Unity polls for ARGOS rover telemetry. Same Zenoh crate as argos-zenoh."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "argos-fleet-publisher"
+path = "src/bin/argos-fleet-publisher.rs"
+
+[dependencies]
+argos-core = { path = "../../../../crates/argos-core" }
+argos-zenoh = { path = "../../../../crates/argos-zenoh" }
+serde_json.workspace = true
+zenoh.workspace = true
