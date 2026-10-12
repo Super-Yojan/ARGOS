@@ -14,7 +14,29 @@ The design source is `docs/design/3d-dashboard.md` on `main` (merged from PR #23
 | d. Linux player | **FAIL** | `-buildLinux64Player` exits 198 before any compile or IL2CPP link. No player binary. |
 | e. Xvfb screenshots and ~10 s video | **FAIL** | Not run. There was no player to launch. No screenshot and no video. |
 
-`b` is the blocker for `c`–`e`. The commands for `c` and `d` were still invoked. They die in the license client, before script compilation.
+`b` is the blocker for `c`–`e` on this VM. The commands for `c` and `d` were still invoked. They die in the license client, before script compilation.
+
+## Mac (owner machine)
+
+The owner ran the same project on an Apple Silicon Mac with Unity `6000.6.5f1` and a valid Personal license. The project file still pins `6000.3.26f1`; the newer editor opened it.
+
+| Step | Result |
+| --- | --- |
+| License | **PASS** — Personal license accepted in `-batchmode` |
+| EditMode tests | **PASS** — 9/9 |
+| Mac player | **PASS** — `-buildOSXUniversalPlayer`, 67 MB, Mono |
+| Capture | **PASS** — `-argosCaptureDir` and `-argosQuit` wrote `overview.png` and `selected.png` |
+
+Two compile/build fixes were required before that run, and they are in this branch now:
+
+1. `Assets/Editor/FleetSceneSetup.cs` needs `using UnityEditor.Build;`. Without it, `NamedBuildTarget` is unresolved (`CS0103` at the `SetScriptingBackend` call).
+2. `ProjectSettings/ProjectSettings.asset` had `scriptingBackend` Standalone set to `1` (IL2CPP). The Mac has no IL2CPP module, so the player build failed with `Currently selected scripting backend (IL2CPP) is not installed`. The committed default is Mono (`0`). `PrepareLinuxPlayer` still sets IL2CPP immediately before the Linux player build.
+
+The overview frame shows about 10 of the 20 rovers. The other two rows are inside the old frustum on paper, but they do not appear in the capture: the fleet sits in the lower half of the 1280×720 image, and the ground used the same ZWrite-off transparent shader as the rovers, so the ground quad could paint over the far markers. The scene camera is now at `(0, 36, -12)`, pitched 72°, field of view 40, which places all four rows between roughly 27% and 73% of the frame height. The ground uses an opaque unlit shader so it draws before the rovers. That framing change has not been re-captured; the images below are the owner's build from before it.
+
+![Mac overview, before the framing change](docs/mac-overview.png)
+
+![Mac selection, terra-07 ring, other rovers dimmed](docs/mac-selected.png)
 
 ## Exact errors
 
@@ -102,4 +124,4 @@ GitHub-hosted `ubuntu-24.04` runners have the same shape of problem this VM has 
 
 ## Recommendation
 
-Do the Unity dashboard work on the owner's Mac. This VM can install Unity 6.3 LTS, and the GameCI editor image runs here, but it cannot compile, test, build, or screenshot the project until a license file exists. After that file is a secret, EditMode tests are a reasonable cloud/CI job. The 3D loop is a poor fit for this VM even then: there is no GPU, llvmpipe was never exercised, RAM is 15 GiB with no swap, and the GameCI image on Docker's vfs driver occupied about 194 GiB for a 10.4 GiB image. Scene iteration, frame timing at 20 rovers, and the look of the status language belong on the Mac, where Unity Hub, a GPU, and the rest of ARGOS already are.
+Do the Unity dashboard work on the owner's Mac. That machine already proved the loop: a Personal license, 9/9 EditMode tests, a 67 MB Mono player, and the two captures. This VM can install Unity 6.3 LTS, and the GameCI editor image runs here, but it cannot compile, test, build, or screenshot the project until a license file exists. After that file is a secret, EditMode tests are a reasonable cloud/CI job. The 3D loop is a poor fit for this VM even then: there is no GPU, llvmpipe was never exercised, RAM is 15 GiB with no swap, and the GameCI image on Docker's vfs driver occupied about 194 GiB for a 10.4 GiB image. Scene iteration, frame timing at 20 rovers, and the look of the status language belong on the Mac, where Unity Hub, a GPU, and the rest of ARGOS already are.

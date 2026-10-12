@@ -152,7 +152,7 @@ namespace Argos.Fleet
             ground.transform.position = new Vector3(0f, -0.02f, 0f);
             ground.transform.localScale = new Vector3(3.2f, 1f, 2.6f);
             var renderer = ground.GetComponent<Renderer>();
-            renderer.sharedMaterial = CreateMaterial();
+            renderer.sharedMaterial = CreateOpaqueMaterial();
             renderer.sharedMaterial.SetColor("_Color", new Color(0.035f, 0.045f, 0.06f, 1f));
             var collider = ground.GetComponent<Collider>();
             if (collider != null)
@@ -277,11 +277,21 @@ namespace Argos.Fleet
         {
             var shader = Shader.Find("Argos/FleetUnlit");
             if (shader == null)
-                shader = Shader.Find("Unlit/Color");
-            if (shader == null)
                 shader = Shader.Find("Sprites/Default");
             if (shader == null)
+                shader = Shader.Find("Unlit/Color");
+            if (shader == null)
                 shader = Shader.Find("Standard");
+            return new Material(shader);
+        }
+
+        static Material CreateOpaqueMaterial()
+        {
+            var shader = Shader.Find("Argos/FleetOpaque");
+            if (shader == null)
+                shader = Shader.Find("Unlit/Color");
+            if (shader == null)
+                return CreateMaterial();
             return new Material(shader);
         }
 

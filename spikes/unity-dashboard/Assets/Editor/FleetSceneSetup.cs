@@ -1,6 +1,7 @@
 using System.IO;
 using Argos.Fleet;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -26,6 +27,8 @@ namespace Argos.Fleet.EditorTools
             PlayerSettings.defaultScreenWidth = 1280;
             PlayerSettings.defaultScreenHeight = 720;
             PlayerSettings.runInBackground = true;
+            // ProjectSettings defaults to Mono so a Mac without the IL2CPP module can build.
+            // The Linux player path opts into IL2CPP here.
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.IL2CPP);
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneLinux64, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneLinux64, new[] { GraphicsDeviceType.OpenGLCore });
@@ -44,11 +47,12 @@ namespace Argos.Fleet.EditorTools
             cameraObject.AddComponent<AudioListener>();
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = new Color(0.015f, 0.02f, 0.035f, 1f);
-            camera.fieldOfView = 48f;
+            camera.fieldOfView = 40f;
             camera.nearClipPlane = 0.1f;
             camera.farClipPlane = 250f;
-            cameraObject.transform.position = new Vector3(0f, 24f, -16f);
-            cameraObject.transform.rotation = Quaternion.Euler(58f, 0f, 0f);
+            // High enough that all four rows of the 20-rover grid sit inside a 1280x720 frame.
+            cameraObject.transform.position = new Vector3(0f, 36f, -12f);
+            cameraObject.transform.rotation = Quaternion.Euler(72f, 0f, 0f);
 
             var lightObject = new GameObject("Directional Light");
             var light = lightObject.AddComponent<Light>();
