@@ -23,6 +23,18 @@ import SwiftUI
   private var cloudFrame = ""
   private var cloudSequence: UInt64?
   private var cloudHistory: [[SCNVector3]] = []
+  private var cloudElement: SCNGeometryElement?
+  private var cloudElementCount = 0
+  private let cloudMaterial: SCNMaterial = {
+    let material = SCNMaterial()
+    material.lightingModel = .constant
+    #if os(macOS)
+      material.diffuse.contents = NSColor.cyan
+    #else
+      material.diffuse.contents = UIColor.cyan
+    #endif
+    return material
+  }()
   var robots: [UInt64: SCNNode] = [:]
   init() {
     cameraNode.camera = SCNCamera()
@@ -30,6 +42,7 @@ import SwiftUI
     cameraNode.camera?.zNear = 0.01
     cameraNode.camera?.zFar = 100000
     scene.rootNode.addChildNode(cameraNode)
+    cloudNode.name = "point-cloud"
     scene.rootNode.addChildNode(cloudNode)
     let ambient = SCNNode()
     ambient.light = SCNLight()
@@ -81,12 +94,25 @@ import SwiftUI
       node.opacity = (rover.poseAge ?? 99) >= SupervisionTiming.staleAfter ? 0.45 : 1
     }
   }
+  private func clearCloud() {
+    cloudNode.geometry = nil
+    cloudHistory = []
+    cloudSequence = nil
+    cloudFrame = ""
+    cloudElement = nil
+    cloudElementCount = 0
+  }
+
   private func updateCloud(_ cloud: PointCloudFrame?) {
-    guard let cloud, cloud.usable else {
-      cloudNode.geometry = nil
-      cloudHistory = []
-      cloudSequence = nil
-      cloudFrame = ""
+    guard let cloud, cloud.fresh else {
+      clearCloud()
+      return
+    }
+    // The model validates received content. Unchanged sequences are immutable,
+    // so pan/zoom only updates the camera, not points or geometry resources.
+    if cloud.frameID == cloudFrame, cloud.sequence == cloudSequence { return }
+    guard cloud.validContent else {
+      clearCloud()
       return
     }
     if cloud.frameID != cloudFrame {
@@ -104,19 +130,19 @@ import SwiftUI
       return
     }
     let source = SCNGeometrySource(vertices: points)
-    let element = SCNGeometryElement(indices: Array(0..<Int32(points.count)), primitiveType: .point)
-    element.pointSize = 3
-    element.minimumPointScreenSpaceRadius = 1
-    element.maximumPointScreenSpaceRadius = 3
+    let element: SCNGeometryElement
+    if let existing = cloudElement, cloudElementCount == points.count {
+      element = existing
+    } else {
+      element = SCNGeometryElement(indices: Array(0..<Int32(points.count)), primitiveType: .point)
+      element.pointSize = 3
+      element.minimumPointScreenSpaceRadius = 1
+      element.maximumPointScreenSpaceRadius = 3
+      cloudElement = element
+      cloudElementCount = points.count
+    }
     let geometry = SCNGeometry(sources: [source], elements: [element])
-    let material = SCNMaterial()
-    material.lightingModel = .constant
-    #if os(macOS)
-      material.diffuse.contents = NSColor.cyan
-    #else
-      material.diffuse.contents = UIColor.cyan
-    #endif
-    geometry.materials = [material]
+    geometry.materials = [cloudMaterial]
     cloudNode.geometry = geometry
   }
   func rover(at point: CGPoint) -> UInt64? {

@@ -12,9 +12,10 @@ struct PointCloudFrame: Codable {
   var source: String
   var age: Double
   var points: [[Double]]
-  var usable: Bool {
-    version == 1 && !frameID.isEmpty && age.isFinite && age >= 0 && age < 2.5
-      && points.count <= 4096
+  var fresh: Bool { age.isFinite && age >= 0 && age < 2.5 }
+  var validContent: Bool {
+    version == 1 && !frameID.isEmpty && points.count <= 4096
       && points.allSatisfy { $0.count == 3 && $0.allSatisfy { $0.isFinite && abs($0) <= 20000 } }
   }
+  var usable: Bool { fresh && validContent }
 }

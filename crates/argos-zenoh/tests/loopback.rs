@@ -12,6 +12,128 @@ fn wait_for(mut predicate: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[test]
+fn content_heartbeats_refresh_only_received_baselines_and_reconnect_recovers() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let endpoint = format!("tcp/127.0.0.1:{port}");
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let peer = zenoh::open(config).wait().unwrap();
+    let client = Client::connect(&endpoint, "events").unwrap();
+    let map_heartbeat = r#"{"schema_version":1,"rover_id":8,"run_id":"run","sequence":2}"#;
+    let cloud_heartbeat = r#"{"version":1,"rover_id":8,"frameID":"frame","sequence":3}"#;
+    let grid = serde_json::json!({
+        "schema_version": 1, "rover_id": 8, "run_id": "run", "sequence": 2,
+        "width": 2, "height": 1, "resolution": 0.1, "origin_x": 0., "origin_y": 0.,
+        "occupancy": [-1, 100],
+    });
+    let cloud = serde_json::json!({
+        "version": 1, "frameID": "frame", "sequence": 3, "source": "features",
+        "points": [[1., 2., 3.]],
+    });
+    let publish_fleet = || {
+        peer.put(
+            "events/fleet/state",
+            r#"{"count":1,"max_count":32,"ids":[8]}"#,
+        )
+        .wait()
+        .unwrap();
+    };
+    let heartbeat = || {
+        peer.put("events/8/map/occupancy/heartbeat", map_heartbeat)
+            .wait()
+            .unwrap();
+        peer.put("events/8/pointcloud/heartbeat", cloud_heartbeat)
+            .wait()
+            .unwrap();
+    };
+    let baseline = || {
+        peer.put("events/8/map/occupancy", grid.to_string())
+            .wait()
+            .unwrap();
+        peer.put("events/8/pointcloud", cloud.to_string())
+            .wait()
+            .unwrap();
+    };
+    wait_for(|| {
+        publish_fleet();
+        client.snapshot().link == "healthy"
+    });
+    heartbeat();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(client.occupancy_snapshot(), "{}");
+    let empty: serde_json::Value = serde_json::from_str(&client.operator_snapshot()).unwrap();
+    assert!(empty["8"]["cloud"].is_null());
+
+    wait_for(|| {
+        baseline();
+        client.occupancy_snapshot().contains("\"sequence\":2")
+            && client.operator_snapshot().contains("\"frameID\":\"frame\"")
+    });
+    std::thread::sleep(Duration::from_millis(550));
+    let aged: serde_json::Value = serde_json::from_str(&client.occupancy_snapshot()).unwrap();
+    assert!(aged["8"]["age"].as_f64().unwrap() >= 0.5);
+    // Replayed full payloads are not evidence that a frozen source observed a
+    // new sample. The explicit heartbeat is the only same-revision renewal.
+    baseline();
+    peer.put(
+        "events/8/map/occupancy/heartbeat",
+        r#"{"schema_version":1,"rover_id":8,"run_id":"previous-run","sequence":2}"#,
+    )
+    .wait()
+    .unwrap();
+    peer.put(
+        "events/8/pointcloud/heartbeat",
+        r#"{"version":1,"rover_id":8,"frameID":"frame","sequence":2}"#,
+    )
+    .wait()
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let unchanged: serde_json::Value = serde_json::from_str(&client.operator_snapshot()).unwrap();
+    assert!(unchanged["8"]["occupancy"]["age"].as_f64().unwrap() >= 0.5);
+    assert!(unchanged["8"]["cloud"]["age"].as_f64().unwrap() >= 0.5);
+    wait_for(|| {
+        heartbeat();
+        let map: serde_json::Value = serde_json::from_str(&client.occupancy_snapshot()).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&client.operator_snapshot()).unwrap();
+        map["8"]["age"].as_f64().unwrap() < 0.2
+            && state["8"]["cloud"]["age"]
+                .as_f64()
+                .is_some_and(|age| age < 0.2)
+    });
+    let updated: serde_json::Value = serde_json::from_str(&client.operator_snapshot()).unwrap();
+    assert_eq!(updated["8"]["occupancy"]["occupancy"], grid["occupancy"]);
+    assert_eq!(updated["8"]["occupancy"]["sequence"], 2);
+    assert_eq!(updated["8"]["cloud"]["points"], cloud["points"]);
+    assert_eq!(updated["8"]["cloud"]["sequence"], 3);
+    client.disconnect();
+
+    let reconnected = Client::connect(&endpoint, "events").unwrap();
+    wait_for(|| {
+        publish_fleet();
+        reconnected.snapshot().link == "healthy"
+    });
+    heartbeat();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(reconnected.occupancy_snapshot(), "{}");
+    wait_for(|| {
+        baseline();
+        reconnected.occupancy_snapshot().contains("\"sequence\":2")
+            && reconnected
+                .operator_snapshot()
+                .contains("\"frameID\":\"frame\"")
+    });
+    reconnected.disconnect();
+}
+
 #[test]
 fn receives_fleet_and_publishes_one_correlated_goal() {
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

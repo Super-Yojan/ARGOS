@@ -1,8 +1,153 @@
 import XCTest
+import SceneKit
 #if canImport(ARGOS)
 @testable import ARGOS
 #endif
 final class FleetModelTests: XCTestCase {
+    @MainActor func testAllReportsAreAppliedBeforeTheFirstAcknowledgementReturns() async {
+        let backend = DelayedReportBackend()
+        let model = FleetModel(backend: backend)
+        let refresh = Task { await model.refresh() }
+        for _ in 0..<100 { if await backend.waiting { break }; try? await Task.sleep(for: .milliseconds(5)) }
+        let waiting = await backend.waiting; XCTAssertTrue(waiting)
+        XCTAssertEqual(model.searchReports[8]?.map(\.reportID), ["first", "second"])
+        await backend.releaseAcknowledgement()
+        await refresh.value
+        let count = await backend.acknowledgements
+        XCTAssertEqual(count, 2)
+    }
+
+    func testSharedOperatorDocumentDecodesBothProjectionsIndependently() {
+        let payload = #"{"8":{"recording":"active","cloud":{"version":1,"sequence":4,"frameID":"local","source":"features","age":0.1,"points":[[1,2,3]]}}}"#
+        let decoded = FleetTelemetryPayloads(operatorState: payload, occupancyState: "{}",
+            operatorTelemetry: payload, localization: "{}", sharedOperatorDocument: true).decode()
+        XCTAssertEqual(decoded.operatorStates["8"]?.recording, "active")
+        XCTAssertEqual(decoded.operatorTelemetry["8"]?.cloud?.sequence, 4)
+        XCTAssertEqual(decoded.clouds[8]?.points, [[1, 2, 3]])
+
+        let malformed = payload.replacingOccurrences(of: #""sequence":4"#, with: #""sequence":"invalid""#)
+        let invalid = FleetTelemetryPayloads(operatorState: malformed, occupancyState: "{}",
+            operatorTelemetry: malformed, localization: "{}", sharedOperatorDocument: true).decode()
+        XCTAssertEqual(invalid.operatorStates["8"]?.recording, "active")
+        XCTAssertTrue(invalid.operatorTelemetry.isEmpty)
+        XCTAssertTrue(invalid.clouds.isEmpty)
+    }
+
+    @MainActor func testRefreshUsesOneGroupedTelemetryRead() async {
+        let backend = RenderingTestBackend()
+        let model = FleetModel(backend: backend)
+        await model.refresh()
+        let reads = await backend.reads
+        let separateReads = await backend.separateReads
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(separateReads, 0)
+        XCTAssertEqual(model.clouds[8]?.sequence, 1)
+        XCTAssertEqual(model.operatorStates["8"]?.recording, "active")
+    }
+
+    @MainActor func testSceneCloudCachesPointsButUpdatesAgeAndAlignment() async throws {
+        let backend = RenderingTestBackend()
+        let model = FleetModel(backend: backend)
+        await model.refresh()
+        let first = try XCTUnwrap(model.sceneCloud(8))
+        let second = try XCTUnwrap(model.sceneCloud(8))
+        let firstStorage = first.points.withUnsafeBufferPointer { $0.baseAddress }
+        let secondStorage = second.points.withUnsafeBufferPointer { $0.baseAddress }
+        XCTAssertEqual(firstStorage, secondStorage)
+        await backend.changeAge(0.2)
+        await model.refresh()
+        let aged = try XCTUnwrap(model.sceneCloud(8))
+        XCTAssertEqual(aged.age, 0.2, accuracy: 0.05)
+        XCTAssertEqual(firstStorage, aged.points.withUnsafeBufferPointer { $0.baseAddress })
+        await backend.changeRotation(.pi / 2)
+        await model.refresh()
+        let rotated = try XCTUnwrap(model.sceneCloud(8))
+        XCTAssertNotEqual(first.frameID, rotated.frameID)
+        XCTAssertEqual(rotated.points[0][0], -2, accuracy: 0.001)
+        XCTAssertEqual(rotated.points[0][1], 1, accuracy: 0.001)
+        await backend.changeAge(2.5)
+        await model.refresh()
+        XCTAssertNil(model.sceneCloud(8))
+    }
+
+    @MainActor func testCaptureDelayExpiresTelemetryBeforeItIsApplied() async {
+        let backend = RenderingTestBackend()
+        await backend.changeCaptureDelay(0.6)
+        let model = FleetModel(backend: backend)
+        await model.refresh()
+        XCTAssertFalse(model.motorsArmed(8))
+        XCTAssertFalse(model.driveAvailable(8))
+        XCTAssertNil(model.sceneOccupancy(8))
+        XCTAssertGreaterThanOrEqual(model.authorities[8]?.age ?? 0, 0.7)
+        XCTAssertNotNil(model.sceneCloud(8))
+        await backend.changeCaptureDelay(3)
+        await model.refresh()
+        XCTAssertNil(model.sceneCloud(8))
+    }
+
+    @MainActor func testFreshnessAdvancesWithoutAnotherRefresh() async {
+        let backend = RenderingTestBackend()
+        await backend.changeAge(2.4)
+        let model = FleetModel(backend: backend)
+        await model.refresh()
+        XCTAssertTrue(model.motorsArmed(8))
+        XCTAssertTrue(model.driveAvailable(8))
+        XCTAssertNotNil(model.sceneOccupancy(8))
+        XCTAssertNotNil(model.sceneCloud(8))
+        try? await Task.sleep(for: .milliseconds(550))
+        XCTAssertFalse(model.motorsArmed(8))
+        XCTAssertFalse(model.driveAvailable(8))
+        XCTAssertNil(model.sceneOccupancy(8))
+        XCTAssertNil(model.sceneCloud(8))
+        let reads = await backend.reads
+        XCTAssertEqual(reads, 1)
+    }
+
+    func testInvalidAgesDoNotBecomeFreshWhenDecodeTimeIsAdded() {
+        XCTAssertEqual(advancedTelemetryAge(-0.1, by: 1), -0.1)
+        XCTAssertTrue(advancedTelemetryAge(.nan, by: 1).isNaN)
+        XCTAssertEqual(advancedTelemetryAge(.infinity, by: 1), .infinity)
+    }
+
+    @MainActor func testCloudGeometryIsRetainedDuringCameraChangesAndResetForNewFrames() throws {
+        let renderer = RoverSceneController()
+        let node = try XCTUnwrap(renderer.scene.rootNode.childNode(withName: "point-cloud", recursively: false))
+        let size = CGSize(width: 800, height: 600)
+        var camera = FieldCamera()
+        var cloud = PointCloudFrame(version: 1, sequence: 1, frameID: "first", source: "features",
+            age: 0, points: [[1, 2, 3]])
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        let geometry = try XCTUnwrap(node.geometry)
+        camera.x = 10; camera.extent = 20; camera.azimuth = 1
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        XCTAssertTrue(node.geometry === geometry)
+        cloud.sequence = 2
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        XCTAssertEqual(node.geometry?.sources(for: .vertex).first?.vectorCount, 2)
+        cloud.frameID = "second"
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        XCTAssertEqual(node.geometry?.sources(for: .vertex).first?.vectorCount, 1)
+        cloud.age = 2.5
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        XCTAssertNil(node.geometry)
+        cloud.age = 0; cloud.sequence = 3; cloud.points = [[.nan, 0, 0]]
+        renderer.update(rovers: [], camera: camera, size: size, cloud: cloud)
+        XCTAssertNil(node.geometry)
+    }
+
+    @MainActor func testReconnectionNamespacesCloudHistoryEvenWhenSourceSequenceRepeats() async throws {
+        let model = FleetModel(backend: RenderingTestBackend())
+        await model.connect(endpoint: "first", prefix: "test")
+        model.stopObservation()
+        let first = try XCTUnwrap(model.sceneCloud(8))
+        await model.connect(endpoint: "second", prefix: "test")
+        model.stopObservation()
+        let second = try XCTUnwrap(model.sceneCloud(8))
+        XCTAssertEqual(first.sequence, second.sequence)
+        XCTAssertNotEqual(first.frameID, second.frameID)
+        await model.disconnect()
+    }
+
     @MainActor func testDirectWaypointPreservesL2WithDelayedTelemetry() async {
         let backend = DriveTestBackend()
         let model = FleetModel(backend: backend)
@@ -57,6 +202,21 @@ final class FleetModelTests: XCTestCase {
         XCTAssertEqual(model.sceneRovers.map(\.id), [2])
         XCTAssertEqual(model.selected, 2)
         await model.disconnect()
+    }
+    @MainActor func testOlderRefreshCannotOverwriteNewerStateInTheSameSession() async {
+        let backend = SessionSwitchBackend()
+        let model = FleetModel(backend: backend)
+        await model.refresh()
+        await backend.delayNextSnapshot()
+        let older = Task { await model.refresh() }
+        for _ in 0..<100 { if await backend.waiting { break }; try? await Task.sleep(for: .milliseconds(5)) }
+        let waiting = await backend.waiting; XCTAssertTrue(waiting)
+        await backend.showRover(2)
+        await model.refresh()
+        await backend.releaseSnapshot()
+        await older.value
+        XCTAssertEqual(model.sceneRovers.map(\.id), [2])
+        XCTAssertEqual(model.selected, 2)
     }
     func testSceneDraftInvalidation() {
         var state = FleetSceneState()
@@ -442,6 +602,7 @@ actor SessionSwitchBackend: FleetBackend {
     var pending: CheckedContinuation<FleetSnapshot, Never>?
     var held: FleetSnapshot?
     var waiting: Bool { pending != nil }
+    func showRover(_ value: UInt64) { id = value }
     func delayNextSnapshot() { delayed = true }
     func releaseSnapshot() { if let held { pending?.resume(returning: held) }; pending = nil; held = nil }
     func connect(endpoint: String, prefix: String) async throws { id = endpoint == "old" ? 1 : 2 }
@@ -453,4 +614,56 @@ actor SessionSwitchBackend: FleetBackend {
     }
     func send(id: UInt64, waypoint: Waypoint) async throws -> String { "unused" }
     func cancel(id: UInt64) async throws {}
+}
+
+actor RenderingTestBackend: FleetBackend {
+    var reads = 0
+    var separateReads = 0
+    var age = 0.0
+    var rotation = 0.0
+    var captureDelay = 0.0
+    func changeAge(_ value: Double) { age = value }
+    func changeRotation(_ value: Double) { rotation = value }
+    func changeCaptureDelay(_ value: Double) { captureDelay = value }
+    func connect(endpoint: String, prefix: String) async throws {}
+    func disconnect() async {}
+    func send(id: UInt64, waypoint: Waypoint) async throws -> String { "unused" }
+    func cancel(id: UInt64) async throws {}
+    func snapshot() async -> FleetSnapshot {
+        FleetSnapshot(link: "healthy", fleetAge: 0, rovers: [
+            RoverView(id: 8, membership: "online", pose: RoverPose(x: 0, y: 0, yaw: 0),
+                poseAge: 0, goal: nil, goalAge: nil, commandPhase: "none", commandToken: nil)
+        ], notice: nil)
+    }
+    func operatorState() async -> String { separateReads += 1; return "{}" }
+    func operatorTelemetry() async -> String { separateReads += 1; return "{}" }
+    func telemetryPayloads() async -> FleetTelemetryPayloads {
+        reads += 1
+        let operators = #"{"8":{"recording":"active","cloud":{"version":1,"sequence":1,"frameID":"test","source":"features","age":\#(age),"points":[[1,2,3]]},"hardware":{"ready":true,"armed":true,"arming":false,"reason":"Armed","age":0.1},"authority":{"run_id":"test","requested_level":"teleop","effective_level":"teleop","active_source":"operator","safety":"clear","reason":"ready","revision":1,"supported_levels":["teleop"],"age":0.1},"occupancy":{"schema_version":1,"rover_id":8,"run_id":"test","sequence":1,"width":1,"height":1,"resolution":0.1,"origin_x":0,"origin_y":0,"occupancy":[0],"age":0}}}"#
+        let localization = #"{"8":{"version":1,"frameID":"test","mode":"geographic","reason":"Reliable","tracking":"normal","age":0,"gpsAccuracy":4,"headingAccuracy":5,"originLatitude":38,"originLongitude":-77,"anchorX":0,"anchorY":0,"rotation":\#(rotation)}}"#
+        return FleetTelemetryPayloads(operatorState: operators, occupancyState: "{}",
+            operatorTelemetry: operators, localization: localization, sharedOperatorDocument: true,
+            capturedAt: .now - .seconds(captureDelay))
+    }
+}
+
+actor DelayedReportBackend: FleetBackend {
+    var acknowledgements = 0
+    var pending: CheckedContinuation<Void, Never>?
+    var waiting: Bool { pending != nil }
+    func releaseAcknowledgement() { pending?.resume(); pending = nil }
+    func connect(endpoint: String, prefix: String) async throws {}
+    func disconnect() async {}
+    func send(id: UInt64, waypoint: Waypoint) async throws -> String { "unused" }
+    func cancel(id: UInt64) async throws {}
+    func snapshot() async -> FleetSnapshot {
+        FleetSnapshot(link: "healthy", fleetAge: 0, rovers: [], notice: nil)
+    }
+    func operatorTelemetry() async -> String {
+        #"{"8":{"reports":[{"run_id":"run","search_id":"search","target_class":"person","report_id":"first","world_x":1,"world_y":2,"frame_ids":[1],"evidence_ids":["one"]},{"run_id":"run","search_id":"search","target_class":"person","report_id":"second","world_x":3,"world_y":4,"frame_ids":[2],"evidence_ids":["two"]}]}}"#
+    }
+    func operatorCommand(id: UInt64, kind: String, payload: String) async throws {
+        acknowledgements += 1
+        if acknowledgements == 1 { await withCheckedContinuation { pending = $0 } }
+    }
 }

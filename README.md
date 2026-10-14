@@ -32,6 +32,10 @@ gem install xcodeproj
 open apps/apple/ARGOS.xcodeproj
 ```
 
+The build script packages optimized Rust libraries by default, independently of
+Xcode's Debug/Release selection. Use `ARGOS_RUST_PROFILE=debug ./scripts/build-apple.sh`
+when you specifically need an unoptimized Rust build.
+
 Select `ARGOSMac` for a native Mac app or `ARGOSiOS` for iPhone/iPad. Device builds
 need your Apple signing team. The macOS target has outgoing-network sandbox
 permission; iOS describes its local-network access request. Allow local-network
@@ -105,3 +109,22 @@ Arm requests are bound to the current rover run and authority revision and expir
 ### Spatial dashboard and router
 
 The native Mac/iPad dashboard uses a dark spatial scene, on-demand robot inspection and camera orbit. Mac Connection settings can start a local Zenoh router with loopback, LAN (`0.0.0.0:7448`) or Tailscale sharing. iPad connects to a remote host or discovers Mac LAN routers. See [hybrid router setup](docs/deployment-router.md) and [shared scene contract](docs/design/spatial-scene-contract.md).
+
+### Change-driven visualization telemetry
+
+Updated Terra and Zorvane publishers send full occupancy/cloud payloads when their
+content changes, with periodic recovery baselines for late subscribers. New live
+observations of unchanged content can instead send `map/occupancy/heartbeat` or
+`pointcloud/heartbeat`. These small messages identify the last full rover/run or
+frame/sequence; ARGOS renews only that matching cached visualization. Heartbeats
+never create missing data, authorize driving or renew hardware/authority state.
+A stalled sensor emits neither fresh content nor heartbeats.
+
+ARGOS retains compatibility with full-payload publishers. Deploy updated ARGOS
+alongside change-driven publishers: older receivers that do not understand these
+heartbeats will mark unchanged maps stale between recovery baselines. Zorvane
+currently publishes occupancy and depth/RGB, not a separate point-cloud stream.
+
+Occupancy rendering uses cached textures rather than per-cell polygons on each
+camera movement; the cache is bounded to 32 MiB including retained cell arrays.
+Unknown-cell dots now scale with the grid. See [runtime update details](apps/apple/Shared/README.md#runtime-updates).
