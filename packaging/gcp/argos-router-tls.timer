@@ -1,0 +1,8 @@
+[Unit]
+Description=Check ARGOS fleet TLS certificate renewal
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+[Install]
+WantedBy=timers.target

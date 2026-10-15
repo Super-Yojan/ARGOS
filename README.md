@@ -9,6 +9,17 @@ That site is the hub for ARGOS, [Terra](https://super-yojan.dev/Terra/),
 [TerraPhone](https://super-yojan.dev/Terra/terraphone/), and
 [Zorvane](https://super-yojan.dev/Zorvane/).
 
+## Browser dashboard
+
+Develop the monitoring and waypoint interface on Windows, Linux or macOS, without Xcode or rover hardware:
+
+```sh
+npm ci --prefix apps/web
+npm run dev
+```
+
+Open `http://127.0.0.1:5173` and choose **Open local demo**. The React/TypeScript app uses an Axum Rust service, offline local maps and optional MapLibre geographic maps. Public hosting uses GitHub login for invited viewers/operators and private Zenoh connectivity. See the [browser development and deployment guide](docs/browser-dashboard.md).
+
 ## Native iOS and macOS dashboard
 
 The Apple dashboard uses a shared Rust Zenoh client through UniFFI and native
@@ -94,7 +105,7 @@ instead of the unit-test target. Their retained screenshot attachments provide
 native UI evidence. Do not run both live command tests concurrently.
 
 Codespaces can run Rust tests and Terra, but native Apple UI builds/runs require
-Xcode on macOS. There is no browser dashboard in this native slice.
+Xcode on macOS. The browser dashboard has its own cross-platform development workflow above.
 
 ### Hardware arming from ARGOS
 
@@ -105,3 +116,5 @@ Arm requests are bound to the current rover run and authority revision and expir
 ### Spatial dashboard and router
 
 The native Mac/iPad dashboard uses a dark spatial scene, on-demand robot inspection and camera orbit. Mac Connection settings can start a local Zenoh router with loopback, LAN (`0.0.0.0:7448`) or Tailscale sharing. iPad connects to a remote host or discovers Mac LAN routers. See [hybrid router setup](docs/deployment-router.md) and [shared scene contract](docs/design/spatial-scene-contract.md).
+
+Public GCP deployment and Terra connection setup: [hosting guide](packaging/gcp/README.md).

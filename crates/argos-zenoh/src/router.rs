@@ -28,8 +28,7 @@ impl Router {
         }
         let addresses = listen_addresses(port, private_address)?;
         // Probe every requested bind, then release probes immediately before Zenoh binds.
-        let probes: std::io::Result<Vec<_>> =
-            addresses.iter().map(|a| TcpListener::bind(a)).collect();
+        let probes: std::io::Result<Vec<_>> = addresses.iter().map(TcpListener::bind).collect();
         let probes = probes.map_err(|e| { self.log(format!("Bind failed: {e}")); Error(format!("Router bind failed: {e}. An existing router may own this port; use Remote host to connect without managing it.")) })?;
         drop(probes);
         let endpoints: Vec<_> = addresses.iter().map(|a| format!("tcp/{a}")).collect();

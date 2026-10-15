@@ -1,0 +1,7 @@
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-page);color:var(--text-primary);font-family:var(--font-body);font-size:var(--type-body-size);line-height:var(--type-body-lh);letter-spacing:var(--type-body-ls);-webkit-font-smoothing:antialiased}
+a{color:var(--ink);text-decoration:none;transition:opacity var(--duration-base) var(--ease-house)}
+a:hover{opacity:.55}
+.yg-shell{max-width:var(--shell-max);margin:0 auto;padding:0 var(--shell-pad)}
+.yg-shell-prose{max-width:var(--shell-max-prose);margin:0 auto;padding:0 var(--shell-pad)}
+.yg-rule{border:0;border-top:1px solid var(--rule);margin:0}

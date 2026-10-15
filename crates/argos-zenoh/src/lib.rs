@@ -12,6 +12,7 @@ use argos_core::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use zenoh::Wait;
+type SharedMaps = Arc<Mutex<std::collections::BTreeMap<u64, (OccupancyGrid, f64, Option<String>)>>>;
 type SharedTelemetry =
     Arc<Mutex<std::collections::BTreeMap<(u64, String), (serde_json::Value, Instant)>>>;
 /// Held keys belong to one rover and the authority generation that admitted them.
@@ -26,7 +27,7 @@ pub struct Client {
     session: Arc<Mutex<Option<zenoh::Session>>>,
     subscribers: Mutex<Vec<zenoh::pubsub::Subscriber<()>>>,
     cache: Arc<Mutex<FleetCache>>,
-    maps: Arc<Mutex<std::collections::BTreeMap<u64, (OccupancyGrid, f64)>>>,
+    maps: SharedMaps,
     localizations: Arc<Mutex<std::collections::BTreeMap<u64, (serde_json::Value, Instant)>>>,
     operator_states: SharedTelemetry,
     actions: Mutex<()>,
@@ -44,12 +45,21 @@ pub struct Client {
 }
 impl Client {
     pub fn connect(endpoint: &str, prefix: &str) -> Result<Self> {
+        Self::connect_authenticated(endpoint, prefix, None)
+    }
+    pub fn connect_authenticated(
+        endpoint: &str,
+        prefix: &str,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<Self> {
         let topics = Topics::new(prefix)?;
         if endpoint.len() > 512
-            || !endpoint.starts_with("tcp/")
+            || !(endpoint.starts_with("tcp/") || endpoint.starts_with("tls/"))
             || endpoint.parse::<zenoh::config::EndPoint>().is_err()
         {
-            return Err(invalid("endpoint must be a valid tcp/host:port"));
+            return Err(invalid(
+                "endpoint must be a valid tcp/host:port or tls/host:port",
+            ));
         }
         let mut config = zenoh::Config::default();
         config
@@ -67,6 +77,16 @@ impl Client {
         config
             .insert_json5("connect/timeout_ms", "3000")
             .map_err(|e| Error(e.to_string()))?;
+        if let Some((user, password)) = credentials {
+            for (key, value) in [
+                ("transport/auth/usrpwd/user", user),
+                ("transport/auth/usrpwd/password", password),
+            ] {
+                config
+                    .insert_json5(key, &serde_json::to_string(value).unwrap())
+                    .map_err(|e| Error(e.to_string()))?;
+            }
+        }
         let session = zenoh::open(config)
             .wait()
             .map_err(|e| Error(format!("could not connect: {e}")))?;
@@ -140,9 +160,14 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
+        let localizations = Arc::new(Mutex::new(std::collections::BTreeMap::<
+            u64,
+            (serde_json::Value, Instant),
+        >::new()));
+        let map_frames = localizations.clone();
         let maps = Arc::new(Mutex::new(std::collections::BTreeMap::<
             u64,
-            (OccupancyGrid, f64),
+            (OccupancyGrid, f64, Option<String>),
         >::new()));
         let grids = maps.clone();
         let map_topics = topics.clone();
@@ -160,8 +185,13 @@ impl Client {
                 if grid.rover_id != id {
                     return;
                 }
+                let frames = map_frames.lock().unwrap();
+                let frame_id = frames
+                    .get(&id)
+                    .and_then(|(v, _)| v["frameID"].as_str())
+                    .map(String::from);
                 let mut maps = grids.lock().unwrap();
-                if maps.get(&id).is_some_and(|(old, _)| {
+                if maps.get(&id).is_some_and(|(old, _, _)| {
                     old.run_id == grid.run_id && old.sequence >= grid.sequence
                 }) {
                     return;
@@ -170,7 +200,7 @@ impl Client {
                 if !maps.contains_key(&id) && maps.len() >= 256 {
                     return;
                 }
-                maps.insert(id, (grid, start.elapsed().as_secs_f64()));
+                maps.insert(id, (grid, start.elapsed().as_secs_f64(), frame_id));
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
@@ -253,8 +283,8 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
-        let localizations = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let l = localizations.clone();
+        let frame_grids = maps.clone();
         let subscribed_topics = topics.clone();
         let localization = session
             .declare_subscriber(format!("{}/*/localization", topics.prefix))
@@ -275,6 +305,10 @@ impl Client {
                     return;
                 }
                 let mut entries = l.lock().unwrap();
+                let previous = entries.get(&id).and_then(|(v, _)| v["frameID"].as_str());
+                if previous != value["frameID"].as_str() {
+                    frame_grids.lock().unwrap().remove(&id);
+                }
                 entries.retain(|_, (_, received): &mut (serde_json::Value, Instant)| {
                     received.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
                 });
@@ -483,7 +517,7 @@ impl Client {
             teleop_sequence,
         })
     }
-    pub fn operator_snapshot(&self) -> String {
+    pub fn operator_state_snapshot(&self) -> String {
         let mut result: serde_json::Value = serde_json::from_str(&self.legacy_operator_snapshot())
             .unwrap_or_else(|_| serde_json::json!({}));
         for ((id, kind), (value, received)) in self.operator_states.lock().unwrap().iter() {
@@ -510,6 +544,20 @@ impl Client {
                 result[id.to_string()][kind] = value;
             }
         }
+        result.to_string()
+    }
+    pub fn occupancy_grid(&self, id: u64) -> Option<(OccupancyGrid, f64, Option<String>)> {
+        self.maps.lock().unwrap().get(&id).map(|(grid, at, frame)| {
+            (
+                grid.clone(),
+                (self.start.elapsed().as_secs_f64() - at).max(0.),
+                frame.clone(),
+            )
+        })
+    }
+    pub fn operator_snapshot(&self) -> String {
+        let mut result: serde_json::Value = serde_json::from_str(&self.operator_state_snapshot())
+            .unwrap_or_else(|_| serde_json::json!({}));
         let maps: serde_json::Value =
             serde_json::from_str(&self.occupancy_snapshot()).unwrap_or_default();
         if let Some(maps) = maps.as_object() {
@@ -525,14 +573,31 @@ impl Client {
         let _action = self.actions.lock().unwrap();
         if !matches!(
             kind,
-            "autonomy" | "teleop" | "hardware" | "search" | "search/action" | "search/report/ack"
+            "autonomy"
+                | "teleop"
+                | "hardware"
+                | "navigation/settings"
+                | "search"
+                | "search/action"
+                | "search/report/ack"
         ) || payload.len() > 2048
         {
             return Err(invalid("invalid operator command"));
         }
         let value: serde_json::Value =
             serde_json::from_str(payload).map_err(|_| invalid("invalid command JSON"))?;
-        if kind.starts_with("search") {
+        if kind == "navigation/settings" {
+            if value["token"]
+                .as_str()
+                .is_none_or(|v| v.is_empty() || v.len() > 64)
+                || !value["run_id"].is_string()
+                || value["authority_revision"].as_u64().is_none()
+                || value["settings_revision"].as_u64().is_none()
+                || !value["parameters"].is_object()
+            {
+                return Err(invalid("invalid navigation settings request"));
+            }
+        } else if kind.starts_with("search") {
             validate_search_command(kind, payload)?;
         } else if kind == "teleop" {
             let linear = value["linear"]
@@ -592,7 +657,8 @@ impl Client {
                 || !snapshot.rovers.iter().any(|r| {
                     r.id == id
                         && r.membership == "online"
-                        && r.pose_age.is_some_and(|a| a < freshness)
+                        && (kind == "navigation/settings"
+                            || r.pose_age.is_some_and(|a| a < freshness))
                 })
             {
                 return Err(invalid("fresh rover telemetry required"));
@@ -611,6 +677,24 @@ impl Client {
                     || authority["requested_level"] != "target_search"
                 {
                     return Err(invalid("search authority changed"));
+                }
+            } else if kind == "navigation/settings" {
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("hardware status unavailable"))?;
+                if value["run_id"] != authority["run_id"]
+                    || value["authority_revision"] != authority["revision"]
+                    || value["settings_revision"] != authority["navigation"]["revision"]
+                    || authority["navigation"]["schema_version"] != 1
+                    || !matches!(authority["safety"].as_str(), Some("clear" | "hold"))
+                    || at.elapsed().as_secs_f64() >= 0.5
+                    || hardware["ready"] != true
+                    || hardware["armed"] != false
+                    || hardware["arming"] != false
+                {
+                    return Err(invalid(
+                        "settings require current authority and ready disarmed hardware",
+                    ));
                 }
             } else if kind == "hardware" {
                 if value["run_id"] != authority["run_id"]
@@ -698,7 +782,7 @@ impl Client {
         let maps = self.maps.lock().unwrap();
         let mut result = serde_json::Map::new();
         for rover in fleet.rovers.iter().filter(|r| r.membership != "absent") {
-            if let Some((grid, time)) = maps.get(&rover.id) {
+            if let Some((grid, time, _)) = maps.get(&rover.id) {
                 result.insert(
                     rover.id.to_string(),
                     serde_json::json!({"grid": grid,"age": (now-time).max(0.)}),

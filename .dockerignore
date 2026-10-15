@@ -1,0 +1,14 @@
+.git
+.worktrees
+target
+**/node_modules
+**/dist
+apps/apple
+spikes
+docs
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/.env
+**/test-results
+**/playwright-report

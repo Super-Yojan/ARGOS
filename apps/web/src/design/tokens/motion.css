@@ -1,0 +1,12 @@
+:root{
+--ease-house:cubic-bezier(0.16,1,0.3,1);
+--duration-base:500ms;
+--duration-slow:700ms;
+--duration-reveal:900ms;
+--transition-base:all var(--duration-base) var(--ease-house);
+}
+@media (prefers-reduced-motion:reduce){:root{
+--duration-base:1ms;
+--duration-slow:1ms;
+--duration-reveal:1ms;
+}}

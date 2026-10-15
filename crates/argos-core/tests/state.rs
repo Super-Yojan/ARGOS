@@ -157,3 +157,12 @@ fn forest_gap_accepts_waypoint_and_delayed_ack_without_retry() {
     assert_eq!(c.snapshot(180.).rovers[1].command_phase, "arrived");
     assert!(c.prepare_goal(8, &goal, "expired", 90.).is_err());
 }
+#[test]
+fn goal_receipt_identity_changes_only_when_a_status_packet_arrives() {
+    let mut c = cache();
+    c.status(0, status("a", "active"), 1.);
+    assert_eq!(c.snapshot(2.).rovers[0].goal_received_at, Some(1.));
+    assert_eq!(c.snapshot(3.).rovers[0].goal_received_at, Some(1.));
+    c.status(0, status("a", "active"), 4.);
+    assert_eq!(c.snapshot(5.).rovers[0].goal_received_at, Some(4.));
+}

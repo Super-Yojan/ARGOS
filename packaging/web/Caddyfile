@@ -1,0 +1,7 @@
+{$ARGOS_DOMAIN} {
+    @compressible not path /api/v1/events
+    encode @compressible zstd gzip
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}
