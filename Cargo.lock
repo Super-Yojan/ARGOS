@@ -126,6 +126,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "argos-unity-bridge"
+version = "0.1.0"
+dependencies = [
+ "argos-core",
+ "argos-zenoh",
+ "serde_json",
+ "zenoh",
+]
+
+[[package]]
 name = "argos-zenoh"
 version = "0.1.0"
 dependencies = [

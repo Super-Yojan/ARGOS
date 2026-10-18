@@ -1,0 +1,9 @@
+{
+  "anchorLatitude": 38.8297,
+  "anchorLongitude": -77.3075,
+  "zoom": 15,
+  "tileX": 9347,
+  "tileY": 12543,
+  "elevationFile": "gmu-fairfax-terrarium.png",
+  "imageryFile": "gmu-fairfax-naip.png"
+}
