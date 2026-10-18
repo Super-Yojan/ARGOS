@@ -23,6 +23,7 @@ fn generated_types_match_rust_contracts() {
         CancelRequest,
         HardwareRequest,
         AutonomyRequest,
+        DriveRequest,
         Operation,
         Claim,
         FleetSnapshot,

@@ -1,9 +1,8 @@
 import {useEffect,useRef,useState} from 'react';
-import type {Rover} from './generated';
+import type {DriveRequest, Rover} from './generated';
 import styles from './App.module.css';
-export type DriveInput={run_id:string;revision:string;sequence:number;observed_at:number;linear:number;angular:number};
 let sequence=0;
-type Props={rover:Rover;canCommand:boolean;linkHealthy?:boolean;now:number;onDrive:(r:DriveInput)=>Promise<void>;onTakeover:()=>Promise<string|void>;onStop:()=>Promise<void>};
+type Props={rover:Rover;canCommand:boolean;linkHealthy?:boolean;now:number;onDrive:(r:DriveRequest)=>Promise<void>;onTakeover:()=>Promise<string|void>;onStop:()=>Promise<void>};
 const keyDirection:Record<string,string>={w:'Forward',ArrowUp:'Forward',s:'Reverse',ArrowDown:'Reverse',a:'Left',ArrowLeft:'Left',d:'Right',ArrowRight:'Right'};
 export function DrivePanel(props:Props){
  const [enabled,setEnabled]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[pendingToken,setPendingToken]=useState<string|null>(null),[stopStatus,setStopStatus]=useState('');

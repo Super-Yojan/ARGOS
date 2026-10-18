@@ -15,6 +15,7 @@ export type WaypointRequest = { run_id: string, frame_id: string | null, request
 export type CancelRequest = { request_id: string, };
 export type HardwareRequest = { request_id: string, action: string, run_id: string, revision: string, };
 export type AutonomyRequest = { request_id: string, level: string, run_id: string, revision: string, };
+export type DriveRequest = { run_id: string, revision: string, sequence: number, observed_at: number, linear: number, angular: number, };
 export type Operation = { settings?: NavigationParameters | null, settings_revision?: string | null, id: string, request_id: string, user_id: string, owner: string, rover_id: string, kind: string, waypoint: Waypoint | null, phase: string, message: string, mode_token: string | null, goal_token: string | null, run_id: string, goal_observation: string | null, started: number, created_at: number, mode_level: string, revision: string, frame_id: string | null, };
 export type Claim = { owner: string, login: string, expires_at: number, };
 export type FleetSnapshot = { link: string, rovers: Array<Rover>, operations: Array<Operation>, claim: Claim | null, now: number, };

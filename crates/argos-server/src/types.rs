@@ -365,10 +365,11 @@ pub fn navigation_ready(r: &Rover) -> bool {
         && r.goal.as_ref().is_none_or(|g| g.state != "active")
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct DriveRequest {
     pub run_id: String,
     pub revision: String,
+    #[ts(type = "number")]
     pub sequence: u64,
     pub observed_at: f64,
     pub linear: f64,
