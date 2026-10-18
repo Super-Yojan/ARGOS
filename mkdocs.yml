@@ -58,6 +58,7 @@ nav:
   - Two-stage VLA: vla.md
   - Operator dashboard:
       - 3D spatial dashboard: design/3d-dashboard.md
+      - 3D framework decision: design/3d-framework-decision.md
       - 2D design draft: design/operator-dashboard/README.md
       - Wireframes: design/operator-dashboard/wireframes/index.md
   - Zenoh interfaces: zenoh.md
