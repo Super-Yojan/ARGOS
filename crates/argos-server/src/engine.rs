@@ -4,6 +4,13 @@ use std::collections::BTreeMap;
 
 pub trait Fleet: Send + 'static {
     fn snapshot(&mut self, now: f64) -> FleetSnapshot;
+    fn emergency_stop(&mut self, _id: &str) -> Result<(), String> {
+        Err("Emergency stop unavailable".into())
+    }
+    fn drive(&mut self, _id: &str, _request: &DriveRequest, _session: &str) -> Result<(), String> {
+        Err("Manual driving unavailable".into())
+    }
+
     fn navigation(
         &mut self,
         _id: &str,
@@ -35,6 +42,10 @@ pub struct Engine<F: Fleet> {
     pub operations: BTreeMap<String, Operation>,
     pub claim: Option<Claim>,
     journal: Journal,
+    held: BTreeMap<String, (String, DriveRequest, f64)>,
+    drive_order: BTreeMap<(String, String), u64>,
+    drive_session: String,
+    wire_sequence: u64,
 }
 impl<F: Fleet> Engine<F> {
     pub fn new(fleet: F) -> Self {
@@ -43,6 +54,10 @@ impl<F: Fleet> Engine<F> {
             operations: BTreeMap::new(),
             claim: None,
             journal: Box::new(|_| Ok(())),
+            wire_sequence: 0,
+            held: BTreeMap::new(),
+            drive_order: BTreeMap::new(),
+            drive_session: uuid::Uuid::new_v4().to_string(),
         }
     }
     pub fn journal(&mut self, journal: Journal) {
@@ -52,6 +67,145 @@ impl<F: Fleet> Engine<F> {
         (self.journal)(&op)?;
         self.operations.insert(op.id.clone(), op.clone());
         Ok(op)
+    }
+    fn drive_ready(s: &FleetSnapshot, id: &str, request: &DriveRequest) -> bool {
+        let recent = |v: f64| v.is_finite() && (0.0..0.5).contains(&v);
+        s.link == "healthy"
+            && s.rovers.iter().any(|r| {
+                r.id == id
+                    && r.ready()
+                    && r.pose_age.is_some_and(recent)
+                    && r.hardware.as_ref().is_some_and(|h| recent(h.age))
+                    && r.authority.as_ref().is_some_and(|a| {
+                        recent(a.age)
+                            && a.run_id == request.run_id
+                            && a.revision == request.revision
+                            && ["teleop", "assisted_teleop"].contains(&a.requested_level.as_str())
+                    })
+            })
+    }
+    fn stop_drive(&mut self, id: &str) {
+        if let Some((_, mut request, _)) = self.held.remove(id) {
+            request.linear = 0.;
+            request.angular = 0.;
+            self.wire_sequence += 1;
+            request.sequence = self.wire_sequence;
+            if let Err(e) = self.fleet.drive(id, &request, &self.drive_session) {
+                tracing::warn!(error=%e,"neutral publication failed; vehicle deadman remains required");
+            }
+        }
+    }
+    pub fn drive(
+        &mut self,
+        user: &Identity,
+        owner: &str,
+        id: &str,
+        mut request: DriveRequest,
+        now: f64,
+    ) -> Result<(), String> {
+        self.allowed(user, owner, now)?;
+        let key = (owner.to_string(), id.to_string());
+        if self
+            .drive_order
+            .get(&key)
+            .is_some_and(|s| *s >= request.sequence)
+        {
+            return Err("Outdated drive input".into());
+        }
+        self.drive_order.insert(key, request.sequence);
+        let moving = request.linear != 0. || request.angular != 0.;
+        if !request.linear.is_finite()
+            || !request.angular.is_finite()
+            || request.linear.abs() > 0.5
+            || request.angular.abs() > 1.
+        {
+            self.stop_drive(id);
+            return Err("Invalid drive velocity".into());
+        }
+        if moving
+            && (!request.observed_at.is_finite()
+                || !(0.0..0.5).contains(&(now - request.observed_at))
+                || !Self::drive_ready(&self.fleet.snapshot(now), id, &request))
+        {
+            self.stop_drive(id);
+            return Err("Fresh armed manual authority required".into());
+        }
+        if moving && self.held.get(id).is_some_and(|(_, _, at)| now - at < 0.09) {
+            return Err("Drive rate exceeded".into());
+        }
+        if moving {
+            self.held
+                .insert(id.into(), (owner.into(), request.clone(), now));
+        } else {
+            self.held.remove(id);
+        }
+        self.wire_sequence += 1;
+        request.sequence = self.wire_sequence;
+        if let Err(e) = self.fleet.drive(id, &request, &self.drive_session) {
+            self.stop_drive(id);
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn emergency_stop(
+        &mut self,
+        user: &Identity,
+        owner: &str,
+        id: &str,
+        now: f64,
+    ) -> Result<(), String> {
+        self.allowed(user, owner, now)?;
+        let stop = self.fleet.emergency_stop(id);
+        self.release(owner);
+        // Retire pending commands before attempting all stop paths, even if a publication fails.
+        for op in self
+            .operations
+            .values_mut()
+            .filter(|o| o.rover_id == id && !o.terminal())
+        {
+            op.phase = "interrupted".into();
+            op.message = "Emergency stop requested".into();
+        }
+        let cancel = self.fleet.cancel(id);
+        let disarm = self
+            .fleet
+            .hardware(id, "disarm", &uuid::Uuid::new_v4().to_string(), "", "0");
+        let result = stop.and(cancel).and(disarm);
+        let operation = Operation {
+            id: uuid::Uuid::new_v4().to_string(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            owner: owner.into(),
+            rover_id: id.into(),
+            kind: "stop".into(),
+            waypoint: None,
+            phase: "unconfirmed".into(),
+            message: match &result {
+                Ok(()) => {
+                    "Published safety stop, cancel and disarm; verify vehicle acknowledgement"
+                        .into()
+                }
+                Err(e) => format!("Emergency stop outcome uncertain: {e}"),
+            },
+            mode_token: None,
+            goal_token: None,
+            run_id: String::new(),
+            goal_observation: None,
+            started: now,
+            created_at: crate::auth::epoch() as f64,
+            mode_level: String::new(),
+            revision: String::new(),
+            frame_id: None,
+            settings: None,
+            settings_revision: None,
+        };
+        if let Err(e) = self.save(operation.clone()) {
+            self.operations.insert(operation.id.clone(), operation);
+            return Err(format!(
+                "Stop attempted; audit storage failed: {e}. Verify vehicle status"
+            ));
+        }
+        result
     }
     pub fn claim(&mut self, user: &Identity, owner: &str, now: f64) -> Result<Claim, String> {
         if user.role != "operator" {
@@ -83,6 +237,10 @@ impl<F: Fleet> Engine<F> {
     pub fn release(&mut self, owner: &str) {
         if self.claim.as_ref().is_some_and(|c| c.owner == owner) {
             self.claim = None;
+            let ids: Vec<_> = self.held.keys().cloned().collect();
+            for id in ids {
+                self.stop_drive(&id);
+            }
             let pending = self
                 .operations
                 .values()
@@ -626,6 +784,22 @@ impl<F: Fleet> Engine<F> {
             self.release(&owner);
         }
         let snap = self.fleet.snapshot(now);
+        let expired: Vec<_> = self
+            .held
+            .iter()
+            .filter(|(id, (owner, r, at))| {
+                now - at >= 0.45
+                    || !self
+                        .claim
+                        .as_ref()
+                        .is_some_and(|c| c.owner == *owner && c.expires_at > now)
+                    || !Self::drive_ready(&snap, id, r)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            self.stop_drive(&id);
+        }
         let ops = self
             .operations
             .values()

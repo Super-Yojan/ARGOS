@@ -1,5 +1,7 @@
 # ARGOS scene dashboard
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 The visual source of truth is [the operator dashboard design](https://super-yojan.dev/ARGOS/design/operator-dashboard/), including its main-layout and third-person wireframes. One place fills the screen. There is no roster, alert queue, navigation menu, metric-card overview, or unit switcher.
 
 The prototype uses a shared local ground plane. Pan and zoom it; select a rover body or its nearby state callout to move the camera closer. 2D and 3D are orthographic camera views of the same scene. Wider returns to the place. Pose, current waypoint activity, missing/stale reports, and transport notices sit beside the selected rover. Off-screen and unknown-position markers remain selectable at the scene boundary without assigning invented positions.

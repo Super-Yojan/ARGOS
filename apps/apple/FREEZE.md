@@ -1,44 +1,9 @@
-# Swift app freeze — Oct 24/31 fallback
+# Apple dashboard: legacy fallback
 
-> **Summary.** `apps/apple` is **frozen** from **Oct 12, 2026**. It is the fallback
-> operator station for the **Oct 24 integration test** and the **Oct 31 collect/score
-> run** while the Unity C3 station (#15) is built. No new Swift features. Tracks #25.
+As of October 17, 2026, new ARGOS UI development targets `apps/web` and `crates/argos-server`. The SwiftUI operator station remains available as a legacy fallback for capabilities and trials not yet validated in the browser. TerraPhone's iOS vehicle runtime is separate and remains supported.
 
-| | |
-| --- | --- |
-| Frozen at | `main` @ `53e62b8` ("visualize global routes and local planner candidates") |
-| Tag | `swift-fallback-2026-10-12` (to be created on `53e62b8` by Yojan) |
-| Has | level picker, takeover, held teleop, stop, proposals, routes / planner candidates |
-| Allowed changes | shared Rust fixes only (#27, #29) via `argos-core` / `argos-zenoh` / `argos-ffi` |
-| Retire | after the Unity C3 runs the November outdoor tests |
+The earlier proposed Unity C3 transition and fixed October retirement schedule are superseded. No fallback tag or completed hardware trial is implied by this document. Preserve historical evidence; record the actual code revision and interface used in each trial.
 
-```mermaid
-flowchart LR
-  F["Oct 12<br/>freeze @ 53e62b8"] --> I["Oct 24<br/>integration test"]
-  I --> C["Oct 31<br/>collect / score"]
-  C --> N["Nov outdoor tests<br/>on Unity C3"]
-  N --> R["Retire Swift app"]
-  U["Unity C3 (#15, #28)"] -.primary.-> I
-  F -.fallback.-> I
-```
+Build the fallback from the checked-out revision with `scripts/build-apple.sh`, then use `apps/apple/ARGOS.xcodeproj`. Shared Rust changes must remain compatible with the FFI and native build. Necessary compatibility and safety fixes are allowed; new dashboard feature work belongs in the browser.
 
-## Build the fallback (Apple Silicon Mac, Xcode)
-
-```sh
-git fetch --tags && git checkout swift-fallback-2026-10-12   # or 53e62b8
-./scripts/build-apple.sh                                       # Rust FFI -> ArgosCore.xcframework
-xcodebuild -project apps/apple/ARGOS.xcodeproj -scheme ARGOSMac \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath apps/apple/build \
-  build CODE_SIGNING_ALLOWED=NO
-open apps/apple/build/Build/Products/Debug/ARGOS*.app
-```
-
-Quick check: `cargo test --workspace --locked`, then the `ARGOSMacTests` command in
-the root `README.md` ("Native checks"). If a shared Rust fix lands, rebuild from
-`main` and re-run the same steps.
-
-## Rules
-
-- No feature PRs touching `apps/apple/**` until retirement. Bug fixes needed for
-  Oct 24/31 only, and say so in the PR.
-- Last Mac build check: **_not yet run_** — Yojan, fill in date + result here.
+See the [browser guide](../../docs/browser-dashboard.md) and [legacy mission controls](../../docs/autonomy/README.md).

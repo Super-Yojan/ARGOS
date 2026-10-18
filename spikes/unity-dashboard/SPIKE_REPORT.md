@@ -1,3 +1,5 @@
+> **Historical prototype:** As of October 17, 2026, ARGOS selects the React web dashboard and Rust service. This spike remains evidence of the Unity investigation, not the current product roadmap.
+
 # Unity dashboard spike report
 
 Feasibility only. A cloud agent tried to build a rough ARGOS 3D fleet view in Unity 6 LTS and run the headless loop on this VM. The first pass used mock telemetry. A later section records the Zenoh native-plugin follow-up. No edits to existing ARGOS Rust or Swift behavior. The new crate only consumes `argos-zenoh` and `argos-core`.

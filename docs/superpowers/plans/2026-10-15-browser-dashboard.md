@@ -1,5 +1,7 @@
 # Browser ARGOS implementation plan
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 The approved conversation plan is the specification. Goal: one hosted team, GitHub login, monitoring and local/geographic waypoint controls; development on all three desktop platforms without Apple tools.
 
 Architecture: React/TypeScript/Vite frontend, Rust/Axum service with a dedicated synchronous fleet worker, existing Zenoh transport, SQLite, GitHub OAuth, Caddy and private Tailscale connectivity.

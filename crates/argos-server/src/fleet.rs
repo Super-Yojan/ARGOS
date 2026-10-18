@@ -28,6 +28,30 @@ impl Default for DemoFleet {
     }
 }
 impl Fleet for DemoFleet {
+    fn emergency_stop(&mut self, id: &str) -> Result<(), String> {
+        let r = self
+            .rovers
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or("Unknown rover")?;
+        r.authority.as_mut().ok_or("Missing authority")?.safety = "stop".into();
+        Ok(())
+    }
+
+    fn drive(&mut self, id: &str, r: &DriveRequest, _: &str) -> Result<(), String> {
+        let rover = self
+            .rovers
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or("Unknown rover")?;
+        if let Some(p) = rover.pose.as_mut() {
+            p.yaw += r.angular * 0.2;
+            p.x += r.linear * p.yaw.cos() * 0.2;
+            p.y += r.linear * p.yaw.sin() * 0.2;
+        }
+        Ok(())
+    }
+
     fn snapshot(&mut self, now: f64) -> FleetSnapshot {
         self.now = now;
         for (id, level, token, at) in std::mem::take(&mut self.modes) {
@@ -38,7 +62,8 @@ impl Fleet for DemoFleet {
                     .find(|r| r.id == id)
                     .and_then(|r| r.authority.as_mut())
                 {
-                    if ["teleop", "waypoint_direct"].contains(&level.as_str()) {
+                    if a.safety != "stop" && ["teleop", "waypoint_direct"].contains(&level.as_str())
+                    {
                         a.safety = "clear".into();
                         a.reason = Some("idle".into());
                     }
@@ -261,6 +286,21 @@ fn reference(v: &Value) -> Option<Reference> {
     }
 }
 impl Fleet for LiveFleet {
+    fn emergency_stop(&mut self, id: &str) -> Result<(), String> {
+        self.client()?
+            .action(
+                id.parse().map_err(|_| "Invalid rover ID")?,
+                "safety",
+                serde_json::json!({"action":"stop"}),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    fn drive(&mut self, id: &str, r: &DriveRequest, session: &str) -> Result<(), String> {
+        self.client()?.operator_command(id.parse().map_err(|_|"Invalid rover ID")?,"teleop",&serde_json::json!({"linear":r.linear,"angular":r.angular,"run_id":r.run_id,"authority_revision":r.revision.parse::<u64>().map_err(|_|"Invalid revision")?,"operator_session_id":session,"sequence":r.sequence}).to_string()).map_err(|e|e.to_string())
+    }
+
     fn snapshot(&mut self, _: f64) -> FleetSnapshot {
         if self
             .client
@@ -465,6 +505,14 @@ impl Fleet for LiveFleet {
     }
 }
 impl Fleet for Box<dyn Fleet> {
+    fn emergency_stop(&mut self, id: &str) -> Result<(), String> {
+        self.as_mut().emergency_stop(id)
+    }
+
+    fn drive(&mut self, id: &str, r: &DriveRequest, session: &str) -> Result<(), String> {
+        self.as_mut().drive(id, r, session)
+    }
+
     fn snapshot(&mut self, now: f64) -> FleetSnapshot {
         self.as_mut().snapshot(now)
     }

@@ -1,66 +1,33 @@
-# Roadmap
+# Current status and roadmap
 
-!!! tip "TL;DR"
-    Sim MVP is done.
-    Hardware and the shared world are in progress.
-    The staff model and the on-device VLA are backlog.
-    The board is the source of truth.
+Updated October 17, 2026. This page describes repository implementation; builds and simulator tests do not establish physical-vehicle performance or completed research trials.
 
-```mermaid
-flowchart LR
-  p0["0 · Sim MVP\ndone"]
-  p1["1 · Hardware\nbring-up"]
-  p2["2 · Shared\nworld model"]
-  p3["3 · Operator\nintelligence"]
-  p4["4 · Onboard\nVLA"]
-  p0 --> p1 --> p2 --> p3 --> p4
-  classDef done fill:#e8f5e9,stroke:#2e7d32,color:#333
-  classDef now fill:#e3f2fd,stroke:#1565c0,color:#333
-  classDef later fill:#fff8e1,stroke:#f9a825,color:#333
-  class p0 done
-  class p1,p2 now
-  class p3,p4 later
-```
+## Primary direction
 
-*Live board: [ARGOS project](https://github.com/users/Super-Yojan/projects/6). Snapshot of 19 items on 2026-10-08.*
+ARGOS is moving to a web-based operator dashboard. React/TypeScript and the Rust service are the primary path. SwiftUI is retained as a legacy fallback. The Unity spike is preserved for reference, but the proposed Unity C3 migration is superseded.
 
-![Planned operator scene for phase 3.](design/operator-dashboard/wireframes/02-normal-fleet.png)
+| Area | Current state |
+| --- | --- |
+| Browser dashboard | Shared fleet scene, local/geographic maps, rover selection, unknown-frame handling |
+| Operator access | GitHub OAuth allowlists, viewer/operator roles, per-tab control claim, CSRF checks |
+| Vehicle commands | Reviewed waypoint send/cancel, explicit arm/disarm, supported autonomy selection, held manual driving and latched stop |
+| Navigation tuning | Dimensions, clearance, planner speed/turn/look-ahead with revision acknowledgement |
+| Mapping | Selected-rover occupancy with run/frame validation and freshness; content-heartbeat support in Rust client |
+| Hosting | Docker/Caddy and GCP service packaging; deployment health requires live verification |
+| Native fallback | Existing manual driving, stop, proposal and mission flows retained |
+| Unity | Historical prototype under `spikes/`; not the next dashboard platform |
+| Staff model / VLA | Research and experiments; not a deployed natural-language fleet planner |
 
-*Phase 3 draws this. The app you can run today is the list-and-map console.*
+## Next work and validation
 
-## Board
+- Validate the browser controls on physical hardware after the automated demo/transport checks. Safety reset remains in the native fallback; it has not yet moved to the browser.
+- Add browser target-search mission setup and proposal/review workflows where supported by Terra.
+- Validate real vehicle braking, control latency, phone lifecycle, and multi-client operator discipline. Do not substitute demo results for physical evidence.
+- Evaluate shared 3D world work independently: the local `codex/shared-3d-world` branch contains additional work not included in the current open-PR consolidation. Its existence does not make it part of published main.
+- Keep study protocols and evidence in Masters-Thesis aligned with the actual tested interface.
 
-| Status | Phase | Item |
-| --- | --- | --- |
-| Done | 0 | [Terra #1](https://github.com/Super-Yojan/Terra/issues/1) Motor adapter |
-| Done | 0 | [Terra #2](https://github.com/Super-Yojan/Terra/issues/2) iOS Zenoh `cmd_vel` |
-| Done | 0 | [Terra #5](https://github.com/Super-Yojan/Terra/issues/5) ARGOS fleet MVP |
-| Done | 1 | [Terra #3](https://github.com/Super-Yojan/Terra/issues/3) Phone mount checklist |
-| In progress | 1 | [Terra #10](https://github.com/Super-Yojan/Terra/issues/10) TerraPhone over Bluetooth |
-| Done | 1 | [Terra #17](https://github.com/Super-Yojan/Terra/issues/17) Autonomy arbiter |
-| Done | 1 | [Terra #25](https://github.com/Super-Yojan/Terra/issues/25) Simulator vs device |
-| Done | 1 | [ARGOS #3](https://github.com/Super-Yojan/ARGOS/issues/3) Operator dashboard MVP |
-| Done | 1 | [ARGOS #4](https://github.com/Super-Yojan/ARGOS/issues/4) Autonomy switch and takeover |
-| Done | 2 | [Terra #4](https://github.com/Super-Yojan/Terra/issues/4) Occupancy over Zenoh |
-| Done | 2 | [Terra #9](https://github.com/Super-Yojan/Terra/issues/9) Tiles and go-to-waypoint |
-| In review | 2 | [Terra #21](https://github.com/Super-Yojan/Terra/issues/21) NEXT × Zatara field |
-| Backlog | 2 | [Terra #22](https://github.com/Super-Yojan/Terra/issues/22) Robot import |
-| Backlog | 2 | [Terra #23](https://github.com/Super-Yojan/Terra/issues/23) Extract Zorvane |
-| Backlog | 3 | [Terra #11](https://github.com/Super-Yojan/Terra/issues/11) Attention signals |
-| Backlog | 3 | [ARGOS #2](https://github.com/Super-Yojan/ARGOS/issues/2) Urgency and natural language |
-| Backlog | 4 | [Terra #12](https://github.com/Super-Yojan/Terra/issues/12) On-device phone VLA |
-| Backlog | — | [ARGOS #8](https://github.com/Super-Yojan/ARGOS/issues/8) Dashboard design |
-| Backlog | — | [Terra #27](https://github.com/Super-Yojan/Terra/issues/27) Tap-to-configure |
+## Branch and documentation policy
 
-## Docs
+`main` is the integration baseline. Merge reviewed feature PRs after relevant checks, then branch new work from updated main. Retain branches with unique commits until their work is explicitly reconciled; do not delete active worktrees or uncommitted experiments to make the branch list shorter.
 
-[ARGOS #9](https://github.com/Super-Yojan/ARGOS/issues/9) is this documentation pass.
-
-- [Terra](https://super-yojan.dev/Terra/)
-- [TerraPhone](https://super-yojan.dev/Terra/terraphone/)
-- [Zorvane](https://super-yojan.dev/Zorvane/)
-- [super-yojan.dev](https://super-yojan.dev)
-
-Shipped behavior: [commands](vision.md) and [Zenoh](zenoh.md).
-
-Planned: the [VLA](vla.md) and [AWS tunnels](deployment.md).
+Older native/Unity plans, screenshots, and measurements remain historical records with status notices. The [browser guide](browser-dashboard.md), [architecture](DESIGN.md), and [getting-started guide](getting-started.md) describe the active interface. The [project board](https://github.com/users/Super-Yojan/projects/6) tracks follow-up work; old dated board snapshots are not current status.

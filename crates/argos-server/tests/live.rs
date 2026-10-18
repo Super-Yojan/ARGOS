@@ -27,6 +27,12 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
         .declare_subscriber("web-test/8/autonomy")
         .wait()
         .unwrap();
+    let teleop = peer.declare_subscriber("web-test/8/teleop").wait().unwrap();
+    let safety = peer.declare_subscriber("web-test/8/safety").wait().unwrap();
+    let hardware = peer
+        .declare_subscriber("web-test/8/hardware")
+        .wait()
+        .unwrap();
     let mut e = Engine::new(LiveFleet::new(endpoint, "web-test".into()));
     let start = Instant::now();
     let mut authority = serde_json::json!({"run_id":"test-run","revision":1,"requested_level":"teleop","effective_level":"teleop","active_source":"none","safety":"clear","reason":"test","supported_levels":["waypoint","teleop"],"token":"initial","result":"accepted"});
@@ -88,6 +94,37 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
         csrf: String::new(),
     };
     e.claim(&user, "tab", 0.).unwrap();
+    let mut drive = DriveRequest {
+        run_id: "test-run".into(),
+        revision: "1".into(),
+        sequence: 1,
+        observed_at: 0.,
+        linear: 0.3,
+        angular: 0.,
+    };
+    e.drive(&user, "tab", "8", drive.clone(), 0.).unwrap();
+    let packet = teleop
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    let moving: serde_json::Value = serde_json::from_slice(&packet.payload().to_bytes()).unwrap();
+    assert_eq!(moving["linear"], 0.3);
+    assert_eq!(moving["run_id"], "test-run");
+    assert_eq!(moving["authority_revision"], 1);
+    drive.sequence = 2;
+    drive.linear = 0.;
+    e.drive(&user, "tab", "8", drive, 0.01).unwrap();
+    let packet = teleop
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    let neutral: serde_json::Value = serde_json::from_slice(&packet.payload().to_bytes()).unwrap();
+    assert_eq!(neutral["linear"], 0.);
+    assert_eq!(
+        neutral["operator_session_id"],
+        moving["operator_session_id"]
+    );
+    assert!(neutral["sequence"].as_u64().unwrap() > moving["sequence"].as_u64().unwrap());
     let op = e
         .submit(
             &user,
@@ -186,4 +223,20 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
         e.fleet.occupancy("8", 0.).unwrap().is_none(),
         "Previous-run grid must not be drawn in the new run"
     );
+    e.emergency_stop(&user, "tab", "8", start.elapsed().as_secs_f64())
+        .unwrap();
+    let packet = safety
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    let stop: serde_json::Value = serde_json::from_slice(&packet.payload().to_bytes()).unwrap();
+    assert_eq!(stop["action"], "stop");
+    assert!(stop["token"].as_str().is_some_and(|s| !s.is_empty()));
+    let packet = hardware
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    let disarm: serde_json::Value = serde_json::from_slice(&packet.payload().to_bytes()).unwrap();
+    assert_eq!(disarm["action"], "disarm");
+    assert!(e.claim.is_none());
 }

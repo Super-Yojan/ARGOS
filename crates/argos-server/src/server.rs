@@ -140,6 +140,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/control", post(claim).delete(release))
         .route("/api/v1/rovers/{id}/waypoints", post(waypoint))
         .route("/api/v1/rovers/{id}/cancel", post(cancel))
+        .route("/api/v1/rovers/{id}/drive", post(drive))
+        .route("/api/v1/rovers/{id}/stop", post(emergency_stop))
         .route("/api/v1/rovers/{id}/hardware", post(hardware))
         .route("/api/v1/rovers/{id}/autonomy", post(autonomy))
         .route("/api/v1/rovers/{id}/occupancy", get(occupancy))
@@ -230,6 +232,21 @@ async fn occupancy(
         .await
         .map(Json)
         .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))
+}
+async fn drive(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(r): Json<DriveRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    dispatch(&s, &h, Action::Drive(id, r, std::time::Instant::now())).await
+}
+async fn emergency_stop(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    dispatch(&s, &h, Action::EmergencyStop(id)).await
 }
 async fn autonomy(
     State(s): State<AppState>,

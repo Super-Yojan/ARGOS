@@ -1,5 +1,7 @@
 # Hybrid fleet router
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 ARGOS Mac can host an app-owned router through Connection settings → Local on this Mac. Connect starts it before the fleet session. It listens on `tcp/127.0.0.1:7448`, with a choice of loopback only, Local network (`0.0.0.0`), or an explicitly entered Mac Tailscale IPv4 address. Local network shares on every interface and advertises the Mac router through Bonjour. Disconnect leaves the router running for other clients. Stopping it during a connection requires confirmation. Router logs and bind failures appear in settings.
 
 For an independently running router, use Remote host, even on the same Mac. ARGOS never adopts or stops that service. An occupied local port reports a bind failure; select Remote host with `tcp/127.0.0.1:7448` to reuse it.

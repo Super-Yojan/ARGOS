@@ -260,3 +260,14 @@ async fn occupancy_route_requires_authentication() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     state.worker.stop();
 }
+
+#[tokio::test]
+async fn drive_and_emergency_routes_require_authentication() {
+    let store = Store::open("sqlite::memory:").await.unwrap();
+    let state = server::AppState::new(config(), store).await.unwrap();
+    for route in ["drive", "stop"] {
+        let response=server::router(state.clone()).oneshot(Request::builder().method("POST").uri(format!("/api/v1/rovers/1/{route}")).header("content-type","application/json").body(Body::from(r#"{"run_id":"r","revision":"1","sequence":1,"observed_at":0,"linear":0.3,"angular":0}"#)).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    state.worker.stop();
+}

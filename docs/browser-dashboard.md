@@ -1,6 +1,6 @@
 # Browser dashboard
 
-ARGOS has a React/TypeScript dashboard backed by the existing Rust fleet client. The browser supports monitoring, explicit arm/disarm requests, and waypoint send/cancel. The native apps remain available for manual driving, search and other autonomy controls.
+ARGOS’s primary interface is a React/TypeScript dashboard backed by the existing Rust fleet client. The browser supports monitoring, explicit arm/disarm, waypoint send/cancel, held manual driving, and emergency stop. The native apps remain a legacy fallback for safety reset, target-search setup, proposal approval, and other mission workflows.
 
 ## Develop on Windows, Linux or macOS
 
@@ -46,7 +46,7 @@ The browser polls the selected rover's authenticated `/api/v1/rovers/{id}/occupa
 
 ## Autonomy levels
 
-Select a rover and take control to request a supported level. Choices match the Swift dashboard: L0 fully teleop, L1 assisted teleop, L2 waypoint without obstacle avoidance, L3 obstacle-aware waypoint, L4 target search, and unavailable L5 decision making. Unsupported choices are disabled based on Terra's `supported_levels` report. The selector requests authority only; manual driving and target-search mission setup remain in the native interfaces.
+Select a rover and take control to request a supported level. The browser exposes: L0 fully teleop, L1 assisted teleop, L2 waypoint without obstacle avoidance, L3 obstacle-aware waypoint, L4 target search, and unavailable L5 decision making. Unsupported choices are disabled based on Terra's `supported_levels` report. The selector requests authority only; the separate Manual driving panel enables held input. Target-search mission setup remains in the native interfaces.
 
 Mode changes require fresh pose and authority and are bound to the reviewed run/revision. They do not arm the hardware. Previous unpublished dashboard intent is retired; a matching vehicle acknowledgement confirms selection. L2 explicitly has no obstacle avoidance. L3 requires a fresh obstacle map, while L4 requires supported hardware and live person detection. A mode may be acknowledged while its safety readiness remains on hold; the panel shows Terra's reported reason, such as `map_stale`, separately from pose freshness.
 
@@ -55,6 +55,20 @@ Mode changes require fresh pose and authority and are bound to the reviewed run/
 Select its marker on the fleet field, choose **Take control**, then **Arm vehicle → Confirm arm rover …** in Vehicle power. Arming requires live pose, ready disarmed hardware and clear safety authority, each less than 0.5 seconds old. The server binds the request to the reviewed run and authority revision; Terra still validates it and arms the hardware locally. The dashboard reports success only after matching hardware-token telemetry confirms the armed state.
 
 **Disarm vehicle** requires operator control but can be sent with stale telemetry. It retires pending dashboard intent. Hardware requests are audited and never automatically retried; missing confirmation after ten seconds is shown as uncertain. No arming occurs when connecting, selecting a rover or taking control.
+
+## Manual driving and emergency stop
+
+Select a rover, choose **Take control**, then **Take over manual driving**. If necessary, the dashboard requests Teleop and waits for the matching vehicle acknowledgement. Hardware must already be explicitly armed. Hold WASD, arrow keys, or a touch direction to move; release to stop. The browser requests 0.3 m/s forward/reverse and 0.6 rad/s turning, within the server's 0.5 m/s and 1 rad/s bounds. Keep the vehicle in view.
+
+Moving input requires a healthy link, online membership, pose/hardware/authority younger than 0.5 seconds, matching run/revision, and armed ready manual authority. Input is ordered per browser owner; the service assigns monotonic wire sequences in its own session. Requests queued for 250 ms are rejected. Held input expires after 450 ms without a valid pulse, checked by the fleet worker's 200 ms loop. These are software gates, not a real-time braking guarantee.
+
+Release, window blur, page hiding, rover changes, claim loss, and stale authority clear driving intent. Reconnecting never resumes held input. Network loss can prevent a neutral packet arriving, so Terra's onboard deadman and hardware watchdog remain required. A failed or delayed request disables browser driving until explicit takeover again.
+
+**Emergency stop** attempts the vehicle's latched safety stop, goal cancellation, and hardware disarm, then releases the tab's claim. It remains available to the controlling operator with stale telemetry. The result distinguishes publication from acknowledgement; inspect reported vehicle state and physical motion. Stop audit records capture the operator and publication outcome. Audit-storage failure is reported after the stop paths are attempted and does not prevent stopping.
+
+Safety reset remains a separate action in the legacy native operator app. Inspect the vehicle, reset safety there, then explicitly rearm and take over again. The browser never clears a stop latch by selecting a mode. The demo's stop latch lasts until the demo service restarts.
+
+Rust tests cover gate/lease/order behavior and real local Zenoh drive/neutral/stop/disarm messages. Browser integration covers held keys, release, and demo emergency disarm. Physical latency, braking distance, and phone lifecycle still require vehicle trials.
 
 ## Verify a change
 
@@ -100,8 +114,8 @@ GitHub tokens are used server-side during sign-in and are not persisted. Session
 - Drafts and requests are bound to the observed rover run and localization frame, including local-only frames. Before publishing, the service checks membership, pose, armed/ready hardware, authority, coordinate bounds and supported mode. It waits for the matching mode token, then rechecks readiness. L2 `waypoint_direct` is preserved if already selected; otherwise it requests L3 `waypoint`.
 - Published means published, not accepted. The rover's matching goal token confirms acceptance. Cancel requires a newly received idle report after the cancellation request. No command is retried automatically.
 - Request UUIDs and operation transitions are persisted before publication. A repeated request ID returns its original operation; changed payloads conflict. After restart, unfinished operations become interrupted/uncertain and are never resumed.
-- Disconnect clears browser drafts and unpublished service work. A goal already published to Terra continues. Hardware arming is performed through the existing native workflow.
-- Browser claims cannot fence native clients. Do not issue native commands concurrently with a browser operator. This release does not add emergency stop; retain the existing independent stop and hardware-safety workflow.
+- Disconnect clears browser drafts and unpublished service work. A goal already published to Terra continues. Hardware arming is explicit in the browser Vehicle power panel.
+- Browser claims cannot fence native clients. Do not issue native commands concurrently with a browser operator. Browser emergency stop publishes the vehicle safety latch, cancels the goal, and requests disarm. Retain independent vehicle stop/watchdog protections; a network publication is not proof of physical braking.
 
 ## Persistence, backup and rollback
 

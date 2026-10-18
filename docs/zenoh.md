@@ -1,8 +1,8 @@
 # Zenoh interfaces
 
 !!! tip "TL;DR"
-    ARGOS is a TCP client. Multicast is off.
-    Default prefix: `terra/rover`. Default endpoint: `tcp/127.0.0.1:7447`.
+    The ARGOS service is a Zenoh TCP/TLS client. Multicast is off.
+    Default prefix: `terra/rover`. The web service defaults to `tcp/127.0.0.1:7448`; legacy clients and standalone simulators may use 7447.
     Goals go out once. Status with the same token means accepted.
     Teleop is `<id>/teleop`. ARGOS does not publish `cmd_vel`.
 
@@ -26,7 +26,7 @@ flowchart LR
   out --> bus --> inn
 ```
 
-*One session. Mode `client`. Connect timeout 3 seconds. Endpoint must be `tcp/…`.*
+*One session. Mode `client`. Connect timeout 3 seconds. Endpoints support `tcp/…` and `tls/…`; paired credentials are supported.*
 
 ## Round trip for a waypoint
 
@@ -42,7 +42,7 @@ sequenceDiagram
   T-->>A: idle
 ```
 
-*Five seconds with no token: unconfirmed. ARGOS does not retry. Disconnect does not cancel.*
+*After 150 seconds with no matching token: unconfirmed. ARGOS does not retry. Disconnect does not cancel.*
 
 ## Subscriptions
 
@@ -53,9 +53,9 @@ sequenceDiagram
 | `<prefix>/*/camera/depth` | `body` pose from the header. Pixels are dropped |
 | `<prefix>/*/pose` | JSON pose when the phone runtime publishes it |
 | `<prefix>/*/map/occupancy` | Grid, schema 1, cells −1…100 |
-| `<prefix>/*/**` | Only `autonomy/status`, `goal/proposal`, `mission/status`, `experiment/status` |
+| `<prefix>/*/**` | Authority/hardware, proposals, mission/experiment, search reports, point clouds and matching content heartbeats |
 
-Pose, goal, and membership each go stale at 2.5 seconds.
+Fleet supervision and waypoint submission use a 90-second receipt-age horizon. Manual and hardware controls use stricter limits (0.5 seconds); occupancy display fades after 2.5 seconds. A content heartbeat refreshes only its matching cached visualization and never renews control authority.
 
 `goal/status` `x` and `y` are the target. Position comes from pose.
 
@@ -64,11 +64,13 @@ Pose, goal, and membership each go stale at 2.5 seconds.
 | Key | Body |
 | --- | --- |
 | `<prefix>/<id>/goal` | One local or WGS84 goal, plus `token`. Or `{"cancel":true}` |
-| `<prefix>/<id>/autonomy` | `level` + `token`. Four levels |
+| `<prefix>/<id>/autonomy` | `level` + `token`; supported levels are advertised by the vehicle |
+| `<prefix>/<id>/hardware` | Explicit arm/disarm, token, run and authority revision |
+| `<prefix>/<id>/navigation/settings` | Validated geometry/planner parameters and revisions |
 | `<prefix>/<id>/safety` | `stop` or `reset`, plus `token` |
 | `<prefix>/<id>/goal/decision` | `approve`, `reject`, or `resume` |
 | `<prefix>/<id>/mission/report` | `survivor_id` + `token` |
-| `<prefix>/<id>/teleop` | `linear` and `angular` in {−1, 0, 1}, about every 50 ms |
+| `<prefix>/<id>/teleop` | Bounded `linear`/`angular` intent with session/sequence fencing; cadence and limits depend on the client |
 
 Fleet stop and fleet takeover send one message per rover. Each rover keeps its own token.
 
@@ -82,7 +84,7 @@ Zorvane still has these. This client leaves them alone.
 | `<prefix>/<id>/camera/rgb` | Frame viewers. ARGOS never decodes RGB |
 | `<prefix>/fleet/size` | Live resize. ARGOS only reads `fleet/state` |
 
-Depth frames still arrive whole, so the bandwidth is on the link. The third-person cloud in the [dashboard design](design/operator-dashboard/README.md) needs a cloud from Terra. This client discards the pixels.
+Depth frames still arrive whole, so the bandwidth is on the link. Point-cloud telemetry is a separate topic; depth pixels are discarded by this client. Native/Unity visualizations and the browser occupancy overlay are distinct consumers.
 
 ## Session log
 

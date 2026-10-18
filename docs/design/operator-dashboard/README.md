@@ -1,5 +1,7 @@
 # ARGOS operator dashboard
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 !!! tip "TL;DR"
     One place. Robots are objects. No roster.
     Orders come in three grains. The staff fills in only what you left open.
@@ -11,7 +13,7 @@
 
 Draft for Yojan to react to. Design only: it does not change the app. Related to [ARGOS #8](https://github.com/Super-Yojan/ARGOS/issues/8).
 
-iPad landscape, grayscale wireframes: [`wireframes/`](wireframes/).
+iPad landscape, grayscale wireframes: [`wireframes/`](wireframes/index.md).
 
 ## Design principle
 

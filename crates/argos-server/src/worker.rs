@@ -14,6 +14,8 @@ use std::{
 use tokio::sync::{oneshot, watch};
 
 pub enum Action {
+    Drive(String, DriveRequest, Instant),
+    EmergencyStop(String),
     Claim,
     Release,
     Submit(String, WaypointRequest),
@@ -59,6 +61,20 @@ impl Worker {
                         let Ok(r) = receiver.try_recv() else { break };
                         let now = start.elapsed().as_secs_f64();
                         let result = match r.action {
+                            Action::Drive(id, request, received) => {
+                                if received.elapsed() >= Duration::from_millis(250)
+                                    || r.reply.is_closed()
+                                {
+                                    Err("Drive input expired in queue".into())
+                                } else {
+                                    engine
+                                        .drive(&r.user, &r.owner, &id, request, now)
+                                        .map(|_| serde_json::json!({"published":true}))
+                                }
+                            }
+                            Action::EmergencyStop(id) => engine
+                                .emergency_stop(&r.user, &r.owner, &id, now)
+                                .map(|_| serde_json::json!({"published":true})),
                             Action::Claim => engine
                                 .claim(&r.user, &r.owner, now)
                                 .and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string())),

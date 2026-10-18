@@ -106,3 +106,17 @@ test('quick buttons apply vehicle geometry and avoidance settings only to a disa
  await page.screenshot({path:testInfo.outputPath('navigation-settings.png'),fullPage:true});
  await page.getByRole('button',{name:'Release control'}).click();
 });
+
+test('manual takeover drives only while held and emergency stop disarms',async({page})=>{
+ await page.getByRole('button',{name:'Rover 1',exact:true}).click();
+ await page.getByRole('button',{name:'Take control',exact:true}).click();
+ await page.getByRole('button',{name:'Take over manual driving',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Forward',exact:true})).toBeEnabled();
+ const moving=page.waitForResponse(r=>r.url().endsWith('/rovers/1/drive')&&r.request().postDataJSON()?.linear===0.3&&r.ok());
+ await page.keyboard.down('w'); await moving;
+ const neutral=page.waitForResponse(r=>r.url().endsWith('/rovers/1/drive')&&r.request().postDataJSON()?.linear===0&&r.request().postDataJSON()?.angular===0&&r.ok());
+ await page.keyboard.up('w'); await neutral;
+ await page.getByRole('button',{name:'Emergency stop',exact:true}).click();
+ await expect.poll(async()=>{const s=await(await page.request.get('/api/v1/fleet')).json();const r=s.rovers.find((r:{id:string})=>r.id==='1');return {armed:r.hardware.armed,safety:r.authority.safety,claim:s.claim}}).toEqual({armed:false,safety:'stop',claim:null});
+ await expect(page.getByRole('button',{name:'Forward',exact:true})).toBeDisabled();
+});

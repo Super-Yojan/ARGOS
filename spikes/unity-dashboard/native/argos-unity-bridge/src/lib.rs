@@ -355,6 +355,7 @@ mod tests {
             pose_age: Some(age),
             goal: None,
             goal_age: None,
+            goal_received_at: None,
             command_phase: "none".into(),
             command_token: None,
         }

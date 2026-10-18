@@ -139,3 +139,5 @@
 .tuningRow>div { display:grid; grid-template-columns:40px minmax(60px,1fr) 40px; gap:6px; }
 .tuningRow button { padding:8px; min-height:40px; }
 .tuningRow input { min-width:0; text-align:center; }
+
+.emergencyStop { width: 100%; margin-top: 1rem; min-height: 3rem; border: 2px solid currentColor; font-weight: 800; text-transform: uppercase; }

@@ -1,5 +1,7 @@
 # Apple dashboard execution ledger
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 !!! tip "TL;DR"
     Apple Silicon only.
     Simulator waypoint and cancel passed.

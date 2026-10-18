@@ -56,7 +56,7 @@ nav:
   - Hub: index.md
   - Vision and command model: vision.md
   - Two-stage VLA: vla.md
-  - Operator dashboard:
+  - Historical dashboard designs:
       - 3D spatial dashboard: design/3d-dashboard.md
       - 3D framework decision: design/3d-framework-decision.md
       - 2D design draft: design/operator-dashboard/README.md
@@ -67,8 +67,8 @@ nav:
   - Deployment: deployment.md
   - Roadmap: roadmap.md
   - Reference:
-      - Fleet supervision boundary: DESIGN.md
-      - Mission operator controls: autonomy/README.md
+      - Architecture and control boundary: DESIGN.md
+      - Legacy mission operator controls: autonomy/README.md
       - Native dashboard evidence: evidence/README.md
       - Apple execution ledger: implementation/apple-progress.md
       - Plans:

@@ -364,3 +364,13 @@ pub fn navigation_ready(r: &Rover) -> bool {
             .is_some_and(|n| n.schema_version == 1 && n.parameters.valid() && recent(n.age))
         && r.goal.as_ref().is_none_or(|g| g.state != "active")
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DriveRequest {
+    pub run_id: String,
+    pub revision: String,
+    pub sequence: u64,
+    pub observed_at: f64,
+    pub linear: f64,
+    pub angular: f64,
+}

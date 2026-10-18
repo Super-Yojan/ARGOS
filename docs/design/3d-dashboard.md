@@ -1,5 +1,7 @@
 # ARGOS 3D spatial dashboard
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 !!! tip "TL;DR"
     The environment is the interface. One operator, many vehicles, one 3D place.
     Level 1 (overview) and level 2 (selection) have no panels. A detail panel is allowed only at level 3 (inspection).
