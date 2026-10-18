@@ -1,0 +1,7 @@
+:root{
+--space-hair:4px;--space-tight:8px;--space-snug:16px;--space-base:24px;--space-wide:32px;--space-loose:64px;
+--space-section:clamp(96px,12vw,200px);
+--shell-max:1600px;--shell-max-prose:860px;--shell-pad:clamp(24px,5vw,64px);
+--grid-gap:64px;
+--marquee-card:clamp(240px,28vw,380px);
+}

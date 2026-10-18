@@ -1,15 +1,42 @@
 # ARGOS
 
-ARGOS (Adaptive Robotic Group Operator System) is a native fleet operator app
-for Terra, built with Rust and Swift. Terra owns sensing, onboard autonomy, and
-low-level control; ARGOS owns fleet supervision and high-level goals.
+ARGOS (Adaptive Robotic Group Operator System) is the **web-based fleet operator dashboard** for Terra vehicles and the Zorvane simulator. React/TypeScript supplies the interface; a Rust Axum service owns authenticated operator sessions, command validation, audit history, and the Zenoh fleet connection. Terra owns sensing, onboard autonomy, motor control, and watchdogs.
 
-Documentation: [https://super-yojan.dev/ARGOS/](https://super-yojan.dev/ARGOS/).
-That site is the hub for ARGOS, [Terra](https://super-yojan.dev/Terra/),
-[TerraPhone](https://super-yojan.dev/Terra/terraphone/), and
-[Zorvane](https://super-yojan.dev/Zorvane/).
+As of October 17, 2026, new dashboard work targets `apps/web`. The SwiftUI apps are retained as a legacy fallback; the Unity experiment remains under `spikes/` as historical prototype work. Neither is the target for new dashboard features. TerraPhone's native vehicle runtime is a separate application and remains in use.
 
-## Native iOS and macOS dashboard
+## Start the web dashboard
+
+Install stable Rust and Node.js 22.12 or newer. Windows, Linux, and macOS development is supported.
+
+```sh
+npm ci --prefix apps/web
+npm run dev
+```
+
+Open `http://127.0.0.1:5173` and choose **Open local demo**. The built-in simulated fleet needs no rover, account, or Xcode. Select a rover on the map and take control to use the operator panel. Real fleets use the authenticated service deployment, not development identity.
+
+The browser provides a shared fleet field, local and geographic maps, occupancy overlays, reviewed waypoint send/cancel, explicit hardware arm/disarm, held keyboard/touch manual driving, latched emergency stop, autonomy selection, and vehicle geometry/avoidance configuration. Geographic rendering requires valid rover alignment and an optional HTTPS tile style. Unknown positions remain visibly unknown.
+
+- [Browser operation and hosting](docs/browser-dashboard.md)
+- [Getting started](docs/getting-started.md)
+- [Architecture and control boundary](docs/DESIGN.md)
+- [Current status and remaining work](docs/roadmap.md)
+- [Published documentation](https://super-yojan.dev/ARGOS/)
+
+## Verify changes
+
+```sh
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+npm test --prefix apps/web
+npm run build --prefix apps/web
+npm run test:e2e --prefix apps/web
+```
+
+Install Playwright Chromium before the first browser test run. Live transport tests need permission to bind loopback sockets. Apple and Unity UI validation require their own platform tools; Rust tests do not certify those interfaces or physical driving.
+
+## Legacy Apple fallback
 
 The Apple dashboard uses a shared Rust Zenoh client through UniFFI and native
 SwiftUI/MapKit views. ARGOS supplies four autonomy levels, supervised proposal approval, per-rover/fleet
@@ -64,7 +91,7 @@ localhost. Start Zorvane with `TERRA_ZENOH_LISTEN=tcp/0.0.0.0:7447` and enter
 Terra; the bus does not advertise the anchor or whether tile loading succeeded.
 
 **Send means published, not accepted.** A matching Terra status confirms the
-UUID token. After five seconds without confirmation the app shows unconfirmed;
+UUID token. After 150 seconds without confirmation the app shows unconfirmed;
 it does not resend. Cancel sends one cancellation and waits for idle. This
 releases the latched goal for debug teleop; it does not send a teleop command.
 Closing, disconnecting, or backgrounding the app does not cancel Terra's goal.
@@ -73,9 +100,9 @@ Observation resumes with fresh receive ages; commands are never replayed by ARGO
 Pose comes from exposure-aligned `body` metadata in depth packets. The app
 receives depth packets but discards their pixels, so depth-network bandwidth is
 still present. Pose, goal status, and fleet membership have independent ages;
-2.5 seconds is stale. Missing pose stays unknown. Terra goal-status x/y denote
+Fleet supervision uses a 90-second horizon; manual control and hardware actions use stricter freshness checks. Missing pose stays unknown. Terra goal-status x/y denote
 the destination. MapKit basemap imagery needs network access; local controls do
-not. Terra's waypoint follower does not plan around obstacles.
+not. L2 direct waypoint does not avoid obstacles; L3 uses the onboard obstacle-aware planner.
 
 ### Native checks
 
@@ -98,7 +125,7 @@ instead of the unit-test target. Their retained screenshot attachments provide
 native UI evidence. Do not run both live command tests concurrently.
 
 Codespaces can run Rust tests and Terra, but native Apple UI builds/runs require
-Xcode on macOS. There is no browser dashboard in this native slice.
+Xcode on macOS. The browser dashboard has its own cross-platform development workflow above.
 
 ### Hardware arming from ARGOS
 
@@ -110,6 +137,7 @@ Arm requests are bound to the current rover run and authority revision and expir
 
 The native Mac/iPad dashboard uses a dark spatial scene, on-demand robot inspection and camera orbit. Mac Connection settings can start a local Zenoh router with loopback, LAN (`0.0.0.0:7448`) or Tailscale sharing. iPad connects to a remote host or discovers Mac LAN routers. See [hybrid router setup](docs/deployment-router.md) and [shared scene contract](docs/design/spatial-scene-contract.md).
 
+Public GCP deployment and Terra connection setup: [hosting guide](packaging/gcp/README.md).
 ### Change-driven visualization telemetry
 
 Updated Terra and Zorvane publishers send full occupancy/cloud payloads when their

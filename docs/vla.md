@@ -48,13 +48,15 @@ The smaller model runs on the phone on the robot.
 
 [Terra #12](https://github.com/Super-Yojan/Terra/issues/12). On-device. Backlog on the [roadmap](roadmap.md).
 
+Terra also contains offline decision-model evaluation work; that does not establish a deployed on-device VLA or a browser staff model.
+
 Build notes for that phone: [TerraPhone](https://super-yojan.dev/Terra/terraphone/).
 
 ## The gate that exists today
 
 Terra can propose a search frontier.
 
-ARGOS shows it. Approve and reject publish `goal/decision`.
+The legacy native ARGOS interface shows it. Browser mission proposal UI is still a migration item. Approve and reject publish `goal/decision`.
 
 The proposal carries `proposal_id`, `run_id`, `x`, `y`, and `expires_at`.
 

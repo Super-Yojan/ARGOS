@@ -1,0 +1,10 @@
+argos.34.135.204.210.sslip.io {
+    @compressible not path /api/v1/events
+    encode @compressible zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+    }
+    reverse_proxy 127.0.0.1:8080
+}

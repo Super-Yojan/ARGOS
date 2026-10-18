@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/argos-core", "crates/argos-zenoh", "crates/argos-ffi"]
+members = ["crates/argos-core", "crates/argos-zenoh", "crates/argos-ffi", "crates/argos-server", "spikes/unity-dashboard/native/argos-unity-bridge"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -9,6 +9,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 uniffi = "=0.31.1"
-zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp"] }
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_tls", "auth_usrpwd"] }
 [profile.dev]
 debug = 0

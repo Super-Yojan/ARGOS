@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh ARGOS router TLS certificate from Caddy
+After=caddy.service
+[Service]
+Type=oneshot
+ExecStart=/opt/argos/bin/refresh-router-tls.sh

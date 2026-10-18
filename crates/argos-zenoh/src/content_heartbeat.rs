@@ -55,7 +55,11 @@ pub(super) fn accepts_cloud(previous: &Value, next: &Value) -> bool {
     new > old
 }
 
-pub(super) fn refresh_grid(cached: &mut (OccupancyGrid, f64), heartbeat: &Identity, now: f64) {
+pub(super) fn refresh_grid(
+    cached: &mut (OccupancyGrid, f64, Option<String>),
+    heartbeat: &Identity,
+    now: f64,
+) {
     if cached.0.run_id == heartbeat.frame && cached.0.sequence == heartbeat.sequence {
         cached.1 = now;
     }
@@ -139,7 +143,7 @@ mod tests {
             origin_y: 0.,
             occupancy: vec![-1],
         };
-        let mut cached = (grid, 1.);
+        let mut cached = (grid, 1., Some("local-frame".into()));
         let wrong = Identity {
             frame: "other".into(),
             sequence: 3,
@@ -158,6 +162,7 @@ mod tests {
         };
         refresh_grid(&mut cached, &matching, 9.);
         assert_eq!(cached.1, 9.);
+        assert_eq!(cached.2.as_deref(), Some("local-frame"));
         assert_eq!(cached.0.occupancy, vec![-1]);
         assert_eq!(cached.0.sequence, 3);
 

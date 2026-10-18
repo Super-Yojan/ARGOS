@@ -1,5 +1,7 @@
 # Native dashboard verification
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 !!! tip "TL;DR"
     Simulator only. 2026-10-06. GMU anchor.
     Mac shows a live pose and an accepted goal.

@@ -11,3 +11,14 @@ xcuserdata/
 /spikes/unity-dashboard/Library/
 /spikes/unity-dashboard/Logs/
 /spikes/unity-dashboard/UserSettings/
+
+# Browser dashboard and service runtime.
+/apps/web/node_modules/
+/apps/web/dist/
+/apps/web/test-results/
+/apps/web/playwright-report/
+/apps/web/*.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.env

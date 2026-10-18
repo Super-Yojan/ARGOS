@@ -11,6 +11,8 @@ pub struct RoverSnapshot {
     pub pose_age: Option<f64>,
     pub goal: Option<GoalStatus>,
     pub goal_age: Option<f64>,
+    /// Monotonic receipt time, stable until a new status packet is observed.
+    pub goal_received_at: Option<f64>,
     pub command_phase: String,
     pub command_token: Option<String>,
 }
@@ -227,6 +229,7 @@ impl FleetCache {
                     pose_age: entry.pose.as_ref().map(|(_, at)| (now - at).max(0.)),
                     goal: entry.goal.as_ref().map(|(g, _)| g.clone()),
                     goal_age: entry.goal.as_ref().map(|(_, at)| (now - at).max(0.)),
+                    goal_received_at: entry.goal.as_ref().map(|(_, at)| *at),
                     command_phase,
                     command_token: entry
                         .command

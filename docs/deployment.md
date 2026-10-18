@@ -1,79 +1,34 @@
 # Deployment
 
-!!! tip "TL;DR"
-    ARGOS connects to one fleet `tcp/` address. The Mac app can also own a router on port 7448; see [Hybrid fleet router](deployment-router.md).
-    **LAN** is what works today.
-    **AWS** is a future tunnel in front of that same address.
-    There is no login on the bus.
-
-## On one network
+The primary deployment is **browser → HTTPS ARGOS service → Zenoh fleet router → Terra/Zorvane**. The Rust service serves the built web interface and API, authenticates invited GitHub accounts, and keeps command/audit state in SQLite.
 
 ```mermaid
 flowchart LR
-  mac["ARGOS on your Mac"]
-  phone["ARGOS on iPhone"]
-  sim["Zorvane or Terra\nport 7447"]
-  mac -->|"tcp/127.0.0.1:7447"| sim
-  phone -->|"tcp/LAN-IP:7447"| sim
+  browser[Browser] -->|HTTPS 443| caddy[Caddy]
+  caddy --> server[ARGOS Axum service]
+  server --> db[(SQLite)]
+  server -->|private TCP or authenticated TLS| router[Zenoh router]
+  router --> terra[TerraPhone / Zorvane]
 ```
 
-*The phone’s localhost is the phone. Use the computer’s LAN address.*
+## Supported packaging
 
-1. Start the world on an address you can route to.
-   One machine: the default `tcp/127.0.0.1:7447`.
-   Another device: `TERRA_ZENOH_LISTEN=tcp/0.0.0.0:7447`.
-2. Connection endpoint `tcp/<host>:7447`. Prefix `terra/rover`, unless `TERRA_ZENOH_PREFIX` changed.
-3. Anchor matches the world. GMU patch: `38.8297`, `-77.3075`.
+- [Docker Compose hosting](browser-dashboard.md#public-hosting-for-one-team): Linux host, Caddy HTTPS, SQLite volume, and private fleet connectivity through Tailscale.
+- [GCP system-service packaging](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md): installer, TLS router configuration, and service units. These are deployment instructions, not proof of a currently healthy hosted service.
+- [Legacy Mac-hosted router](deployment-router.md): retained native fallback and LAN/Tailscale operation.
 
-![Mac dashboard already connected to tcp/127.0.0.1:7447.](assets/macos-dashboard.jpg)
+Do not enable demo development identity for a real fleet. Hosted configuration requires an HTTPS origin, GitHub OAuth credentials, and numeric viewer/operator account allowlists. Only operators can claim command control; mutations check origin and CSRF tokens.
 
-*A connected session. The link pill is the deployment check.*
+## Fleet connection
 
-iOS asks for local network. Deny it and the session fails. Allow it and connect again.
+Set `ARGOS_ZENOH_ENDPOINT` and `ARGOS_ZENOH_PREFIX` to the actual fleet/router. Defaults are `tcp/127.0.0.1:7448` and `terra/rover`. The Rust client supports `tcp/` and `tls/`; `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` supply paired bus credentials when configured. An unprotected TCP listener is not an authenticated deployment: keep it private. TLS certificate and router credential provisioning are described in the GCP packaging guide.
 
-A signed phone on a real LAN is still a separate check from the simulator. The [ledger](implementation/apple-progress.md) records that phone run as unverified.
+The browser never receives bus credentials. A remote phone uses a reachable router address, not the server's loopback address. Geographic projection requires valid frame/reference telemetry; a map tile configuration alone does not establish localization.
 
-TerraPhone’s own listener is loopback-only. ARGOS is the client in the picture above.
+## Operation and recovery
 
-## What the session is
+Run one service instance. Browser control claims are in memory and are not a distributed lock. Native clients remain outside those claims, so coordinate operators across interfaces. Closing the browser does not cancel a waypoint already latched by Terra. Unpublished intent is discarded, and interrupted operations are not replayed after restart.
 
-From `Client::connect`:
+`/healthz` checks the HTTP process; `/readyz` checks fleet-link health. Neither certifies armed hardware or safe motion. Follow the [browser guide](browser-dashboard.md) for audit history, SQLite backup/restore, and rollback. Hardware/runtime validation remains a separate step from a successful service build.
 
-- Zenoh mode `client`
-- One endpoint
-- Multicast scouting off
-- 3000 ms connect timeout
-- `tcp/` required
-
-No credentials. Anyone who can open the port can publish goals. Authentication is still outside this slice.
-
-## Off the LAN, via AWS
-
-!!! warning "Planned"
-    This repo has no AWS client and no tunnel program.
-    The sketch is the shape that fits the client we have.
-
-```mermaid
-flowchart LR
-  app["ARGOS\ntcp client"]
-  tunnel["TCP tunnel"]
-  aws["AWS landing\nprivate"]
-  peer["Listener :7447\nstays private"]
-  app --> tunnel --> aws --> peer
-```
-
-*The app still holds one `tcp/host:port` string. It never learns that a tunnel is there.*
-
-The listener stays private.
-
-The tunnel is the only door.
-
-A public port 7447 would accept any client, because the session has no login.
-
-A dropped tunnel looks like a disconnect. Observation resumes when TCP returns. A goal already latched on the vehicle stays latched.
-
-Cancel has no token. A second client on the same prefix can replace a goal.
-
-When this is built, it should be a private forward plus the same prefix and the same anchor as the LAN path.
-
-For L2/L4, install matching updated Terra phone and ARGOS apps. L2 has no obstacle avoidance. L4 people search requires a LiDAR-equipped phone, current tracking and measured scene depth. It searches the confirmed bounds and reports a detected person without pursuing them. The actuator peripheral binary is unchanged.
+An AWS tunnel was an earlier proposal, not the current deployment requirement. The browser architecture does not require a particular cloud provider.

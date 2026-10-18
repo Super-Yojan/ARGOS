@@ -1,5 +1,7 @@
 # Spatial dashboard and hybrid router implementation
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 Implemented on the existing native Apple dashboard branch. The approved Mac/iPad-first plan retains SceneKit, existing Terra contracts and command safety paths. User amendment: an explicit all-interface LAN bind and Bonjour discovery coexist with loopback and Tailscale modes; no paid hosting is provisioned.
 
 Verified: 35 Rust tests (including managed-router telemetry, correlated goal acknowledgment, and no replay after reconnect); 27 native Mac tests (including camera orbit round trip, selection/frame draft invalidation, delayed refresh rejection, stale/unknown positioning and existing command authority tests); Mac and arm64 iPhone/iPad builds. Generated Info.plist contains the Bonjour service declaration. Local router ownership and port collision paths are covered by executable tests. The standalone macOS router's CLI was exercised. The disconnected native scene was inspected and captured through computer use.

@@ -1,5 +1,7 @@
 # Shared spatial dashboard contract
 
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+
 The Mac/iPad renderer consumes reported fleet state. The platform-neutral `FleetSceneState` owns selection, inspection and unconfirmed waypoint coordinates; selection changes and coordinate-frame changes discard drafts. `FleetSceneVehicle` carries id, membership, nullable position/heading, staleness, attention reason and nullable goal. FleetModel exports the current scene as versioned JSON through `sceneDocument()` for fixture/debug consumers.
 
 Coordinates are metres in the document's `frame`; x/y follow the existing ARGOS local or north/west projection. Heading is radians. Position null means unknown, never (0,0). A goal is a reported destination, not an inferred path. Dashed target lines must not be described as planned trajectories. Occupancy and point clouds retain their existing separately versioned telemetry contracts; missing or expired data is absent.

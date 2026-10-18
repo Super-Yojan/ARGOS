@@ -1,0 +1,17 @@
+[Unit]
+Description=ARGOS authenticated fleet router
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=argos
+Group=argos
+ExecStart=/opt/argos/bin/argos-router --config /etc/argos/router.json5
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/argos /var/lib/argos/tls
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
