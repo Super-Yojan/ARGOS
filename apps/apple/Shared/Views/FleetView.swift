@@ -16,6 +16,8 @@ struct FleetView: View {
   @State private var dragCamera: FieldCamera?
   @State private var zoomExtent: Double?
   @State private var sceneState = FleetSceneState()
+  @State private var occupancyRaster = OccupancyRasterCache()
+  @State private var mapPosition: MapCameraPosition = .automatic
   private var focused: UInt64? { get { sceneState.selectedID } nonmutating set { sceneState.select(newValue) } }
   private var draft: (Double, Double)? {
     get { sceneState.draft.map { ($0.x, $0.y) } }
@@ -50,11 +52,11 @@ struct FleetView: View {
               return (rover.id, CGPoint(x: geometry.size.width / 2, y: geometry.size.height))
             }, size: geometry.size)
           if let origin = model.geographicOrigin, !camera.dimensional {
-            Map(initialPosition: .region(mapRegion(origin: origin, size: geometry.size)))
+            Map(position: $mapPosition, interactionModes: [])
               .mapStyle(.standard(elevation: .flat)).allowsHitTesting(false)
-              .id(
-                "\(camera.x):\(camera.y):\(camera.extent):\(geometry.size.width):\(geometry.size.height):\(model.frameKey)"
-              )
+              .onChange(of: mapCameraKey(origin: origin, size: geometry.size), initial: true) { _, _ in
+                mapPosition = .region(mapRegion(origin: origin, size: geometry.size))
+              }
           }
           ground(size: geometry.size)
             .contentShape(Rectangle())
@@ -213,7 +215,7 @@ struct FleetView: View {
       .onChange(of: model.sceneRovers.map(\.id)) { _, ids in
         if let focused, !ids.contains(focused) { wider() }
       }
-      .onChange(of: model.sessionEpoch) { _, _ in wider() }
+      .onChange(of: model.sessionEpoch) { _, _ in occupancyRaster.reset(); wider() }
       .onChange(of: model.frameKey) { _, _ in wider() }
       .task {
         if ProcessInfo.processInfo.arguments.contains("--connect") {
@@ -574,6 +576,9 @@ struct FleetView: View {
         longitudeDelta: size.width / scale
           / (MapProjection.scale * cos(center.latitude * .pi / 180))))
   }
+  private func mapCameraKey(origin: CLLocationCoordinate2D, size: CGSize) -> [Double] {
+    [camera.x, camera.y, camera.extent, size.width, size.height, origin.latitude, origin.longitude]
+  }
   private func canCommand(_ rover: RoverView) -> Bool {
     rover.membership == "online" && model.snapshot.link == "healthy" && !model.busy
       && !["pending", "cancelling"].contains(rover.commandPhase)
@@ -722,46 +727,23 @@ struct FleetView: View {
   }
   private func ground(size: CGSize) -> some View {
     Canvas { context, size in
-      if let focused, let map = model.occupancyMaps[focused], map.usable {
-        var free = Path()
-        var occupied = Path()
-        var uncertain = Path()
-        var unknown = Path()
-        for row in 0..<map.height {
-          for col in 0..<map.width {
-            let value = map.occupancy[row * map.width + col]
-            let x = map.originX + Double(col) * map.resolution
-            let y = map.originY + Double(row) * map.resolution
-            let corners = [
-              (x, y), (x + map.resolution, y), (x + map.resolution, y + map.resolution),
-              (x, y + map.resolution),
-            ]
-            let projected = corners.compactMap {
-              model.mapScenePoint(id: focused, x: $0.0, y: $0.1)
-            }.map { camera.screen(x: $0.x, y: $0.y, size: size) }
-            guard projected.count == 4 else { continue }
-            var cell = Path()
-            cell.move(to: projected[0])
-            projected.dropFirst().forEach { cell.addLine(to: $0) }
-            cell.closeSubpath()
-            if value < 0 {
-              unknown.addPath(cell)
-            } else if value >= 65 {
-              occupied.addPath(cell)
-            } else if value <= 35 {
-              free.addPath(cell)
-            } else {
-              uncertain.addPath(cell)
-            }
-          }
+      if let focused, let map = model.sceneOccupancy(focused),
+        let origin = model.mapScenePoint(id: focused, x: map.originX, y: map.originY),
+        let xCorner = model.mapScenePoint(id: focused,
+          x: map.originX + Double(map.width) * map.resolution, y: map.originY),
+        let yCorner = model.mapScenePoint(id: focused,
+          x: map.originX, y: map.originY + Double(map.height) * map.resolution) {
+        let p = camera.screen(x: origin.x, y: origin.y, size: size)
+        let px = camera.screen(x: xCorner.x, y: xCorner.y, size: size)
+        let py = camera.screen(x: yCorner.x, y: yCorner.y, size: size)
+        if OccupancyRasterCache.intersectsViewport(origin: p, xCorner: px, yCorner: py, size: size),
+          let image = occupancyRaster.image(for: map) {
+          var layer = context
+          layer.concatenate(OccupancyRasterCache.transform(
+            origin: p, xCorner: px, yCorner: py, width: image.width, height: image.height))
+          layer.draw(Image(decorative: image, scale: 1, orientation: .up).interpolation(.none),
+            in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         }
-        context.fill(free, with: .color(.cyan.opacity(0.07)))
-        context.fill(occupied, with: .color(.cyan.opacity(0.5)))
-        context.fill(uncertain, with: .color(.orange.opacity(0.2)))
-        context.fill(unknown, with: .color(.white.opacity(0.025)))
-        context.stroke(
-          unknown, with: .color(.white.opacity(0.1)),
-          style: StrokeStyle(lineWidth: 0.4, dash: [1, 3]))
       }
       var grid = Path()
       let step = max(1, pow(10, floor(log10(camera.extent / 3))))

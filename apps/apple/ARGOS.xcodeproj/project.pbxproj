@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A00100000000000000000001 /* OccupancyRaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00100000000000000000005 /* OccupancyRaster.swift */; };
+		A00100000000000000000002 /* OccupancyRaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00100000000000000000005 /* OccupancyRaster.swift */; };
+		A00100000000000000000003 /* OccupancyRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00100000000000000000006 /* OccupancyRenderingTests.swift */; };
+		A00100000000000000000004 /* OccupancyRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00100000000000000000006 /* OccupancyRenderingTests.swift */; };
 		03F801ABCB8B7F92FCA21D52 /* ARGOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C9EE6CD22164B725BA5F67 /* ARGOSApp.swift */; };
 		0437BF0BE0A246C4313D33EE /* Rover.scn in Resources */ = {isa = PBXBuildFile; fileRef = CEB63923DEEF33C6D4609AC6 /* Rover.scn */; };
 		050124197A41442F0B14B800 /* GeographicMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B2ECB37AE1BFA70091F61A /* GeographicMap.swift */; };
@@ -157,6 +161,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A00100000000000000000005 /* OccupancyRaster.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OccupancyRaster.swift; sourceTree = "<group>"; };
+		A00100000000000000000006 /* OccupancyRenderingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OccupancyRenderingTests.swift; sourceTree = "<group>"; };
 		0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FleetModelTests.swift; sourceTree = "<group>"; };
 		0E07E48C4042CADDC074C322 /* GeographicReference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeographicReference.swift; sourceTree = "<group>"; };
 		1360B4FB409855B9E97C2AA1 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
@@ -400,6 +406,7 @@
 				CA1CE6BDAEE33A7DBABDE65F /* FieldMarkerPlacement.swift */,
 				4071F44312C3D13236F2FA18 /* LocalMapProjection.swift */,
 				C02BD74D34E927CA7E675E29 /* MapProjection.swift */,
+				A00100000000000000000005 /* OccupancyRaster.swift */,
 				D5ACF41D95D6A38E33CA98E3 /* WaypointDraft.swift */,
 			);
 			name = Support;
@@ -465,6 +472,7 @@
 			isa = PBXGroup;
 			children = (
 				0CCC815057B89C8F6CEE41CD /* FleetModelTests.swift */,
+				A00100000000000000000006 /* OccupancyRenderingTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -692,6 +700,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				43345F0F1A5327E67779767C /* FleetModelTests.swift in Sources */,
+				A00100000000000000000003 /* OccupancyRenderingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -700,6 +709,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C017503B3EB0D3D355AD4F4C /* FleetModelTests.swift in Sources */,
+				A00100000000000000000004 /* OccupancyRenderingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -721,6 +731,7 @@
 				52D47965226E4B0CF6FE997A /* DashboardSurface.swift in Sources */,
 				2A9B7723691E19D891E5482A /* FleetMissionView.swift in Sources */,
 				F61FCE09957E0B2AC71002D4 /* FleetView.swift in Sources */,
+				A00100000000000000000001 /* OccupancyRaster.swift in Sources */,
 				050124197A41442F0B14B800 /* GeographicMap.swift in Sources */,
 				ED478EC95F974393E7476380 /* LocalMap.swift in Sources */,
 				240FEC5D7BBB8C22B490C4F8 /* RoverDetailView.swift in Sources */,
@@ -773,6 +784,7 @@
 				9E1568D053AC95D217BA9F25 /* DashboardSurface.swift in Sources */,
 				92C5CC823E326A1FACC8B4EA /* FleetMissionView.swift in Sources */,
 				C12D387425B2BCB4DE83A50D /* FleetView.swift in Sources */,
+				A00100000000000000000002 /* OccupancyRaster.swift in Sources */,
 				D1D885C9D56364B184879DB2 /* GeographicMap.swift in Sources */,
 				7870DF8D297BCD1FEA8C90C0 /* LocalMap.swift in Sources */,
 				C4AD10DC17B3A52FA5FA497F /* RoverDetailView.swift in Sources */,

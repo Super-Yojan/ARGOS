@@ -4,6 +4,15 @@ import SwiftUI
 
 actor NativeBackend: FleetBackend {
   private let client = ArgosClient()
+  func telemetryPayloads() async -> FleetTelemetryPayloads {
+    let capturedAt = ContinuousClock.now
+    let operators = client.operatorSnapshot()
+    return FleetTelemetryPayloads(
+      operatorState: operators, occupancyState: client.occupancySnapshot(),
+      operatorTelemetry: operators, localization: client.localizationSnapshot(),
+      sharedOperatorDocument: true, capturedAt: capturedAt)
+  }
+
   func occupancyState() async -> String { client.occupancySnapshot() }
   func operatorState() async -> String { client.operatorSnapshot() }
   func action(id: UInt64, kind: String, payload: String) async throws {
