@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libs
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY spikes/unity-dashboard/native/argos-unity-bridge ./spikes/unity-dashboard/native/argos-unity-bridge
 RUN cargo build --release --locked -p argos-server
 
 FROM debian:bookworm-slim

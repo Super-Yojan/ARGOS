@@ -15,7 +15,26 @@ npm run dev
 
 Open `http://127.0.0.1:5173`, then **Open local demo**. The command starts the Rust service on loopback port 8080 and Vite on loopback port 5173. First startup compiles Rust dependencies. The demo includes an armed rover, a disarmed rover, and a rover with unknown pose, including a 64-bit ID. Take control, select rover 1, enter local coordinates, review and confirm a waypoint. Arrival is simulated over five seconds.
 
-The frontend uses an offline SVG metre grid by default. Geographic maps require `ARGOS_TILE_STYLE` to name a licensed HTTPS MapLibre style URL. Set it in the terminal environment before starting the service. A usable per-rover geographic reference is also required; no anchor is invented. Missing tiles leave local maps operational. The interface is a shared fleet field with no roster or command table. All rovers remain visible together; selecting a map marker opens a dismissible control panel. Local mode projects aligned rovers into a common north/west metre frame, or combines rovers that explicitly share a local frame identifier. Unknown positions and unaligned frames remain visible in a clearly marked non-spatial area; coordinates are never invented. Map clicks are transformed back to the selected rover's own local frame before waypoint review.
+The local view uses an offline SVG metre grid. The geographic view shows raw
+GPS fixes directly, with accuracy and fix age. No compass, AR tracking, shared
+origin, or eight-second alignment is required for GPS display. Fixes older than
+three seconds disappear; coarse fixes remain visible with their reported
+uncertainty. Missing positions remain unknown, and local coordinates are never
+substituted for GPS.
+
+The GPS map uses a grayscale OpenStreetMap street basemap by default, with visible
+attribution and normal browser caching. It requests only the active viewport;
+there is no offline download or tile prefetch feature. An HTTPS MapLibre style
+can override it through `ARGOS_TILE_STYLE`. Usage follows the
+[OpenStreetMap tile policy](https://operations.osmfoundation.org/policies/tiles/).
+A failed basemap does not hide the GPS coordinates in rover details.
+
+GPS display is observation only. Waypoint drafting, occupancy overlays and
+movement currently use the local view and the selected rover's local frame.
+Clicking the GPS map never drafts or sends a driving command. Outdoor GPS
+navigation needs a separate vehicle-side navigation capability; a raw fix does
+not authorize it. Live Terra frames are not automatically aligned to one another.
+Rovers without a shared local frame remain selectable outside the local field.
 
 Run the processes separately if preferred:
 
@@ -38,7 +57,7 @@ This requires the updated Terra iOS framework/app. Older phone builds show an up
 
 ## Occupancy maps
 
-Select a rover to display its observed occupancy grid under the fleet markers. **Occupancy map** toggles the layer in both local and geographic views. White cells are observed free space; black cells (occupancy ≥65) are occupied; gray cells are unknown. All rover markers remain visible. **Fit fleet** includes the selected grid bounds. Geographic overlay requires that rover's usable geographic reference.
+Select a rover to display its observed occupancy grid under the fleet markers. **Occupancy map** toggles the layer in the local view. White cells are observed free space; black cells (occupancy ≥65) are occupied; gray cells are unknown. All rover markers remain visible. **Fit fleet** includes the selected grid bounds. Occupancy remains in its observed local frame and is not overlaid on raw GPS.
 
 Map age is displayed independently of pose age. Grids older than 2.5 seconds are faded and explicitly marked stale. Missing data shows **No occupancy grid received from Terra**; the dashboard never substitutes a synthetic map for a real vehicle. Terra must be actively publishing mapping data. Old grids are invalidated on localization-frame changes and hidden when their run does not match current authority.
 
@@ -85,6 +104,120 @@ Playwright starts both development processes automatically. Stop a manually star
 
 API types are Rust-owned. After changing a contract, run `cargo test -p argos-server --test types` and commit `apps/web/src/generated.ts`. Set `ARGOS_CHECK_TYPES=1` to check drift without rewriting the generated file; CI does this automatically.
 
+## Local Docker deployment
+
+Install Docker Desktop on macOS or Windows, or Docker Engine with the Compose
+plugin on Linux. Start Docker, then run from the repository root:
+
+```sh
+docker compose up -d --build
+```
+
+Open `http://127.0.0.1:8080` and choose **Open local demo**. Use this exact origin
+for the demo's same-origin command checks. No `.env` file, OAuth app, rover, Rust,
+or Node.js installation is needed. Port 8080 must be free. Source changes require
+running the build command again; source files are not live-mounted.
+
+The root `compose.yaml` builds one image containing the frontend and Rust
+service, plus a small Caddy proxy container. Both share a container network
+namespace: the Rust server keeps its required loopback bind, while Caddy forwards
+the port published on the host's `127.0.0.1`. This uses Docker bridge networking
+on Linux and Docker Desktop. Development identity is restricted to simulated
+vehicles; real fleets use the authenticated hosting configuration below.
+
+```sh
+docker compose logs -f
+docker compose down
+```
+
+Sessions and audit history persist in the `argos-local-data` volume across
+restarts. `docker compose down -v` deletes that local demo data. Simulated vehicle
+state resets whenever the service restarts. Check service health at
+`http://127.0.0.1:8080/healthz` and fleet readiness at `/readyz`.
+
+## Connect a real fleet from local Docker
+
+The separate `compose.fleet.yaml` connects the browser dashboard to a real Zenoh
+fleet. The browser runs at `https://localhost:8443`, with GitHub sign-in and
+numeric user-ID allowlists. The Rust API is reachable only inside the Compose
+network; only the HTTPS proxy is published, on host loopback. Demo login remains
+disabled. This configuration can run alongside the demo and keeps separate data.
+
+1. Copy the configuration template from the repository root:
+
+   ```sh
+   cp .env.fleet.example .env.fleet
+   ```
+
+2. Register a **separate GitHub OAuth app** for this local dashboard. Set homepage
+   URL to `https://localhost:8443` and callback URL to
+   `https://localhost:8443/auth/callback`. Put its client ID and secret in
+   `.env.fleet`; set `ARGOS_OPERATORS` to your numeric GitHub user ID, not your
+   username. Optional `ARGOS_VIEWERS` grants observation without command access.
+   These settings are separate from the public dashboard's OAuth app.
+
+3. Set the fleet endpoint, prefix and membership credentials to match the Terra
+   phones. The template starts with the hosted TLS router documented in
+   [the GCP guide](../packaging/gcp/README.md), prefix `terra/phone` and user
+   `terra`; enter its fleet password privately in `.env.fleet`. Router availability
+   and valid credentials are still required. Keep the filled-in file out of git.
+   For passwords containing `$` or `#`, use single quotes around the entire value
+   so Compose reads it literally.
+
+   For a LAN router, set e.g. `ARGOS_ZENOH_ENDPOINT=tcp/192.168.1.10:7448`.
+   For a router on the Docker host, use `tcp/host.docker.internal:7448` (or port
+   7447 and prefix `terra/rover` for Zorvane). The Compose file supplies the host
+   mapping for Linux as well as Docker Desktop. The router must accept connections
+   from Docker's network; on Linux a listener bound only to `127.0.0.1` is not
+   reachable through the bridge gateway. Bind to a reachable private interface
+   and allow the Docker subnet through the firewall. Use unauthenticated TCP only
+   on a trusted private network. For a router without authentication, delete both
+   `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` lines from `.env.fleet`.
+
+4. Start the dashboard:
+
+   ```sh
+   docker compose --env-file .env.fleet -f compose.fleet.yaml up -d --build
+   ```
+
+5. Caddy issues a local HTTPS certificate. Export its root certificate:
+
+   ```sh
+   docker compose --env-file .env.fleet -f compose.fleet.yaml cp proxy:/data/caddy/pki/authorities/local/root.crt ./argos-local-root.crt
+   ```
+
+   Trust this certificate in your browser or operating system before signing in.
+   On macOS, import it into Keychain Access and set **Always Trust** for SSL.
+   On Windows, import it into **Trusted Root Certification Authorities** for your
+   user. On Linux, use the distribution's CA import mechanism; Firefox may require
+   a separate import in its certificate settings. Only export `root.crt`; keep the
+   private CA key inside the Docker volume. See
+   [Caddy's local HTTPS documentation](https://caddyserver.com/docs/automatic-https#local-https).
+
+6. Open **https://localhost:8443** and sign in with the allowed GitHub account.
+   Start Terra publishing to the same router and prefix. Its rovers appear as
+   telemetry arrives; connecting does not arm them. Use the existing explicit
+   control, arm and waypoint actions when ready.
+
+Inspect connectivity with:
+
+```sh
+docker compose --env-file .env.fleet -f compose.fleet.yaml logs -f argos proxy
+curl --cacert argos-local-root.crt https://localhost:8443/healthz
+curl --cacert argos-local-root.crt https://localhost:8443/readyz
+```
+
+`/healthz` checks HTTP availability. `/readyz` requires a healthy fleet and may
+return 503 until live telemetry arrives. A disconnected fleet produces no demo
+replacement. Check endpoint reachability, TLS hostname, membership credentials,
+and matching topic prefix if no vehicles appear.
+
+Stop with `docker compose --env-file .env.fleet -f compose.fleet.yaml down`.
+Volumes preserve sessions, audit history and the local certificate authority.
+Adding `-v` deletes all three, requiring you to import the new root certificate
+after the next startup. Source or configuration changes require rerunning the
+startup command. Use the public hosting setup below to serve other computers.
+
 ## Public hosting for one team
 
 The browser talks only to the ARGOS HTTPS service. The service reaches the existing fleet router through the Linux host's Tailscale network. Browser users do not need Tailscale. Zenoh TCP is never exposed publicly by this deployment.
@@ -101,7 +234,7 @@ docker compose -f packaging/web/compose.yaml up -d --build
 5. Sign in through GitHub and verify authorized/unauthorized accounts, viewer restrictions, control ownership, draft confirmation, cancellation and reconnect behavior against simulated data. Configure and verify a geographic basemap if needed.
 6. Set `ARGOS_FLEET=zenoh`, ensure the router is reachable privately, and recreate the service with the same Compose command. Validate against Zorvane before operating real hardware.
 
-Caddy supplies HTTPS; Axum serves the frontend and API from one origin. Production is one service instance with one fleet worker and SQLite volume. Do not scale to multiple replicas: command claims are in memory. Container deployment is for Linux hosts; native development commands are cross-platform.
+Caddy supplies HTTPS; Axum serves the frontend and API from one origin. Production is one service instance with one fleet worker and SQLite volume. Do not scale to multiple replicas: command claims are in memory. The production Compose configuration targets Linux hosts; the local Docker setup above and native development commands are cross-platform.
 
 GitHub tokens are used server-side during sign-in and are not persisted. Session cookies are HttpOnly, Secure in hosted mode, SameSite=Lax, and expire after eight hours. Numeric-ID allowlists determine roles on every request. Mutations require same-origin and CSRF validation. OAuth state is single-use and bound to a browser cookie; PKCE protects the code exchange.
 

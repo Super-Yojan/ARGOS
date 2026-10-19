@@ -26,6 +26,8 @@ export function WaypointPanel({rover,frame,draft,onDraft,canCommand,connected,op
     {rover&&onAutonomy&&<AutonomyPanel rover={rover} canCommand={canCommand&&connected} pending={!!active&&operation?.kind.startsWith('autonomy:')} onRequest={onAutonomy}/>}
     {rover&&<><dl className={styles.details}>
       <div><dt>Position</dt><dd>{rover.pose?`${rover.pose.x.toFixed(2)}, ${rover.pose.y.toFixed(2)} m`:'Unknown'}</dd></div>
+      <div><dt>GPS position</dt><dd>{rover.gps?`${rover.gps.latitude.toFixed(7)}, ${rover.gps.longitude.toFixed(7)}°`:'Waiting for a fresh GPS fix'}</dd></div>
+      <div><dt>GPS accuracy</dt><dd>{rover.gps?`±${rover.gps.accuracy.toFixed(1)} m · ${rover.gps.age.toFixed(1)} s old`:'Unavailable'}</dd></div>
       <div><dt>Pose received</dt><dd>{ageLabel(rover.pose_age)}</dd></div>
       <div><dt>Heading</dt><dd>{rover.pose?`${(rover.pose.yaw*180/Math.PI).toFixed(1)}°`:'Unknown'}</dd></div>
       <div><dt>Hardware</dt><dd>{!rover.hardware?'Unknown':rover.hardware.armed?'Armed':'Disarmed'}</dd></div>
@@ -35,7 +37,7 @@ export function WaypointPanel({rover,frame,draft,onDraft,canCommand,connected,op
     </dl><p className={styles.support}>{rover.hardware?.reason??'Hardware status unavailable.'}</p></>}
     <div className={styles.waypointSection}>
       <p className="yg-label">03 / Directed order</p><h2 className="yg-title">Set a waypoint</h2>
-      <p className={styles.support}>{frame==='local'?'+x north / forward. +y west / left.':'Latitude and longitude in WGS84.'} Map clicks place a draft.</p>
+      <p className={styles.support}>{frame==='local'?'+x forward. +y left. Use the local map or enter local coordinates.':'Latitude and longitude in WGS84.'}</p>
       <form onSubmit={e=>{e.preventDefault();review()}}>
         <fieldset disabled={!rover||busy} className={styles.fields}>
           <label>{frame==='local'?'North / x (m)':'Latitude (°)'}<input name="first" inputMode="decimal" value={first} onChange={e=>{setFirst(e.target.value);setConfirmed(false)}} placeholder={frame==='local'?'12.0':'38.8298100'} autoComplete="off"/></label>

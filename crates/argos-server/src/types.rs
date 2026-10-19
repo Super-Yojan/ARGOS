@@ -62,7 +62,17 @@ pub struct Goal {
     pub distance: f64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct GpsFix {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub accuracy: f64,
+    pub age: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Rover {
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gps: Option<GpsFix>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub navigation: Option<NavigationState>,
@@ -81,6 +91,7 @@ pub struct Rover {
 impl Rover {
     pub fn demo(id: &str, x: f64, y: f64) -> Self {
         Self {
+            gps: None,
             navigation: Some(NavigationState::default()),
             id: id.into(),
             membership: "online".into(),

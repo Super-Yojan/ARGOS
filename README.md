@@ -6,6 +6,30 @@ As of October 17, 2026, new dashboard work targets `apps/web`. The SwiftUI apps 
 
 ## Start the web dashboard
 
+With Docker Desktop running (or Docker Engine with Compose on Linux), run from
+the repository root:
+
+```sh
+docker compose up -d --build
+```
+
+Open **http://127.0.0.1:8080** and choose **Open local demo**. This builds the
+dashboard and Rust service and starts a simulated fleet without installing Rust
+or Node.js on your host. The first build downloads and compiles dependencies.
+Only the local computer can access this demo; no GitHub credentials are needed.
+
+View logs with `docker compose logs -f`, and stop with `docker compose down`.
+Sessions and audit history persist in a Docker volume. To reset all local demo
+data, use `docker compose down -v`.
+See [Docker deployment details](docs/browser-dashboard.md#local-docker-deployment)
+for how the local setup works and the separate authenticated hosting option.
+
+To connect actual Terra vehicles, use the separate
+[authenticated local fleet setup](docs/browser-dashboard.md#connect-a-real-fleet-from-local-docker).
+It supports the hosted Terra router, a LAN router, or a router on this computer.
+
+### Develop without Docker
+
 Install stable Rust and Node.js 22.12 or newer. Windows, Linux, and macOS development is supported.
 
 ```sh
@@ -15,7 +39,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173` and choose **Open local demo**. The built-in simulated fleet needs no rover, account, or Xcode. Select a rover on the map and take control to use the operator panel. Real fleets use the authenticated service deployment, not development identity.
 
-The browser provides a shared fleet field, local and geographic maps, occupancy overlays, reviewed waypoint send/cancel, explicit hardware arm/disarm, held keyboard/touch manual driving, latched emergency stop, autonomy selection, and vehicle geometry/avoidance configuration. Geographic rendering requires valid rover alignment and an optional HTTPS tile style. Unknown positions remain visibly unknown.
+The browser provides a shared fleet field, local and geographic maps, occupancy overlays, reviewed waypoint send/cancel, explicit hardware arm/disarm, held keyboard/touch manual driving, latched emergency stop, autonomy selection, and vehicle geometry/avoidance configuration. The geographic view displays raw GPS without local alignment, with a default street basemap and an optional HTTPS tile style override. Unknown positions remain visibly unknown.
 
 - [Browser operation and hosting](docs/browser-dashboard.md)
 - [Getting started](docs/getting-started.md)

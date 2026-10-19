@@ -49,7 +49,7 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
             ),
             (
                 "8/localization",
-                serde_json::json!({"version":1,"frameID":"local-A","mode":"local","tracking":"normal"}),
+                serde_json::json!({"version":1,"frameID":"local-A","mode":"local","tracking":"limited","gpsLatitude":38.8,"gpsLongitude":-77.3,"gpsAccuracy":24.0,"gpsFixAge":0.1,"headingAccuracy":-1}),
             ),
             (
                 "8/hardware/status",
@@ -82,6 +82,15 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
     assert!(
         e.snapshot(0.).rovers[0].reference.is_none(),
         "Local frames do not require geographic alignment"
+    );
+    let raw = serde_json::to_value(&e.snapshot(0.).rovers[0]).unwrap();
+    assert_eq!(
+        raw["gps"]["latitude"], 38.8,
+        "raw GPS needs no AR tracking or heading alignment"
+    );
+    assert_eq!(
+        raw["gps"]["accuracy"], 24.0,
+        "low accuracy remains visible as a measurement"
     );
     let map = e.fleet.occupancy("8", 0.).unwrap().unwrap();
     assert_eq!(map.sequence, "9007199254740993");

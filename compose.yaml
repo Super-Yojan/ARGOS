@@ -1,0 +1,28 @@
+# Local simulated fleet: docker compose up -d --build
+services:
+  argos:
+    build:
+      context: .
+      dockerfile: packaging/web/Dockerfile
+    environment:
+      ARGOS_ENV: development
+      ARGOS_DEV_AUTH: "true"
+      ARGOS_FLEET: demo
+      ARGOS_BIND: 127.0.0.1:8080
+      ARGOS_ORIGIN: http://127.0.0.1:8080
+    # The proxy shares this network namespace. Publish only its port on host loopback.
+    ports:
+      - "127.0.0.1:8080:8081"
+    volumes:
+      - argos-local-data:/data
+    init: true
+    stop_grace_period: 15s
+  proxy:
+    image: caddy:2
+    network_mode: service:argos
+    depends_on:
+      - argos
+    volumes:
+      - ./packaging/web/Caddyfile.local:/etc/caddy/Caddyfile:ro
+volumes:
+  argos-local-data:

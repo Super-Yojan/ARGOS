@@ -315,6 +315,9 @@ impl<F: Fleet> Engine<F> {
             }
             return Ok(op);
         }
+        if matches!(request.waypoint, Waypoint::Geographic { .. }) {
+            return Err("GPS is for observation only; send waypoints in local coordinates".into());
+        }
         request
             .waypoint
             .core()

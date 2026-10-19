@@ -16,6 +16,7 @@ fn generated_types_match_rust_contracts() {
         Authority,
         Hardware,
         Reference,
+        GpsFix,
         Goal,
         Rover,
         Waypoint,

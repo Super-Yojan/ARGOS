@@ -319,7 +319,7 @@ fn cancellation_requires_a_post_request_idle_observation() {
     assert_eq!(e.operations[&op.id].phase, "cancelled");
 }
 #[test]
-fn geographic_quality_must_remain_usable_until_publication() {
+fn geographic_commands_are_rejected_even_with_an_old_alignment() {
     let (mut e, c) = setup();
     e.claim(&who(), "tab", 0.).unwrap();
     let mut req = request();
@@ -328,13 +328,11 @@ fn geographic_quality_must_remain_usable_until_publication() {
         longitude: -77.3075,
         yaw: None,
     };
-    let op = e.submit(&who(), "tab", ID, req, 0.).unwrap();
-    e.fleet.rover.reference = None;
-    let a = e.fleet.rover.authority.as_mut().unwrap();
-    a.token = Some(c.lock().unwrap().modes[0].clone());
-    a.result = Some("accepted".into());
-    a.requested_level = "waypoint".into();
-    e.tick(1.);
-    assert_eq!(e.operations[&op.id].phase, "interrupted");
+    let result = e.submit(&who(), "tab", ID, req, 0.);
+    assert!(
+        result.is_err(),
+        "GPS display must not authorize geographic driving"
+    );
+    assert!(c.lock().unwrap().modes.is_empty());
     assert_eq!(c.lock().unwrap().goals, 0);
 }

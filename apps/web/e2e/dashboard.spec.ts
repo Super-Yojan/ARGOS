@@ -1,5 +1,5 @@
 import { test,expect } from '@playwright/test';
-test.beforeEach(async({page})=>{await page.goto('/auth/dev');await expect(page.getByText('Stream connected',{exact:true})).toBeVisible()});
+test.beforeEach(async({page})=>{await page.route('**/api/v1/config',route=>route.fulfill({json:{demo:true,tile_style:'https://maps.argos.test/style.json'}}));await page.route('https://maps.argos.test/style.json',route=>route.fulfill({json:{version:8,sources:{},layers:[{id:'paper',type:'background',paint:{'background-color':'#ffffff'}}]}}));await page.goto('/auth/dev');await expect(page.getByText('Stream connected',{exact:true})).toBeVisible()});
 test('monitors unknown and disarmed rovers and uses a local map without tiles',async({page},testInfo)=>{
   await page.screenshot({path:testInfo.outputPath('dashboard.png'),fullPage:true});
   await expect(page.getByRole('group',{name:'Local rover map'})).toBeVisible();
@@ -8,8 +8,8 @@ test('monitors unknown and disarmed rovers and uses a local map without tiles',a
   await expect(page.getByRole('button',{name:'Rover 1',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Rover 2',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Rover 18446744073709551615',exact:true}).click();await expect(page.getByLabel('Rover details')).toContainText('Unknown');
   await page.getByRole('button',{name:'Rover 2',exact:true}).click();await expect(page.getByLabel('Rover details')).toContainText('Disarmed');
-  await page.getByRole('button',{name:'Geographic',exact:true}).click();await expect(page.getByText('Geographic map unavailable')).toBeVisible();
-  await page.getByRole('button',{name:'Use local map'}).click();await expect(page.getByRole('group',{name:'Local rover map'})).toBeVisible();
+  await page.getByRole('button',{name:'Geographic',exact:true}).click();await expect(page.getByText(/Reported GPS fixes with measured accuracy/)).toBeVisible();
+  await page.getByRole('button',{name:'Local',exact:true}).click();await expect(page.getByRole('group',{name:'Local rover map'})).toBeVisible();
 });
 test('takes control, confirms a waypoint, observes arrival and cancels',async({page})=>{
   await page.getByRole('button',{name:'Rover 1',exact:true}).click();
@@ -32,7 +32,7 @@ test('fits a narrow screen with keyboard-accessible coordinate controls',async({
   await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Rover 1',exact:true}).click();await expect(page.getByLabel('North / x (m)')).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });
-test('renders a configured geographic map and map clicks only draft coordinates',async({page})=>{
+test('raw GPS map keeps waypoint commands local and map clicks never draft orders',async({page})=>{
   await page.route('**/api/v1/config',route=>route.fulfill({json:{demo:true,tile_style:'https://maps.argos.test/style.json'}}));
   await page.route('https://maps.argos.test/style.json',route=>route.fulfill({json:{version:8,sources:{},layers:[{id:'paper',type:'background',paint:{'background-color':'#ffffff'}}]}}));
   let sent=0;page.on('request',request=>{if(request.method()==='POST'&&request.url().endsWith('/waypoints'))sent++});
@@ -40,7 +40,7 @@ test('renders a configured geographic map and map clicks only draft coordinates'
   await page.getByRole('button',{name:'Geographic',exact:true}).click();
   await expect(page.getByRole('button',{name:'Fit fleet',exact:true})).toBeEnabled({timeout:10000});
   await page.getByRole('button',{name:'Rover 1',exact:true}).click();
-  await page.locator('.maplibregl-canvas').click({position:{x:150,y:200}});await expect(page.getByLabel('Latitude (°)')).not.toHaveValue('');await expect(page.getByLabel('Longitude (°)')).not.toHaveValue('');expect(sent).toBe(0);
+  await page.locator('.maplibregl-canvas').click({position:{x:150,y:200}});await expect(page.getByLabel('North / x (m)')).toHaveValue('');await expect(page.getByLabel('Latitude (°)')).toHaveCount(0);expect(sent).toBe(0);
 });
 test('coincident rovers remain distinct and individually selectable without a roster',async({page})=>{
   const response=await page.request.get('/api/v1/fleet');const snapshot=await response.json();

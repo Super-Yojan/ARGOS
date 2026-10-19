@@ -22,3 +22,5 @@ xcuserdata/
 *.db-shm
 *.db-wal
 .env
+.env.fleet
+/argos-local-root.crt

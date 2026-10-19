@@ -89,6 +89,15 @@ impl Fleet for DemoFleet {
                 }
             }
         }
+        // The demo synthesizes GPS explicitly; live fleets only use reported fixes.
+        for rover in &mut self.rovers {
+            rover.gps = rover.pose.as_ref().map(|pose| GpsFix {
+                latitude: 38.8297 + pose.x / 111_319.4908,
+                longitude: -77.3075 - pose.y / (111_319.4908 * 38.8297_f64.to_radians().cos()),
+                accuracy: 4.,
+                age: 0.,
+            });
+        }
         FleetSnapshot {
             link: "healthy".into(),
             rovers: self.rovers.clone(),
@@ -261,30 +270,32 @@ fn text(v: &Value, key: &str) -> String {
 fn num(v: &Value, key: &str) -> Option<f64> {
     v[key].as_f64().filter(|x| x.is_finite())
 }
-fn reference(v: &Value) -> Option<Reference> {
-    if v["version"] != 1
-        || v["mode"] != "geographic"
-        || v["tracking"] != "normal"
-        || !fresh(num(v, "age"))
-        || !num(v, "gpsAccuracy").is_some_and(|x| (0.0..=10.).contains(&x))
-        || !num(v, "headingAccuracy").is_some_and(|x| (0.0..=15.).contains(&x))
-    {
+// GPS is observation only: never infer a local frame, rotation or drive readiness.
+fn gps_fix(v: &Value) -> Option<GpsFix> {
+    if v["version"] != 1 {
         return None;
     }
-    let r = Reference {
-        latitude: num(v, "originLatitude")?,
-        longitude: num(v, "originLongitude")?,
-        anchor_x: num(v, "anchorX")?,
-        anchor_y: num(v, "anchorY")?,
-        rotation: num(v, "rotation")?,
-        frame_id: text(v, "frameID"),
+    let received_age = num(v, "age")?;
+    let fix_age = num(v, "gpsFixAge")?;
+    let fix = GpsFix {
+        latitude: num(v, "gpsLatitude")?,
+        longitude: num(v, "gpsLongitude")?,
+        accuracy: num(v, "gpsAccuracy")?,
+        age: received_age + fix_age,
     };
-    if r.frame_id.is_empty() || r.latitude.abs() > 85. || r.longitude.abs() > 180. {
+    if received_age < 0.
+        || fix_age < 0.
+        || fix.age > 3.
+        || fix.latitude.abs() > 90.
+        || fix.longitude.abs() > 180.
+        || fix.accuracy < 0.
+    {
         None
     } else {
-        Some(r)
+        Some(fix)
     }
 }
+
 impl Fleet for LiveFleet {
     fn emergency_stop(&mut self, id: &str) -> Result<(), String> {
         self.client()?
@@ -342,6 +353,7 @@ impl Fleet for LiveFleet {
                 let h = &op[&id]["hardware"];
                 let n = &a["navigation"];
                 Rover {
+                    gps: gps_fix(&loc[&id]),
                     navigation: if n["schema_version"] == 1 {
                         serde_json::from_value::<NavigationParameters>(n["parameters"].clone())
                             .ok()
@@ -419,7 +431,7 @@ impl Fleet for LiveFleet {
                     } else {
                         None
                     },
-                    reference: reference(&loc[&id]),
+                    reference: None,
                 }
             })
             .collect();
@@ -545,5 +557,33 @@ impl Fleet for Box<dyn Fleet> {
     }
     fn cancel(&mut self, id: &str) -> Result<(), String> {
         self.as_mut().cancel(id)
+    }
+}
+
+#[cfg(test)]
+mod gps_tests {
+    use super::gps_fix;
+    use serde_json::json;
+    #[test]
+    fn raw_gps_ignores_heading_tracking_and_alignment_but_checks_measurement_age() {
+        let report = json!({"version":1,"mode":"local","tracking":"limited",
+            "age":0.2,"gpsFixAge":0.3,"gpsLatitude":38.8,"gpsLongitude":-77.3,
+            "gpsAccuracy":45.,"headingAccuracy":-1});
+        let fix = gps_fix(&report).unwrap();
+        assert_eq!(fix.latitude, 38.8);
+        assert_eq!(fix.accuracy, 45.);
+        assert_eq!(fix.age, 0.5);
+        for (key, value) in [
+            ("gpsFixAge", json!(2.9)),
+            ("age", json!(-1.)),
+            ("gpsLatitude", json!(91.)),
+            ("gpsLongitude", json!(181.)),
+            ("gpsAccuracy", json!(-1.)),
+            ("gpsAccuracy", json!(null)),
+        ] {
+            let mut invalid = report.clone();
+            invalid[key] = value;
+            assert!(gps_fix(&invalid).is_none(), "invalid {key}");
+        }
     }
 }
