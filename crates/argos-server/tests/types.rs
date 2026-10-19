@@ -30,8 +30,7 @@ fn generated_types_match_rust_contracts() {
         FleetSnapshot,
         PublicConfig
     );
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/web/src/generated.ts");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/generated.ts");
     if std::env::var("ARGOS_CHECK_TYPES").is_ok() {
         assert_eq!(
             std::fs::read_to_string(path).unwrap().replace("\r\n", "\n"),

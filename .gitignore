@@ -1,7 +1,5 @@
 /target/
 /site/
-/apps/apple/Generated/
-/apps/apple/build*/
 /.worktrees/
 .DS_Store
 *.xcuserstate
@@ -12,12 +10,8 @@ xcuserdata/
 /spikes/unity-dashboard/Logs/
 /spikes/unity-dashboard/UserSettings/
 
-# Browser dashboard and service runtime.
-/apps/web/node_modules/
-/apps/web/dist/
-/apps/web/test-results/
-/apps/web/playwright-report/
-/apps/web/*.tsbuildinfo
+# Service runtime and optional static files served by argos-server.
+/web/dist/
 *.db
 *.db-shm
 *.db-wal

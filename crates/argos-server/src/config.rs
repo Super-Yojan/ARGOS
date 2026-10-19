@@ -48,7 +48,7 @@ impl Config {
             endpoint: get("ARGOS_ZENOH_ENDPOINT", "tcp/127.0.0.1:7448"),
             prefix: get("ARGOS_ZENOH_PREFIX", "terra/rover"),
             database: get("ARGOS_DATABASE", "sqlite://argos.db"),
-            web_dir: get("ARGOS_WEB_DIR", "apps/web/dist"),
+            web_dir: get("ARGOS_WEB_DIR", "web/dist"),
             github_client: get("GITHUB_CLIENT_ID", ""),
             github_secret: get("GITHUB_CLIENT_SECRET", ""),
             allowed,

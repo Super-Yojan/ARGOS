@@ -1,0 +1,13 @@
+[package]
+name = "argos-gpui"
+version.workspace = true
+edition.workspace = true
+description = "ARGOS operator dashboard. The first surface is the terra-map Map View."
+
+[[bin]]
+name = "argos-gpui"
+path = "src/main.rs"
+
+[dependencies]
+terra-map = { path = "../terra-map" }
+gpui-kit = "=0.8.0"

@@ -1,0 +1,208 @@
+use glam::{DMat4, DVec3, DVec4};
+
+pub const EARTH_RADIUS: f64 = 6_378_137.0;
+pub const FOV: f64 = 50.0_f64.to_radians();
+
+pub fn ecef(latitude: f64, longitude: f64, altitude: f64) -> DVec3 {
+    let (lat, lon) = (latitude.to_radians(), longitude.to_radians());
+    let e2 = 6.694_379_990_14e-3;
+    let n = EARTH_RADIUS / (1.0 - e2 * lat.sin().powi(2)).sqrt();
+    DVec3::new(
+        (n + altitude) * lat.cos() * lon.cos(),
+        (n + altitude) * lat.cos() * lon.sin(),
+        (n * (1.0 - e2) + altitude) * lat.sin(),
+    )
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Sphere {
+    pub center: DVec3,
+    pub radius: f64,
+}
+
+/// Conservative sphere: arc length bounds any chord, including date-line regions.
+pub fn region_sphere(r: [f64; 6]) -> Sphere {
+    let [west, south, mut east, north, low, high] = r;
+    if east < west {
+        east += std::f64::consts::TAU;
+    }
+    let center = ecef(
+        ((north + south) * 0.5).to_degrees(),
+        ((east + west) * 0.5).to_degrees(),
+        (low + high) * 0.5,
+    );
+    let angular = ((north - south).abs() + (east - west).abs()) * 0.5;
+    Sphere {
+        center,
+        radius: ((EARTH_RADIUS + low.abs().max(high.abs())) * angular.min(2.0)
+            + (high - low).abs() * 0.5)
+            .max(1.0),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapMode {
+    #[default]
+    ThreeD,
+    TwoD,
+}
+
+#[derive(Clone, Debug)]
+pub struct Camera {
+    pub mode: MapMode,
+    saved_orientation: Option<(f64, f64)>,
+    pub target: DVec3,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub altitude: f64,
+    pub distance: f64,
+    pub heading: f64,
+    pub pitch: f64,
+}
+
+impl Camera {
+    pub fn new(
+        latitude: f64,
+        longitude: f64,
+        altitude: f64,
+        distance: f64,
+        heading: f64,
+        pitch: f64,
+    ) -> Self {
+        Self {
+            mode: MapMode::ThreeD,
+            saved_orientation: None,
+            target: ecef(latitude, longitude, altitude),
+            latitude,
+            longitude,
+            altitude,
+            distance: distance.clamp(20., 5_000_000.),
+            heading: heading.to_radians(),
+            pitch: pitch.to_radians().clamp(0.1, 1.55),
+        }
+    }
+    pub fn set_mode(&mut self, mode: MapMode) {
+        if self.mode == mode {
+            return;
+        }
+        match mode {
+            MapMode::TwoD => {
+                self.saved_orientation = Some((self.heading, self.pitch));
+                self.heading = 0.;
+                self.pitch = std::f64::consts::FRAC_PI_2;
+            }
+            MapMode::ThreeD => {
+                if let Some((heading, pitch)) = self.saved_orientation.take() {
+                    self.heading = heading;
+                    self.pitch = pitch;
+                }
+            }
+        }
+        self.mode = mode;
+    }
+    pub fn orbit(&mut self, x: f64, y: f64) {
+        if self.mode == MapMode::TwoD {
+            self.pan(x, y);
+            return;
+        }
+        self.heading -= x * 0.005;
+        self.pitch = (self.pitch + y * 0.005).clamp(0.1, 1.55);
+    }
+    pub fn zoom(&mut self, delta: f64) {
+        self.distance = (self.distance * (-delta * 0.002).exp()).clamp(20., 5_000_000.);
+    }
+    /// Pointer deltas are logical pixels; match the orthographic map footprint.
+    pub fn pan_in_view(&mut self, x: f64, y: f64, logical_height: f64) {
+        let scale =
+            if self.mode == MapMode::TwoD && logical_height.is_finite() && logical_height > 0. {
+                2. * (FOV * 0.5).tan() / (logical_height * 0.0015)
+            } else {
+                1.
+            };
+        self.pan(x * scale, y * scale);
+    }
+    pub fn pan(&mut self, x: f64, y: f64) {
+        let meters = self.distance * 0.0015;
+        let east = (-x * self.heading.cos() + y * self.heading.sin()) * meters;
+        let north = (x * self.heading.sin() + y * self.heading.cos()) * meters;
+        self.latitude = (self.latitude + (north / EARTH_RADIUS).to_degrees()).clamp(-85., 85.);
+        self.longitude = (self.longitude
+            + (east / (EARTH_RADIUS * self.latitude.to_radians().cos().max(0.05))).to_degrees()
+            + 180.)
+            .rem_euclid(360.)
+            - 180.;
+        self.target = ecef(self.latitude, self.longitude, self.altitude);
+    }
+    pub fn view(&self, width: u32, height: u32) -> View {
+        let (lat, lon) = (self.latitude.to_radians(), self.longitude.to_radians());
+        let up = DVec3::new(lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin());
+        let east = DVec3::new(-lon.sin(), lon.cos(), 0.);
+        let north = up.cross(east);
+        let toward = north * self.heading.cos() + east * self.heading.sin();
+        let relative_eye = (up * self.pitch.sin() - toward * self.pitch.cos()) * self.distance;
+        let view = DMat4::look_at_rh(
+            relative_eye,
+            DVec3::ZERO,
+            if self.mode == MapMode::TwoD {
+                north
+            } else {
+                up
+            },
+        );
+        let near = (self.distance * 0.0001).clamp(0.5, 500.);
+        let aspect = width.max(1) as f64 / height.max(1) as f64;
+        let half_height = self.distance * (FOV * 0.5).tan();
+        let projection = if self.mode == MapMode::TwoD {
+            DMat4::orthographic_rh(
+                -half_height * aspect,
+                half_height * aspect,
+                -half_height,
+                half_height,
+                near,
+                30_000_000.,
+            )
+        } else {
+            DMat4::perspective_rh(FOV, aspect, near, 30_000_000.)
+        };
+        View {
+            origin: self.target,
+            eye: self.target + relative_eye,
+            view_projection: projection * view,
+            height: height.max(1),
+            meters_per_pixel: (self.mode == MapMode::TwoD)
+                .then_some(2. * half_height / height.max(1) as f64),
+        }
+    }
+}
+
+pub struct View {
+    pub origin: DVec3,
+    pub eye: DVec3,
+    pub view_projection: DMat4,
+    pub height: u32,
+    pub meters_per_pixel: Option<f64>,
+}
+impl View {
+    pub fn visible(&self, sphere: Sphere) -> bool {
+        let m = self.view_projection.transpose();
+        let rows = m.to_cols_array_2d().map(DVec4::from_array);
+        let p = (sphere.center - self.origin).extend(1.);
+        [
+            rows[3] + rows[0],
+            rows[3] - rows[0],
+            rows[3] + rows[1],
+            rows[3] - rows[1],
+            rows[2],
+            rows[3] - rows[2],
+        ]
+        .iter()
+        .all(|plane| plane.dot(p) >= -sphere.radius * plane.truncate().length())
+    }
+    pub fn error(&self, sphere: Sphere, error: f64) -> f64 {
+        if let Some(scale) = self.meters_per_pixel {
+            return error / scale;
+        }
+        error * self.height as f64
+            / (2. * (FOV * 0.5).tan() * (self.eye.distance(sphere.center) - sphere.radius).max(1.))
+    }
+}

@@ -1,19 +1,21 @@
 # Browser dashboard
 
-ARGOS’s primary interface is a React/TypeScript dashboard backed by the existing Rust fleet client. The browser supports monitoring, explicit arm/disarm, waypoint send/cancel, held manual driving, and emergency stop. The native apps remain a legacy fallback for safety reset, target-search setup, proposal approval, and other mission workflows.
+> **Status — October 19, 2026:** The React app and the SwiftUI apps have been removed. The operator window is `cargo run -p argos-gpui` (see [Getting started](getting-started.md)). This page records the removed browser interface and the `argos-server` behavior that is still in the tree. Commands below that mention `apps/web`, Node, or Playwright have nothing to build.
+
+The removed interface was a React/TypeScript dashboard backed by the Rust fleet client. It supported monitoring, explicit arm/disarm, waypoint send/cancel, held manual driving, and emergency stop. Safety reset, target-search setup, and proposal approval lived in the SwiftUI apps, which are also gone.
 
 ## Develop on Windows, Linux or macOS
 
-Install Git, stable Rust (including the platform's C/C++ linker), and Node.js 22.12 or newer. Windows Rust requires the Visual Studio C++ build tools; Linux needs a C compiler and standard development tools. No Xcode, phone, Tailscale account or rover is needed for the simulated fleet.
+Install Git and stable Rust, including the platform's C/C++ linker. The dashboard no longer uses Node.js.
 
-From the repository root:
+From the repository root, the map window and the simulated service are separate processes:
 
 ```sh
-npm ci --prefix apps/web
-npm run dev
+MAPS_DEMO=1 cargo run -p argos-gpui
+cargo run -p argos-server -- --demo --dev
 ```
 
-Open `http://127.0.0.1:5173`, then **Open local demo**. The command starts the Rust service on loopback port 8080 and Vite on loopback port 5173. First startup compiles Rust dependencies. The demo includes an armed rover, a disarmed rover, and a rover with unknown pose, including a 64-bit ID. Take control, select rover 1, enter local coordinates, review and confirm a waypoint. Arrival is simulated over five seconds.
+The GPUI window mounts `MapView` and does not sign into the service. The service listens on loopback port 8080. `http://127.0.0.1:8080/healthz` checks the process. There is no page at port 5173. The sections below describe what the removed browser did with that service; they are not instructions for the current window.
 
 The local view uses an offline SVG metre grid. The geographic view shows raw
 GPS fixes directly, with accuracy and fix age. No compass, AR tracking, shared
@@ -36,12 +38,7 @@ navigation needs a separate vehicle-side navigation capability; a raw fix does
 not authorize it. Live Terra frames are not automatically aligned to one another.
 Rovers without a shared local frame remain selectable outside the local field.
 
-Run the processes separately if preferred:
-
-```sh
-cargo run -p argos-server -- --demo --dev
-npm --prefix apps/web run dev
-```
+The service command above is the one that still runs. There is no Vite dev server.
 
 Development identity is explicitly enabled by `--dev`, only with the simulated fleet, loopback bind address and loopback origin. It is rejected in production. Local sessions and command audit records are saved in the ignored `argos.db` file. The service applies schema version 1 automatically on first start.
 
@@ -94,15 +91,12 @@ Rust tests cover gate/lease/order behavior and real local Zenoh drive/neutral/st
 ```sh
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
-npm test --prefix apps/web
-npm run build --prefix apps/web
-npx --prefix apps/web playwright install chromium
-npm run test:e2e --prefix apps/web
+cargo test -p terra-map
 ```
 
-Playwright starts both development processes automatically. Stop a manually started development server first for an isolated run. Integration tests open loopback sockets. Linux CI runs the existing Rust checks and browser tests; a separate job runs service tests, frontend tests and builds on all three desktop operating systems.
+Integration tests open loopback sockets. Linux CI runs the Rust workspace checks, including `terra-map` and `argos-gpui`. GPU tests stay ignored. There is no Playwright job.
 
-API types are Rust-owned. After changing a contract, run `cargo test -p argos-server --test types` and commit `apps/web/src/generated.ts`. Set `ARGOS_CHECK_TYPES=1` to check drift without rewriting the generated file; CI does this automatically.
+API types are Rust-owned. After changing a contract, run `cargo test -p argos-server --test types` and commit `crates/argos-server/tests/generated.ts`. Set `ARGOS_CHECK_TYPES=1` to check drift without rewriting the generated file; CI does this automatically.
 
 ## Local Docker deployment
 
@@ -113,13 +107,13 @@ plugin on Linux. Start Docker, then run from the repository root:
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:8080` and choose **Open local demo**. Use this exact origin
-for the demo's same-origin command checks. No `.env` file, OAuth app, rover, Rust,
-or Node.js installation is needed. Port 8080 must be free. Source changes require
+`http://127.0.0.1:8080/healthz` checks the service. The operator window is the
+GPUI binary on the host, not this origin. No `.env` file, OAuth app, or rover is
+needed for the simulated service. Port 8080 must be free. Source changes require
 running the build command again; source files are not live-mounted.
 
-The root `compose.yaml` builds one image containing the frontend and Rust
-service, plus a small Caddy proxy container. Both share a container network
+The root `compose.yaml` builds one image containing the Rust service, plus a
+small Caddy proxy container. It does not build a browser frontend. Both share a container network
 namespace: the Rust server keeps its required loopback bind, while Caddy forwards
 the port published on the host's `127.0.0.1`. This uses Docker bridge networking
 on Linux and Docker Desktop. Development identity is restricted to simulated
@@ -137,9 +131,9 @@ state resets whenever the service restarts. Check service health at
 
 ## Connect a real fleet from local Docker
 
-The separate `compose.fleet.yaml` connects the browser dashboard to a real Zenoh
-fleet. The browser runs at `https://localhost:8443`, with GitHub sign-in and
-numeric user-ID allowlists. The Rust API is reachable only inside the Compose
+The separate `compose.fleet.yaml` connects `argos-server` to a real Zenoh
+fleet. Caddy serves that API at `https://localhost:8443`, with GitHub sign-in and
+numeric user-ID allowlists. There is no browser bundle in the image. The Rust API is reachable only inside the Compose
 network; only the HTTPS proxy is published, on host loopback. Demo login remains
 disabled. This configuration can run alongside the demo and keeps separate data.
 
@@ -174,7 +168,7 @@ disabled. This configuration can run alongside the demo and keeps separate data.
    on a trusted private network. For a router without authentication, delete both
    `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` lines from `.env.fleet`.
 
-4. Start the dashboard:
+4. Start the service:
 
    ```sh
    docker compose --env-file .env.fleet -f compose.fleet.yaml up -d --build

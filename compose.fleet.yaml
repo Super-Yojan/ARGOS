@@ -1,4 +1,5 @@
-# Authenticated local dashboard connected to a real Zenoh fleet.
+# Authenticated argos-server connected to a real Zenoh fleet.
+# The GPUI dashboard runs on the host (`cargo run -p argos-gpui`); this image has no web bundle.
 # docker compose --env-file .env.fleet -f compose.fleet.yaml up -d --build
 name: argos-fleet
 services:

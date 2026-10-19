@@ -1,26 +1,27 @@
 # ARGOS architecture and control boundary
 
-ARGOS is a web fleet operator station. React/TypeScript renders observations and operator controls; the Rust Axum service validates authenticated requests and owns one fleet worker. Terra owns sensing, onboard planning, final motor selection, and watchdogs.
+ARGOS is a fleet operator station. The GPUI dashboard (`crates/argos-gpui`) mounts the Map View from `crates/terra-map`. The Rust Axum service validates authenticated requests and owns one fleet worker. The window does not call that service yet. Terra owns sensing, onboard planning, final motor selection, and watchdogs.
 
 ```mermaid
 flowchart LR
-  web[React browser] -->|HTTPS / SSE| service[argos-server]
-  service --> store[(SQLite sessions and audit)]
+  gpui[argos-gpui] --> map[terra-map Map View]
+  service[argos-server] --> store[(SQLite sessions and audit)]
   service --> zenoh[argos-zenoh]
   zenoh --> core[argos-core]
   zenoh --> bus[Zenoh fleet]
-  legacy[Legacy Swift app] --> ffi[argos-ffi / UniFFI] --> zenoh
+  ffi[argos-ffi / UniFFI] --> zenoh
 ```
 
 | Component | Responsibility |
 | --- | --- |
-| `apps/web` | Fleet scene, selection, reviewed commands, browser interaction |
+| `crates/argos-gpui` | Dashboard window. Mounts `MapView`. No fleet or Zenoh UI yet |
+| `crates/terra-map` | Google 3D Tiles and georeferenced models (`terra_map`) |
 | `crates/argos-server` | OAuth/session roles, CSRF/origin checks, claims, command engine, SSE, persistence |
 | `crates/argos-core` | Contracts, projection, freshness, acknowledgement and operator state |
 | `crates/argos-zenoh` | Fleet transport, validated telemetry, command publication, session logs |
-| `crates/argos-ffi` and `apps/apple` | Retained native fallback |
+| `crates/argos-ffi` | UniFFI facade. The Swift dashboard that linked it has been removed |
 | `spikes/unity-dashboard` | Historical Unity prototype; not the selected product UI |
-| `packaging/web`, `packaging/gcp` | Hosted service/router packaging |
+| `packaging/web`, `packaging/gcp` | Hosted service/router packaging. No browser bundle |
 
 ## Observation and command semantics
 
@@ -42,4 +43,4 @@ The browser claim does not fence native clients on Zenoh. Avoid simultaneous nat
 
 ## Migration status
 
-The web interface is the primary development target. Native mission proposal approval, target-search setup, and native evidence/export flows are not automatically browser features. See the [browser guide](browser-dashboard.md) for implemented controls and the [roadmap](roadmap.md) for remaining migration work. Historical plans describe their original slice and are not the current architecture.
+The GPUI map is the primary development target. The service still implements the command gates described below; the window does not expose them yet. The [removed browser dashboard](browser-dashboard.md) records the React controls, and the [roadmap](roadmap.md) lists what is still unwired. Historical plans describe their original slice and are not the current architecture.

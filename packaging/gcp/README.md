@@ -38,7 +38,7 @@ Live `/api/v1/events` responses bypass compression to prevent proxy buffering. T
 
 ## Deploy another release
 
-Build the web bundle with `npm ci --prefix apps/web && npm run build --prefix apps/web`. Build Linux binaries with:
+There is no browser bundle. Create an empty `web/` directory in the release so `install.sh` can copy it to `/opt/argos/web`. The operator UI is `argos-gpui` on a machine with a window and a GPU, not this VM image. Build Linux service binaries with:
 
 ```sh
 rustup target add x86_64-unknown-linux-gnu

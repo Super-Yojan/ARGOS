@@ -1,10 +1,10 @@
 # Deployment
 
-The primary deployment is **browser → HTTPS ARGOS service → Zenoh fleet router → Terra/Zorvane**. The Rust service serves the built web interface and API, authenticates invited GitHub accounts, and keeps command/audit state in SQLite.
+The service deployment is **HTTPS ARGOS service → Zenoh fleet router → Terra/Zorvane**. The operator window is the native GPUI binary and is not inside the service image. The Rust service authenticates invited GitHub accounts, exposes the HTTP API, and keeps command/audit state in SQLite. `ARGOS_WEB_DIR` is empty unless you add static files yourself.
 
 ```mermaid
 flowchart LR
-  browser[Browser] -->|HTTPS 443| caddy[Caddy]
+  client[HTTPS client] -->|HTTPS 443| caddy[Caddy]
   caddy --> server[ARGOS Axum service]
   server --> db[(SQLite)]
   server -->|private TCP or authenticated TLS| router[Zenoh router]
@@ -15,7 +15,7 @@ flowchart LR
 
 - [Docker Compose hosting](browser-dashboard.md#public-hosting-for-one-team): Linux host, Caddy HTTPS, SQLite volume, and private fleet connectivity through Tailscale.
 - [GCP system-service packaging](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md): installer, TLS router configuration, and service units. These are deployment instructions, not proof of a currently healthy hosted service.
-- [Legacy Mac-hosted router](deployment-router.md): retained native fallback and LAN/Tailscale operation.
+- [Legacy Mac-hosted router](deployment-router.md): historical native fallback and LAN/Tailscale notes. The Swift app is no longer in the tree.
 
 Do not enable demo development identity for a real fleet. Hosted configuration requires an HTTPS origin, GitHub OAuth credentials, and numeric viewer/operator account allowlists. Only operators can claim command control; mutations check origin and CSRF tokens.
 

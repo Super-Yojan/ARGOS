@@ -1,6 +1,6 @@
 # Decision record: 3D dashboard framework (Unity C3)
 
-> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The React dashboard and SwiftUI apps were removed on October 19, 2026. The operator surface is the GPUI app in `crates/argos-gpui`, which mounts the `terra-map` Map View. The Rust service remains. Read the [removed browser dashboard](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
 
 > **Summary.** Build the next operator station ("C3") in **Unity 6 + a Rust
 > C-ABI bridge over `argos-zenoh`**; keep the Swift app frozen as the fallback

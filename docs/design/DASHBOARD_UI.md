@@ -1,6 +1,6 @@
 # ARGOS scene dashboard
 
-> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The React dashboard and SwiftUI apps were removed on October 19, 2026. The operator surface is the GPUI app in `crates/argos-gpui`, which mounts the `terra-map` Map View. The Rust service remains. Read the [removed browser dashboard](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
 
 The visual source of truth is [the operator dashboard design](https://super-yojan.dev/ARGOS/design/operator-dashboard/), including its main-layout and third-person wireframes. One place fills the screen. There is no roster, alert queue, navigation menu, metric-card overview, or unit switcher.
 

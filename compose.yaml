@@ -1,4 +1,5 @@
-# Local simulated fleet: docker compose up -d --build
+# Local simulated fleet API. The operator UI is `cargo run -p argos-gpui`, not this image.
+# docker compose up -d --build
 services:
   argos:
     build:

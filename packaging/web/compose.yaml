@@ -1,4 +1,5 @@
-# Linux production host. Tailscale runs on the host; only Caddy exposes public ports.
+# Linux production host for argos-server. The image serves the HTTP API; it does not
+# bundle a browser dashboard. Tailscale runs on the host; only Caddy exposes public ports.
 services:
   argos:
     build:

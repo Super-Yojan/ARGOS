@@ -1,6 +1,6 @@
 # Shared spatial dashboard contract
 
-> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The React dashboard and SwiftUI apps were removed on October 19, 2026. The operator surface is the GPUI app in `crates/argos-gpui`, which mounts the `terra-map` Map View. The Rust service remains. Read the [removed browser dashboard](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
 
 The Mac/iPad renderer consumes reported fleet state. The platform-neutral `FleetSceneState` owns selection, inspection and unconfirmed waypoint coordinates; selection changes and coordinate-frame changes discard drafts. `FleetSceneVehicle` carries id, membership, nullable position/heading, staleness, attention reason and nullable goal. FleetModel exports the current scene as versioned JSON through `sceneDocument()` for fixture/debug consumers.
 
