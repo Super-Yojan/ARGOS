@@ -4,8 +4,6 @@ use gpui_kit::{prelude::*, *};
 use std::{path::PathBuf, time::Duration};
 use terra_map::{Color, GeoPosition, Map, MapConfig, MapEvent, MapMode, MapView, ObjectId};
 
-use std::sync::Arc;
-
 struct Robot {
     name: &'static str,
     location: GeoPosition,

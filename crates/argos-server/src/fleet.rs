@@ -92,8 +92,8 @@ impl Fleet for DemoFleet {
         // The demo synthesizes GPS explicitly; live fleets only use reported fixes.
         for rover in &mut self.rovers {
             rover.gps = rover.pose.as_ref().map(|pose| GpsFix {
-                latitude: 38.8297 + pose.x / 111_319.4908,
-                longitude: -77.3075 - pose.y / (111_319.4908 * 38.8297_f64.to_radians().cos()),
+                latitude: 38.8297 + pose.x / 111_319.490_8,
+                longitude: -77.3075 - pose.y / (111_319.490_8 * 38.8297_f64.to_radians().cos()),
                 accuracy: 4.,
                 age: 0.,
             });

@@ -6,7 +6,7 @@ As of October 19, 2026, new dashboard work targets `crates/argos-gpui` and `crat
 
 ## Start the dashboard
 
-Install stable Rust (edition 2024) and a C toolchain. Linux also needs the GPUI and Vulkan development packages (`libwayland`, `libxkbcommon`, `libvulkan`, and X11/XCB headers). No API key is stored in this repository.
+Install stable Rust (edition 2024) and a C toolchain. Linux also needs the GPUI and Vulkan development packages (`libwayland`, `libxkbcommon`, `libxkbcommon-x11`, `libvulkan`, and X11/XCB headers). No API key is stored in this repository.
 
 `GOOGLE_MAPS_API_KEY` in the process environment loads Google tiles. The Google Cloud project needs billing and the Map Tiles API. Without a key, or for an offline check, use the synthetic fixture:
 

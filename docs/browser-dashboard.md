@@ -152,7 +152,7 @@ disabled. This configuration can run alongside the demo and keeps separate data.
 
 3. Set the fleet endpoint, prefix and membership credentials to match the Terra
    phones. The template starts with the hosted TLS router documented in
-   [the GCP guide](../packaging/gcp/README.md), prefix `terra/phone` and user
+   [the GCP guide](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md), prefix `terra/phone` and user
    `terra`; enter its fleet password privately in `.env.fleet`. Router availability
    and valid credentials are still required. Keep the filled-in file out of git.
    For passwords containing `$` or `#`, use single quotes around the entire value

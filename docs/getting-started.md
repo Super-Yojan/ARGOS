@@ -30,7 +30,7 @@ Docker builds the same service:
 docker compose up -d --build
 ```
 
-Check `http://127.0.0.1:8080/healthz`. That URL is the API, not a dashboard. Real fleets use [compose.fleet.yaml](../compose.fleet.yaml) and the [hosting notes](browser-dashboard.md#connect-a-real-fleet-from-local-docker).
+Check `http://127.0.0.1:8080/healthz`. That URL is the API, not a dashboard. Real fleets use `compose.fleet.yaml` and the [hosting notes](browser-dashboard.md#connect-a-real-fleet-from-local-docker).
 
 Start Zorvane using its [current run guide](https://super-yojan.dev/Zorvane/running/). For physical hardware, install a compatible TerraPhone runtime and verify its reported hardware and authority state. Connection never arms hardware automatically.
 
