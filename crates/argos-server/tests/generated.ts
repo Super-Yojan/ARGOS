@@ -10,14 +10,30 @@ export type Hardware = { arming?: boolean | null, token?: string | null, result?
 export type Reference = { latitude: number, longitude: number, anchor_x: number, anchor_y: number, rotation: number, frame_id: string, };
 export type GpsFix = { latitude: number, longitude: number, accuracy: number, age: number, };
 export type Goal = { state: string, token: string | null, x: number, y: number, distance: number, };
-export type Rover = { gps?: GpsFix | null, navigation?: NavigationState | null, id: string, membership: string, pose: Pose | null, pose_age: number | null, goal: Goal | null, goal_age: number | null, goal_observation: string | null, frame_id: string | null, authority: Authority | null, hardware: Hardware | null, reference: Reference | null, };
+export type Rover = { gps?: GpsFix | null, navigation?: NavigationState | null, id: string, membership: string, pose: Pose | null, pose_age: number | null, goal: Goal | null, goal_age: number | null, goal_observation: string | null, frame_id: string | null, authority: Authority | null, hardware: Hardware | null, reference: Reference | null, 
+/**
+ * Versioned outdoor capability and mission status. Absent on older vehicles.
+ */
+outdoor?: OutdoorStatus | null, };
 export type Waypoint = { "frame": "local", x: number, y: number, yaw: number | null, } | { "frame": "geographic", latitude: number, longitude: number, yaw: number | null, };
-export type WaypointRequest = { run_id: string, frame_id: string | null, request_id: string, waypoint: Waypoint, };
+export type WaypointRequest = { run_id: string, frame_id: string | null, request_id: string, waypoint: Waypoint, 
+/**
+ * Reviewed outdoor arrival radius, metres. Frozen at admission. Local goals ignore it.
+ */
+arrival_radius?: number | null, };
 export type CancelRequest = { request_id: string, };
 export type HardwareRequest = { request_id: string, action: string, run_id: string, revision: string, };
 export type AutonomyRequest = { request_id: string, level: string, run_id: string, revision: string, };
 export type DriveRequest = { run_id: string, revision: string, sequence: number, observed_at: number, linear: number, angular: number, };
-export type Operation = { settings?: NavigationParameters | null, settings_revision?: string | null, id: string, request_id: string, user_id: string, owner: string, rover_id: string, kind: string, waypoint: Waypoint | null, phase: string, message: string, mode_token: string | null, goal_token: string | null, run_id: string, goal_observation: string | null, started: number, created_at: number, mode_level: string, revision: string, frame_id: string | null, };
+export type Operation = { settings?: NavigationParameters | null, settings_revision?: string | null, id: string, request_id: string, user_id: string, owner: string, rover_id: string, kind: string, waypoint: Waypoint | null, phase: string, message: string, mode_token: string | null, goal_token: string | null, run_id: string, goal_observation: string | null, started: number, created_at: number, mode_level: string, revision: string, frame_id: string | null, 
+/**
+ * Frozen outdoor arrival radius. Provisional until Terra publishes the mission field.
+ */
+arrival_radius?: number | null, 
+/**
+ * Navigation revision bound when an outdoor goal or source change was reviewed.
+ */
+navigation_revision?: string | null, };
 export type Claim = { owner: string, login: string, expires_at: number, };
 export type FleetSnapshot = { link: string, rovers: Array<Rover>, operations: Array<Operation>, claim: Claim | null, now: number, };
 export type PublicConfig = { demo: boolean, tile_style: string | null, };

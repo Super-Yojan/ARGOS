@@ -284,6 +284,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             y: -0.5,
             yaw: None,
         },
+        None,
     );
     wait_for(|| {
         wire.lock().unwrap().iter().any(|(key, body)| {
@@ -300,8 +301,9 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             longitude: -77.3,
             yaw: None,
         },
+        Some(5.),
     );
-    wait_for(|| feed.picture().command.contains("unsupported"));
+    wait_for(|| feed.picture().command.contains("App update required"));
     assert!(
         wire.lock()
             .unwrap()
@@ -336,6 +338,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             y: 0.5,
             yaw: None,
         },
+        None,
     );
     wait_for(|| feed.picture().command.contains("degraded"));
     stop.store(true, std::sync::atomic::Ordering::Relaxed);

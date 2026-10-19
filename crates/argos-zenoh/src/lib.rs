@@ -365,6 +365,8 @@ impl Client {
                     "/autonomy/status"
                 } else if key.ends_with("/pose/quality") {
                     "/pose/quality"
+                } else if key.ends_with("/navigation/outdoor") {
+                    "/navigation/outdoor"
                 } else if key.ends_with("/search/report") {
                     "/search/report"
                 } else if key.ends_with("/search/status") {
@@ -447,6 +449,8 @@ impl Client {
                     "occupancy"
                 } else if suffix == "/pose/quality" {
                     "pose_quality"
+                } else if suffix == "/navigation/outdoor" {
+                    "outdoor"
                 } else {
                     "authority"
                 };
@@ -605,6 +609,8 @@ impl Client {
             let age = received.elapsed().as_secs_f64();
             let max_age = if kind == "authority" || kind == "hardware" {
                 SUPERVISION_STALE_SECONDS
+            } else if kind == "outdoor" {
+                3.0
             } else {
                 2.5
             };
@@ -687,6 +693,7 @@ impl Client {
                 | "teleop"
                 | "hardware"
                 | "navigation/settings"
+                | "navigation/source"
                 | "search"
                 | "search/action"
                 | "search/report/ack"
@@ -805,6 +812,59 @@ impl Client {
                     return Err(invalid(
                         "settings require current authority and ready disarmed hardware",
                     ));
+                }
+            } else if kind == "navigation/source" {
+                let source = value["source"].as_str();
+                if value["schema_version"] != 1
+                    || !matches!(source, Some("local" | "outdoor_gps"))
+                    || value["token"]
+                        .as_str()
+                        .is_none_or(|token| !valid_token(token))
+                    || !value["run_id"].is_string()
+                    || value["navigation_revision"].as_u64().is_none()
+                {
+                    return Err(invalid("invalid navigation source request"));
+                }
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("hardware status unavailable"))?;
+                if at.elapsed().as_secs_f64() >= 0.5
+                    || hardware["ready"] != true
+                    || hardware["armed"] != false
+                    || hardware["arming"] == true
+                {
+                    return Err(invalid(
+                        "Navigation source changes while the rover is disarmed",
+                    ));
+                }
+                if value["run_id"] != authority["run_id"] {
+                    return Err(invalid("navigation run changed"));
+                }
+                if self.snapshot().rovers.iter().any(|rover| {
+                    rover.id == id
+                        && rover
+                            .goal
+                            .as_ref()
+                            .is_some_and(|goal| goal.state == GoalState::Active)
+                }) {
+                    return Err(invalid(
+                        "Navigation source changes require no active mission",
+                    ));
+                }
+                if source == Some("outdoor_gps") {
+                    let (outdoor, outdoor_at) = states
+                        .get(&(id, "outdoor".into()))
+                        .ok_or_else(|| invalid("App update required"))?;
+                    if outdoor_at.elapsed().as_secs_f64() >= 3.
+                        || argos_core::OutdoorReport::decode(outdoor).is_err()
+                        || argos_core::app_update_required(
+                            argos_core::OutdoorReport::decode(outdoor).ok().as_ref(),
+                        )
+                        || outdoor["navigation_revision"] != value["navigation_revision"]
+                        || outdoor["run_id"] != value["run_id"]
+                    {
+                        return Err(invalid("App update required"));
+                    }
                 }
             } else if kind == "hardware" {
                 if value["run_id"] != authority["run_id"]

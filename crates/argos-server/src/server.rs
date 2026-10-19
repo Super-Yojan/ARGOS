@@ -146,6 +146,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/rovers/{id}/autonomy", post(autonomy))
         .route("/api/v1/rovers/{id}/occupancy", get(occupancy))
         .route("/api/v1/rovers/{id}/navigation", post(navigation))
+        .route("/api/v1/rovers/{id}/navigation/source", post(source))
         .route("/api/v1/operations/{id}", get(operation))
         .route(
             "/api/{*path}",
@@ -220,6 +221,14 @@ async fn navigation(
     Json(r): Json<NavigationRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     dispatch(&s, &h, Action::Navigation(id, r)).await
+}
+async fn source(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(r): Json<SourceRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    dispatch(&s, &h, Action::Source(id, r)).await
 }
 async fn occupancy(
     State(s): State<AppState>,

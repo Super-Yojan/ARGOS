@@ -4,11 +4,12 @@
 //! stays on that client and is idle until the window selects a rover.
 
 use argos_core::{
-    CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState, LocalFrame, LocalMap,
-    OccupancyGrid, Pose, PoseWatch, RouteSample, Snapshot, TeleopLimits, Topics, classify_cell,
-    decode_autonomy_value, fallback_degrade_reason, geographic_goal_refusal, goal_blocked,
-    local_map, map_heading_degrees, outdoor_gps_advertised, reported_pose_quality,
-    rover_geographic,
+    APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
+    LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport, Pose, PoseWatch, RawGps,
+    RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal, classify_cell,
+    decode_autonomy_value, decode_raw_gps, encode_source_request, fallback_degrade_reason,
+    goal_blocked, local_map, map_heading_degrees, reported_outdoor, reported_pose_quality,
+    rover_geographic, source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -344,10 +345,18 @@ pub struct RoverMark {
     pub reversing: bool,
     pub hold: Option<String>,
     pub command_origin: CommandOrigin,
-    /// Metres. Provisional outdoor arrival radius from navigation telemetry.
+    /// Metres. Frozen from the reviewed outdoor report, otherwise the 5 m default.
     pub arrival_radius: f64,
-    /// True only when navigation telemetry advertises `outdoor_gps`.
+    /// True when outdoor GPS is the acknowledged navigation source.
     pub outdoor_gps: bool,
+    pub disarmed: bool,
+    pub run_id: String,
+    pub navigation_revision: u64,
+    pub outdoor: Option<OutdoorReport>,
+    pub raw_gps: Option<RawGps>,
+    pub app_update_required: bool,
+    pub mission_active: bool,
+    pub goal_active: bool,
 }
 #[derive(Clone, Debug)]
 pub struct FleetPicture {
@@ -393,7 +402,10 @@ pub fn fleet_marks(
             };
             let report = decode_autonomy_value(&operator[&key]["authority"]).ok();
             let quality = reported_pose_quality(&operator[&key]);
+            let outdoor = reported_outdoor(&operator[&key]);
+            let hardware = &operator[&key]["hardware"];
             let grid = occupancy(rover.id);
+            let raw_gps = decode_raw_gps(localizations.get(&key).unwrap_or(&Value::Null));
             Some(RoverMark {
                 id: rover.id,
                 latitude,
@@ -433,11 +445,35 @@ pub fn fleet_marks(
                     .as_ref()
                     .map(|report| report.origin)
                     .unwrap_or_default(),
-                arrival_radius: report
+                arrival_radius: outdoor
                     .as_ref()
-                    .map(|report| report.arrival_radius)
+                    .map(|report| report.arrival_radius_m)
                     .unwrap_or(5.),
-                outdoor_gps: outdoor_gps_advertised(&operator[&key]),
+                outdoor_gps: outdoor
+                    .as_ref()
+                    .is_some_and(|report| report.acknowledged_outdoor()),
+                disarmed: hardware.is_object()
+                    && hardware["armed"] == false
+                    && hardware["arming"] != true,
+                run_id: report
+                    .as_ref()
+                    .and_then(|_| operator[&key]["authority"]["run_id"].as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                navigation_revision: outdoor
+                    .as_ref()
+                    .map(|report| report.navigation_revision)
+                    .unwrap_or(0),
+                mission_active: outdoor
+                    .as_ref()
+                    .is_some_and(|report| report.mission_active()),
+                goal_active: rover
+                    .goal
+                    .as_ref()
+                    .is_some_and(|goal| goal.state == GoalState::Active),
+                app_update_required: argos_core::app_update_required(outdoor.as_ref()),
+                raw_gps,
+                outdoor,
             })
         })
         .collect()
@@ -625,14 +661,13 @@ impl FleetFeed {
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
     }
-    /// Publish a confirmed goal. Local is the default. Geographic is refused
-    /// unless this rover's telemetry advertises `outdoor_gps`.
-    pub fn publish_goal(&self, id: u64, goal: GoalRequest) {
+    /// Publish a confirmed goal. A geographic goal is admitted only while outdoor
+    /// readiness still matches the reviewed run and navigation revision.
+    pub fn publish_goal(&self, id: u64, goal: GoalRequest, arrival_radius_m: Option<f64>) {
         let client = self.client.clone();
         let picture = self.picture.clone();
         std::thread::spawn(move || {
             let message = (|| {
-                let geographic = matches!(goal, GoalRequest::Geographic { .. });
                 {
                     let current = picture.lock().unwrap();
                     if current.link != "healthy" {
@@ -643,10 +678,28 @@ impl FleetFeed {
                         .iter()
                         .find(|mark| mark.id == id)
                         .ok_or("Select a rover that is in the fleet")?;
-                    if let Some(reason) = geographic_goal_refusal(mark.outdoor_gps)
-                        && geographic
+                    if let GoalRequest::Geographic {
+                        latitude,
+                        longitude,
+                        ..
+                    } = goal
                     {
-                        return Err(reason.to_string());
+                        if mark.app_update_required {
+                            return Err(APP_UPDATE_REQUIRED.into());
+                        }
+                        let level = mark
+                            .effective_level
+                            .as_deref()
+                            .or(mark.requested_level.as_deref());
+                        admit_outdoor_goal(OutdoorAdmission {
+                            report: mark.outdoor.as_ref(),
+                            latitude,
+                            longitude,
+                            arrival_radius_m: arrival_radius_m.unwrap_or(mark.arrival_radius),
+                            level,
+                            run_id: &mark.run_id,
+                            navigation_revision: mark.navigation_revision,
+                        })?;
                     }
                     if let Some(reason) = goal_blocked(mark.degraded) {
                         return Err(format!("{reason} ({})", mark.degrade_reason));
@@ -658,6 +711,52 @@ impl FleetFeed {
                     .send_goal(id, goal)
                     .map_err(|error| error.to_string())?;
                 Ok("Goal sent".to_string())
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    pub fn select_source(&self, id: u64, source: &str) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        let source = source.to_string();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let (run_id, revision, disarmed, goal_active, mission_active, outdoor) = {
+                    let current = picture.lock().unwrap();
+                    let mark = current
+                        .marks
+                        .iter()
+                        .find(|mark| mark.id == id)
+                        .ok_or("Select a rover that is in the fleet")?;
+                    (
+                        mark.run_id.clone(),
+                        mark.navigation_revision,
+                        mark.disarmed,
+                        mark.goal_active,
+                        mark.mission_active,
+                        mark.outdoor.clone(),
+                    )
+                };
+                if let Some(reason) = source_change_refusal(
+                    disarmed,
+                    goal_active,
+                    mission_active,
+                    &source,
+                    outdoor.as_ref(),
+                ) {
+                    return Err(reason.to_string());
+                }
+                let token = format!("src-{id}-{}", unix_millis());
+                let bytes = encode_source_request(&source, &token, &run_id, revision)
+                    .map_err(|error| error.to_string())?;
+                let payload =
+                    String::from_utf8(bytes).map_err(|_| "navigation source".to_string())?;
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client
+                    .operator_command(id, "navigation/source", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!("Requested {source} navigation"))
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });

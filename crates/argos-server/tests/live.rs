@@ -148,6 +148,7 @@ fn live_adapter_observes_local_frames_and_publishes_one_correlated_waypoint() {
                     y: 3.,
                     yaw: None,
                 },
+                arrival_radius: None,
             },
             0.,
         )

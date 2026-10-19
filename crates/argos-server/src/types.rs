@@ -87,6 +87,10 @@ pub struct Rover {
     pub authority: Option<Authority>,
     pub hardware: Option<Hardware>,
     pub reference: Option<Reference>,
+    /// Versioned outdoor capability and mission status. Absent on older vehicles.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub outdoor: Option<OutdoorStatus>,
 }
 impl Rover {
     pub fn demo(id: &str, x: f64, y: f64) -> Self {
@@ -127,6 +131,7 @@ impl Rover {
                 reason: "Simulated hardware".into(),
                 age: 0.,
             }),
+            outdoor: None,
             reference: Some(Reference {
                 latitude: 38.8297,
                 longitude: -77.3075,
@@ -192,6 +197,10 @@ pub struct WaypointRequest {
     pub frame_id: Option<String>,
     pub request_id: String,
     pub waypoint: Waypoint,
+    /// Reviewed outdoor arrival radius, metres. Frozen at admission. Local goals ignore it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub arrival_radius: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -240,6 +249,14 @@ pub struct Operation {
     pub mode_level: String,
     pub revision: String,
     pub frame_id: Option<String>,
+    /// Frozen outdoor arrival radius. Provisional until Terra publishes the mission field.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub arrival_radius: Option<f64>,
+    /// Navigation revision bound when an outdoor goal or source change was reviewed.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub navigation_revision: Option<String>,
 }
 impl Operation {
     pub fn terminal(&self) -> bool {
@@ -352,6 +369,125 @@ impl Default for NavigationState {
         }
     }
 }
+/// Navigation source selection. Field names are provisional until the Terra PR.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRequest {
+    pub request_id: String,
+    pub run_id: String,
+    pub revision: String,
+    pub navigation_revision: String,
+    pub source: String,
+}
+
+/// Version-1 outdoor capability and mission telemetry.
+///
+/// JSON names other than `outdoor_gps` are provisional and follow
+/// `argos_core::OutdoorReport`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
+pub struct OutdoorStatus {
+    pub schema_version: u32,
+    pub supported: bool,
+    pub acknowledged: bool,
+    pub source: String,
+    pub run_id: String,
+    pub navigation_revision: String,
+    pub ready: bool,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub hold_reason: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gps_age_s: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gps_accuracy_m: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub heading_age_s: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub heading_accuracy_deg: Option<f64>,
+    pub arrival_radius_m: f64,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub destination_latitude: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub destination_longitude: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub remaining_m: Option<f64>,
+    pub phase: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gps_latitude: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gps_longitude: Option<f64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub token: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub result: Option<String>,
+    pub age: f64,
+}
+impl OutdoorStatus {
+    pub fn from_report(report: &argos_core::OutdoorReport, age: f64) -> Self {
+        Self {
+            schema_version: report.schema_version as u32,
+            supported: report.supported,
+            acknowledged: report.acknowledged,
+            source: report.source.clone(),
+            run_id: report.run_id.clone(),
+            navigation_revision: report.navigation_revision.to_string(),
+            ready: report.ready,
+            hold_reason: report.hold_reason.clone(),
+            gps_age_s: report.gps_age_s,
+            gps_accuracy_m: report.gps_accuracy_m,
+            heading_age_s: report.heading_age_s,
+            heading_accuracy_deg: report.heading_accuracy_deg,
+            arrival_radius_m: report.arrival_radius_m,
+            destination_latitude: report.destination_latitude,
+            destination_longitude: report.destination_longitude,
+            remaining_m: report.remaining_m,
+            phase: report.phase.clone(),
+            gps_latitude: report.gps_latitude,
+            gps_longitude: report.gps_longitude,
+            token: report.token.clone(),
+            result: report.result.clone(),
+            age,
+        }
+    }
+    pub fn to_report(&self) -> argos_core::OutdoorReport {
+        argos_core::OutdoorReport {
+            schema_version: self.schema_version as u64,
+            supported: self.supported,
+            acknowledged: self.acknowledged,
+            source: self.source.clone(),
+            run_id: self.run_id.clone(),
+            navigation_revision: self.navigation_revision.parse().unwrap_or(0),
+            ready: self.ready,
+            hold_reason: self.hold_reason.clone(),
+            gps_age_s: self.gps_age_s,
+            gps_accuracy_m: self.gps_accuracy_m,
+            heading_age_s: self.heading_age_s,
+            heading_accuracy_deg: self.heading_accuracy_deg,
+            arrival_radius_m: self.arrival_radius_m,
+            destination_latitude: self.destination_latitude,
+            destination_longitude: self.destination_longitude,
+            remaining_m: self.remaining_m,
+            phase: self.phase.clone(),
+            gps_latitude: self.gps_latitude,
+            gps_longitude: self.gps_longitude,
+            token: self.token.clone(),
+            result: self.result.clone(),
+            age_s: Some(self.age),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct NavigationRequest {

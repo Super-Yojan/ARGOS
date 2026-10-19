@@ -165,6 +165,40 @@ impl Fleet for DemoFleet {
             .push((id.into(), level.into(), token.into(), self.now + 0.6));
         Ok(())
     }
+    fn select_source(
+        &mut self,
+        id: &str,
+        source: &str,
+        token: &str,
+        run_id: &str,
+        navigation_revision: &str,
+    ) -> Result<(), String> {
+        let rover = self
+            .rovers
+            .iter_mut()
+            .find(|rover| rover.id == id)
+            .ok_or("Unknown rover")?;
+        if rover
+            .hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.armed)
+        {
+            return Err("Navigation source changes while the rover is disarmed".into());
+        }
+        let mut report = rover
+            .outdoor
+            .clone()
+            .ok_or_else(|| argos_core::APP_UPDATE_REQUIRED.to_string())?;
+        report.source = source.into();
+        report.acknowledged = true;
+        report.token = Some(token.into());
+        report.result = Some("accepted".into());
+        report.run_id = run_id.into();
+        report.navigation_revision = navigation_revision.into();
+        report.age = 0.;
+        rover.outdoor = Some(report);
+        Ok(())
+    }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String> {
         let r = self
             .rovers
@@ -432,6 +466,9 @@ impl Fleet for LiveFleet {
                         None
                     },
                     reference: None,
+                    outdoor: argos_core::reported_outdoor(&op[&id]).map(|report| {
+                        OutdoorStatus::from_report(&report, report.age_s.unwrap_or(0.))
+                    }),
                 }
             })
             .collect();
@@ -488,6 +525,28 @@ impl Fleet for LiveFleet {
             )
             .map_err(|e| e.to_string())
     }
+    fn select_source(
+        &mut self,
+        id: &str,
+        source: &str,
+        token: &str,
+        run_id: &str,
+        navigation_revision: &str,
+    ) -> Result<(), String> {
+        let revision = navigation_revision
+            .parse::<u64>()
+            .map_err(|_| "Invalid navigation revision")?;
+        let bytes = argos_core::encode_source_request(source, token, run_id, revision)
+            .map_err(|error| error.to_string())?;
+        let payload = String::from_utf8(bytes).map_err(|_| "navigation source payload")?;
+        self.client()?
+            .operator_command(
+                id.parse().map_err(|_| "Invalid rover ID")?,
+                "navigation/source",
+                &payload,
+            )
+            .map_err(|error| error.to_string())
+    }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String> {
         self.client()?
             .send_goal(id.parse().map_err(|_| "Invalid rover ID")?, goal.core())
@@ -541,6 +600,17 @@ impl Fleet for Box<dyn Fleet> {
     }
     fn select_mode(&mut self, id: &str, level: &str, token: &str) -> Result<(), String> {
         self.as_mut().select_mode(id, level, token)
+    }
+    fn select_source(
+        &mut self,
+        id: &str,
+        source: &str,
+        token: &str,
+        run_id: &str,
+        navigation_revision: &str,
+    ) -> Result<(), String> {
+        self.as_mut()
+            .select_source(id, source, token, run_id, navigation_revision)
     }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String> {
         self.as_mut().send_goal(id, goal)

@@ -23,6 +23,16 @@ pub trait Fleet: Send + 'static {
         Ok(None)
     }
     fn select_mode(&mut self, id: &str, level: &str, token: &str) -> Result<(), String>;
+    fn select_source(
+        &mut self,
+        _id: &str,
+        _source: &str,
+        _token: &str,
+        _run_id: &str,
+        _navigation_revision: &str,
+    ) -> Result<(), String> {
+        Err("Navigation source selection unavailable".into())
+    }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String>;
     fn cancel(&mut self, id: &str) -> Result<(), String>;
     fn hardware(
@@ -196,6 +206,8 @@ impl<F: Fleet> Engine<F> {
             mode_level: String::new(),
             revision: String::new(),
             frame_id: None,
+            arrival_radius: None,
+            navigation_revision: None,
             settings: None,
             settings_revision: None,
         };
@@ -315,9 +327,6 @@ impl<F: Fleet> Engine<F> {
             }
             return Ok(op);
         }
-        if matches!(request.waypoint, Waypoint::Geographic { .. }) {
-            return Err("GPS is for observation only; send waypoints in local coordinates".into());
-        }
         request
             .waypoint
             .core()
@@ -340,9 +349,6 @@ impl<F: Fleet> Engine<F> {
         {
             return Err("Rover run or coordinate frame changed; review a new waypoint".into());
         }
-        if matches!(request.waypoint, Waypoint::Geographic { .. }) && rover.reference.is_none() {
-            return Err("Usable geographic reference required".into());
-        }
         if self
             .operations
             .values()
@@ -351,14 +357,50 @@ impl<F: Fleet> Engine<F> {
             return Err("Rover already has an active operation; cancel it first".into());
         }
         let a = rover.authority.as_ref().ok_or("Missing authority")?;
-        let level = if a.requested_level == "waypoint_direct" {
-            "waypoint_direct"
+        let (level, arrival_radius, navigation_revision) = if let Waypoint::Geographic {
+            latitude,
+            longitude,
+            ..
+        } = request.waypoint
+        {
+            if a.requested_level == "waypoint_direct"
+                || !a.supported_levels.iter().any(|s| s == "waypoint")
+            {
+                return Err("Outdoor GPS missions require L3 Waypoint".into());
+            }
+            let report = rover
+                .outdoor
+                .as_ref()
+                .map(OutdoorStatus::to_report)
+                .ok_or_else(|| argos_core::APP_UPDATE_REQUIRED.to_string())?;
+            let radius =
+                argos_core::freeze_arrival_radius(request.arrival_radius, report.arrival_radius_m)?;
+            // Bind the revision being reviewed. Publication checks this same value again.
+            argos_core::admit_outdoor_goal(argos_core::OutdoorAdmission {
+                report: Some(&report),
+                latitude,
+                longitude,
+                arrival_radius_m: radius,
+                level: None,
+                run_id: &a.run_id,
+                navigation_revision: report.navigation_revision,
+            })?;
+            (
+                "waypoint".to_string(),
+                Some(radius),
+                Some(report.navigation_revision.to_string()),
+            )
         } else {
-            "waypoint"
+            let level = if a.requested_level == "waypoint_direct" {
+                "waypoint_direct"
+            } else {
+                "waypoint"
+            };
+            if !a.supported_levels.iter().any(|s| s == level) {
+                return Err("Waypoint mode not supported".into());
+            }
+            (level.to_string(), None, None)
         };
-        if !a.supported_levels.iter().any(|s| s == level) {
-            return Err("Waypoint mode not supported".into());
-        }
         let op = Operation {
             settings: None,
             settings_revision: None,
@@ -377,9 +419,11 @@ impl<F: Fleet> Engine<F> {
             goal_observation: None,
             started: now,
             created_at: crate::auth::epoch() as f64,
-            mode_level: level.into(),
+            mode_level: level.clone(),
             revision: a.revision.clone(),
             frame_id: rover.frame_id.clone(),
+            arrival_radius,
+            navigation_revision,
         };
         let op = self.save(op)?;
         // Requesting mode is not goal publication. Persist the intent before sending.
@@ -396,7 +440,7 @@ impl<F: Fleet> Engine<F> {
         if next.phase == "mode_pending"
             && let Err(e) =
                 self.fleet
-                    .select_mode(id, level, next.mode_token.as_deref().unwrap_or_default())
+                    .select_mode(id, &level, next.mode_token.as_deref().unwrap_or_default())
         {
             let mut failed = next;
             failed.phase = "rejected".into();
@@ -479,6 +523,8 @@ impl<F: Fleet> Engine<F> {
             mode_level: String::new(),
             revision: request.revision.clone(),
             frame_id: None,
+            arrival_radius: None,
+            navigation_revision: None,
         };
         self.save(op.clone())?;
         let at = now + began.elapsed().as_secs_f64();
@@ -490,6 +536,128 @@ impl<F: Fleet> Engine<F> {
         if let Err(e) = self.fleet.navigation(id, &request, &token) {
             op.phase = "unconfirmed".into();
             op.message = format!("Settings publication failed or uncertain: {e}; not retried");
+            return self.save(op);
+        }
+        Ok(op)
+    }
+    pub fn select_source(
+        &mut self,
+        user: &Identity,
+        owner: &str,
+        id: &str,
+        request: SourceRequest,
+        now: f64,
+    ) -> Result<Operation, String> {
+        self.allowed(user, owner, now)?;
+        if let Some(op) =
+            self.duplicate(user, id, &request.request_id, "navigation_source", &None)?
+        {
+            if op.run_id != request.run_id
+                || op.revision != request.revision
+                || op.navigation_revision.as_deref() != Some(request.navigation_revision.as_str())
+                || op.mode_level != request.source
+            {
+                return Err("Request ID already used for a different navigation source".into());
+            }
+            return Ok(op);
+        }
+        if request.source != "local" && request.source != "outdoor_gps" {
+            return Err("Unsupported navigation source".into());
+        }
+        let snap = self.fleet.snapshot(now);
+        let rover = snap
+            .rovers
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or("Unknown rover")?;
+        let report = rover.outdoor.as_ref().map(OutdoorStatus::to_report);
+        let disarmed = rover.hardware.as_ref().is_some_and(|h| {
+            h.ready
+                && !h.armed
+                && h.arming == Some(false)
+                && h.age.is_finite()
+                && (0.0..0.5).contains(&h.age)
+        });
+        let goal_active = rover
+            .goal
+            .as_ref()
+            .is_some_and(|goal| goal.state == "active");
+        if let Some(reason) = argos_core::source_change_refusal(
+            disarmed,
+            goal_active,
+            report
+                .as_ref()
+                .is_some_and(|report| report.mission_active()),
+            &request.source,
+            report.as_ref(),
+        ) {
+            return Err(reason.into());
+        }
+        let authority = rover.authority.as_ref().ok_or("Missing authority")?;
+        if snap.link != "healthy"
+            || authority.run_id != request.run_id
+            || authority.revision != request.revision
+        {
+            return Err("Fresh pose and current vehicle authority required".into());
+        }
+        if request.source == "outdoor_gps" {
+            let report = report.as_ref().ok_or(argos_core::APP_UPDATE_REQUIRED)?;
+            if report.navigation_revision.to_string() != request.navigation_revision
+                || report.run_id != request.run_id
+            {
+                return Err("Navigation revision changed; review the source again".into());
+            }
+        }
+        if self
+            .operations
+            .values()
+            .any(|o| o.rover_id == id && !o.terminal())
+        {
+            return Err(
+                "Wait for the active command or cancel it before changing navigation source".into(),
+            );
+        }
+        let token = uuid::Uuid::new_v4().to_string();
+        let mut op = Operation {
+            settings: None,
+            settings_revision: None,
+            id: uuid::Uuid::new_v4().to_string(),
+            request_id: request.request_id,
+            user_id: user.id.clone(),
+            owner: owner.into(),
+            rover_id: id.into(),
+            kind: "navigation_source".into(),
+            waypoint: None,
+            phase: "source_pending".into(),
+            message: "Navigation source sent; awaiting vehicle acknowledgement".into(),
+            mode_token: Some(token.clone()),
+            goal_token: None,
+            run_id: request.run_id.clone(),
+            goal_observation: None,
+            started: now,
+            created_at: crate::auth::epoch() as f64,
+            mode_level: request.source.clone(),
+            revision: request.revision.clone(),
+            frame_id: None,
+            arrival_radius: None,
+            navigation_revision: Some(request.navigation_revision.clone()),
+        };
+        // Local-only vehicles are already local. Do not publish or arm.
+        if request.source == "local" && report.is_none() {
+            op.phase = "confirmed".into();
+            op.message = "Local navigation is already the default".into();
+            return self.save(op);
+        }
+        self.save(op.clone())?;
+        if let Err(error) = self.fleet.select_source(
+            id,
+            &request.source,
+            &token,
+            &request.run_id,
+            &request.navigation_revision,
+        ) {
+            op.phase = "unconfirmed".into();
+            op.message = format!("Source publication failed or uncertain: {error}; not retried");
             return self.save(op);
         }
         Ok(op)
@@ -581,6 +749,8 @@ impl<F: Fleet> Engine<F> {
             mode_level: request.level.clone(),
             revision: request.revision,
             frame_id: None,
+            arrival_radius: None,
+            navigation_revision: None,
         };
         self.save(op.clone())?;
         // Storage can block while the transport continues receiving new authority.
@@ -702,6 +872,8 @@ impl<F: Fleet> Engine<F> {
             mode_level: String::new(),
             revision: request.revision.clone(),
             frame_id: None,
+            arrival_radius: None,
+            navigation_revision: None,
         };
         self.save(op.clone())?;
         if let Err(e) = self.fleet.hardware(
@@ -769,6 +941,8 @@ impl<F: Fleet> Engine<F> {
             mode_level: String::new(),
             revision: String::new(),
             frame_id: None,
+            arrival_radius: None,
+            navigation_revision: None,
         };
         self.save(op.clone())?;
         if let Err(e) = self.fleet.cancel(id) {
@@ -812,6 +986,50 @@ impl<F: Fleet> Engine<F> {
         for mut op in ops {
             let rover = snap.rovers.iter().find(|r| r.id == op.rover_id);
             let before = op.clone();
+            if op.kind == "navigation_source" {
+                let report = rover
+                    .and_then(|r| r.outdoor.as_ref())
+                    .map(OutdoorStatus::to_report);
+                if !rover
+                    .is_some_and(|r| r.authority.as_ref().is_some_and(|a| a.run_id == op.run_id))
+                {
+                    op.phase = "interrupted".into();
+                    op.message = "Vehicle run changed; navigation source outcome uncertain".into();
+                } else if let Some(report) = report.filter(|report| {
+                    report.token.as_deref() == op.mode_token.as_deref()
+                        && report.run_id == op.run_id
+                        && Some(report.navigation_revision.to_string()).as_ref()
+                            == op.navigation_revision.as_ref()
+                        && report
+                            .age_s
+                            .is_some_and(|age| age.is_finite() && (0.0..3.).contains(&age))
+                }) {
+                    if report
+                        .result
+                        .as_deref()
+                        .is_some_and(|result| result != "accepted")
+                    {
+                        op.phase = "rejected".into();
+                        op.message = "Vehicle rejected the navigation source".into();
+                    } else if report.source == op.mode_level
+                        && (op.mode_level != "outdoor_gps" || report.acknowledged)
+                    {
+                        op.phase = "confirmed".into();
+                        op.message = format!("Vehicle acknowledged {} navigation", op.mode_level);
+                    }
+                }
+                if !op.terminal() && now - op.started >= 10. {
+                    op.phase = "unconfirmed".into();
+                    op.message = "Navigation source unconfirmed; not retried".into();
+                }
+                if (op.phase != before.phase || op.message != before.message)
+                    && let Err(e) = self.save(op.clone())
+                {
+                    tracing::error!(error=%e,"navigation source audit failed");
+                    self.operations.insert(op.id.clone(), op);
+                }
+                continue;
+            }
             if op.kind == "navigation" {
                 if !rover
                     .is_some_and(|r| r.authority.as_ref().is_some_and(|a| a.run_id == op.run_id))
@@ -933,14 +1151,17 @@ impl<F: Fleet> Engine<F> {
                     .claim
                     .as_ref()
                     .is_some_and(|c| c.owner == op.owner && c.expires_at > now);
-                if !held
+                if let Some(reason) =
+                    rover.and_then(|r| geographic_publication_block(r, &op, false))
+                {
+                    op.phase = "interrupted".into();
+                    op.message = reason;
+                } else if !held
                     || snap.link != "healthy"
                     || !rover.is_some_and(|r| {
                         r.ready()
                             && r.authority.as_ref().is_some_and(|a| a.run_id == op.run_id)
                             && r.frame_id == op.frame_id
-                            && (!matches!(op.waypoint, Some(Waypoint::Geographic { .. }))
-                                || r.reference.is_some())
                     })
                 {
                     op.phase = "interrupted".into();
@@ -967,19 +1188,26 @@ impl<F: Fleet> Engine<F> {
                         if self.save(op.clone()).is_err() {
                             continue;
                         }
-                        match self.fleet.send_goal(
-                            &op.rover_id,
-                            op.waypoint.as_ref().expect("waypoint operation"),
-                        ) {
-                            Ok(token) => {
-                                op.goal_token = Some(token);
-                                op.phase = "published".into();
-                                op.message = "Published; awaiting rover acceptance".into();
-                                op.started = now;
-                            }
-                            Err(e) => {
-                                op.phase = "unconfirmed".into();
-                                op.message = format!("Publication failed or uncertain: {e}");
+                        if let Some(reason) =
+                            rover.and_then(|r| geographic_publication_block(r, &op, true))
+                        {
+                            op.phase = "interrupted".into();
+                            op.message = reason;
+                        } else {
+                            match self.fleet.send_goal(
+                                &op.rover_id,
+                                op.waypoint.as_ref().expect("waypoint operation"),
+                            ) {
+                                Ok(token) => {
+                                    op.goal_token = Some(token);
+                                    op.phase = "published".into();
+                                    op.message = "Published; awaiting rover acceptance".into();
+                                    op.started = now;
+                                }
+                                Err(e) => {
+                                    op.phase = "unconfirmed".into();
+                                    op.message = format!("Publication failed or uncertain: {e}");
+                                }
                             }
                         }
                     } else if a.token == op.mode_token
@@ -1055,4 +1283,35 @@ impl<F: Fleet> Engine<F> {
         s.operations = ops.into_iter().take(100).collect();
         s
     }
+}
+
+fn geographic_publication_block(
+    rover: &Rover,
+    op: &Operation,
+    require_level: bool,
+) -> Option<String> {
+    let Waypoint::Geographic {
+        latitude,
+        longitude,
+        ..
+    } = op.waypoint.as_ref()?
+    else {
+        return None;
+    };
+    let report = rover.outdoor.as_ref().map(OutdoorStatus::to_report);
+    let revision = op
+        .navigation_revision
+        .as_deref()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    argos_core::admit_outdoor_goal(argos_core::OutdoorAdmission {
+        report: report.as_ref(),
+        latitude: *latitude,
+        longitude: *longitude,
+        arrival_radius_m: op.arrival_radius.unwrap_or(0.),
+        level: require_level.then_some("waypoint"),
+        run_id: &op.run_id,
+        navigation_revision: revision,
+    })
+    .err()
 }

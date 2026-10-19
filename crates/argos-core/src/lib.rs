@@ -25,5 +25,8 @@ pub use drive::*;
 mod drag;
 pub use drag::*;
 
+mod outdoor;
+pub use outdoor::*;
+
 mod search;
 pub use search::*;

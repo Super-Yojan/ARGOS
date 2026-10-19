@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 struct Calls {
     modes: Vec<String>,
     goals: usize,
+    goal: Option<Waypoint>,
+    sources: Vec<String>,
     cancels: usize,
 }
 struct Fake {
@@ -26,9 +28,39 @@ impl Fleet for Fake {
         self.calls.lock().unwrap().modes.push(token.into());
         Ok(())
     }
-    fn send_goal(&mut self, _: &str, _: &Waypoint) -> Result<String, String> {
-        self.calls.lock().unwrap().goals += 1;
+    fn send_goal(&mut self, _: &str, goal: &Waypoint) -> Result<String, String> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.goals += 1;
+        calls.goal = Some(goal.clone());
         Ok("goal-token".into())
+    }
+    fn select_source(
+        &mut self,
+        _: &str,
+        source: &str,
+        token: &str,
+        run_id: &str,
+        navigation_revision: &str,
+    ) -> Result<(), String> {
+        self.calls.lock().unwrap().sources.push(source.into());
+        if let Some(outdoor) = self.rover.outdoor.as_mut() {
+            outdoor.source = source.into();
+            outdoor.acknowledged = source == "outdoor_gps";
+            outdoor.token = Some(token.into());
+            outdoor.result = Some("accepted".into());
+            outdoor.run_id = run_id.into();
+            outdoor.navigation_revision = navigation_revision.into();
+            outdoor.age = 0.;
+        }
+        if self
+            .rover
+            .hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.armed)
+        {
+            return Err("armed".into());
+        }
+        Ok(())
     }
     fn cancel(&mut self, _: &str) -> Result<(), String> {
         self.calls.lock().unwrap().cancels += 1;
@@ -53,6 +85,7 @@ fn request() -> WaypointRequest {
             y: 3.,
             yaw: None,
         },
+        arrival_radius: None,
     }
 }
 fn who() -> Identity {
@@ -328,11 +361,165 @@ fn geographic_commands_are_rejected_even_with_an_old_alignment() {
         longitude: -77.3075,
         yaw: None,
     };
+    e.fleet.rover.reference = Some(Reference {
+        latitude: 38.8297,
+        longitude: -77.3075,
+        anchor_x: 0.,
+        anchor_y: 0.,
+        rotation: 0.,
+        frame_id: "demo-run".into(),
+    });
     let result = e.submit(&who(), "tab", ID, req, 0.);
+    let error = result.unwrap_err();
     assert!(
-        result.is_err(),
-        "GPS display must not authorize geographic driving"
+        error.contains("App update required"),
+        "an alignment must not authorize geographic driving: {error}"
     );
     assert!(c.lock().unwrap().modes.is_empty());
     assert_eq!(c.lock().unwrap().goals, 0);
+}
+
+fn outdoor_status() -> OutdoorStatus {
+    OutdoorStatus::from_report(
+        &argos_core::OutdoorReport::decode(&serde_json::json!({
+            "schema_version": 1,
+            "capability": "outdoor_gps",
+            "supported": true,
+            "acknowledged": true,
+            "source": "outdoor_gps",
+            "run_id": "demo-run",
+            "navigation_revision": 4,
+            "ready": true,
+            "gps_age_s": 0.4,
+            "gps_accuracy_m": 4.0,
+            "heading_age_s": 0.2,
+            "heading_accuracy_deg": 8.0,
+            "arrival_radius_m": 5.0,
+            "gps": {"latitude": 38.8297, "longitude": -77.3075},
+            "phase": "idle",
+            "age": 0.1
+        }))
+        .unwrap(),
+        0.1,
+    )
+}
+
+#[test]
+fn geographic_goal_publishes_wgs84_only_after_fresh_outdoor_readiness() {
+    let (mut e, c) = setup();
+    e.claim(&who(), "tab", 0.).unwrap();
+    e.fleet.rover.outdoor = Some(outdoor_status());
+    e.fleet.rover.authority.as_mut().unwrap().requested_level = "waypoint".into();
+    let mut req = request();
+    req.arrival_radius = Some(5.);
+    req.waypoint = Waypoint::Geographic {
+        latitude: 38.8299,
+        longitude: -77.3075,
+        yaw: None,
+    };
+    let op = e.submit(&who(), "tab", ID, req, 0.).unwrap();
+    assert_eq!(e.operations[&op.id].arrival_radius, Some(5.));
+    assert_eq!(
+        e.operations[&op.id].navigation_revision.as_deref(),
+        Some("4")
+    );
+    e.tick(1.);
+    assert_eq!(c.lock().unwrap().goals, 1);
+    match c.lock().unwrap().goal.clone().unwrap() {
+        Waypoint::Geographic {
+            latitude,
+            longitude,
+            ..
+        } => {
+            assert_eq!(latitude, 38.8299);
+            assert_eq!(longitude, -77.3075);
+        }
+        other => panic!("destination was rewritten: {other:?}"),
+    }
+    assert_eq!(e.operations[&op.id].phase, "published");
+}
+
+#[test]
+fn stale_outdoor_readiness_is_rechecked_and_does_not_publish() {
+    let (mut e, c) = setup();
+    e.claim(&who(), "tab", 0.).unwrap();
+    e.fleet.rover.outdoor = Some(outdoor_status());
+    e.fleet.rover.authority.as_mut().unwrap().requested_level = "teleop".into();
+    let mut req = request();
+    req.request_id = "4d0c6a2e-1c3b-4f4a-9a1e-0c2b6d7e8f90".into();
+    req.waypoint = Waypoint::Geographic {
+        latitude: 38.8299,
+        longitude: -77.3075,
+        yaw: None,
+    };
+    let op = e.submit(&who(), "tab", ID, req, 0.).unwrap();
+    e.fleet.rover.outdoor.as_mut().unwrap().gps_age_s = Some(9.);
+    let token = c.lock().unwrap().modes[0].clone();
+    let authority = e.fleet.rover.authority.as_mut().unwrap();
+    authority.token = Some(token);
+    authority.result = Some("accepted".into());
+    authority.requested_level = "waypoint".into();
+    e.tick(1.);
+    assert_eq!(c.lock().unwrap().goals, 0);
+    assert_eq!(e.operations[&op.id].phase, "interrupted");
+    assert!(e.operations[&op.id].message.contains("GPS stale"));
+}
+
+#[test]
+fn direct_level_and_unarmed_source_changes_fail_closed() {
+    let (mut e, c) = setup();
+    e.claim(&who(), "tab", 0.).unwrap();
+    e.fleet.rover.outdoor = Some(outdoor_status());
+    e.fleet.rover.authority.as_mut().unwrap().requested_level = "waypoint_direct".into();
+    let mut req = request();
+    req.waypoint = Waypoint::Geographic {
+        latitude: 38.8299,
+        longitude: -77.3075,
+        yaw: None,
+    };
+    assert!(
+        e.submit(&who(), "tab", ID, req, 0.)
+            .unwrap_err()
+            .contains("L3")
+    );
+    e.fleet.rover.hardware.as_mut().unwrap().armed = true;
+    let armed = e
+        .select_source(
+            &who(),
+            "tab",
+            ID,
+            SourceRequest {
+                request_id: "6b1e2f44-0a55-4d2c-9c11-2a0b7e6d5c31".into(),
+                run_id: "demo-run".into(),
+                revision: "1".into(),
+                navigation_revision: "4".into(),
+                source: "local".into(),
+            },
+            1.,
+        )
+        .unwrap_err();
+    assert!(armed.contains("disarmed"), "{armed}");
+    assert!(c.lock().unwrap().sources.is_empty());
+    assert!(e.fleet.rover.hardware.as_ref().unwrap().armed);
+    e.fleet.rover.hardware.as_mut().unwrap().armed = false;
+    e.fleet.rover.hardware.as_mut().unwrap().arming = Some(false);
+    let op = e
+        .select_source(
+            &who(),
+            "tab",
+            ID,
+            SourceRequest {
+                request_id: "7c2f3044-1b66-4e3d-8d22-3b1c8f7e6d42".into(),
+                run_id: "demo-run".into(),
+                revision: "1".into(),
+                navigation_revision: "4".into(),
+                source: "outdoor_gps".into(),
+            },
+            2.,
+        )
+        .unwrap();
+    assert_eq!(c.lock().unwrap().sources, vec!["outdoor_gps".to_string()]);
+    assert!(!e.fleet.rover.hardware.as_ref().unwrap().armed);
+    e.tick(3.);
+    assert_eq!(e.operations[&op.id].phase, "confirmed");
 }

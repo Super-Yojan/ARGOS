@@ -127,7 +127,7 @@ impl GoalDrag {
                 dx.hypot(dy)
             }
             DragSpace::Geographic => {
-                haversine(self.rover.x, self.rover.y, self.cursor.x, self.cursor.y)
+                crate::geodesic_metres(self.rover.x, self.rover.y, self.cursor.x, self.cursor.y)
             }
         }
     }
@@ -158,18 +158,4 @@ impl GoalDrag {
 
 fn finite_point(point: PlanarPoint) -> bool {
     point.x.is_finite() && point.y.is_finite()
-}
-
-fn haversine(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-    let radius = 6_378_137.0;
-    let (lat1, lon1, lat2, lon2) = (
-        lat1.to_radians(),
-        lon1.to_radians(),
-        lat2.to_radians(),
-        lon2.to_radians(),
-    );
-    let dlat = lat2 - lat1;
-    let dlon = lon2 - lon1;
-    let a = (dlat * 0.5).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon * 0.5).sin().powi(2);
-    2. * radius * a.sqrt().clamp(0., 1.).asin()
 }

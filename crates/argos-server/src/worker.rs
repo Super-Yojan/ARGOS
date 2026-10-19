@@ -25,6 +25,7 @@ pub enum Action {
     Operation(String),
     Occupancy(String),
     Navigation(String, NavigationRequest),
+    Source(String, SourceRequest),
 }
 pub struct Request {
     pub user: Identity,
@@ -100,6 +101,9 @@ impl Worker {
                                 .and_then(|o| serde_json::to_value(o).map_err(|e| e.to_string())),
                             Action::Navigation(id, request) => engine
                                 .navigation(&r.user, &r.owner, &id, request, now)
+                                .and_then(|o| serde_json::to_value(o).map_err(|e| e.to_string())),
+                            Action::Source(id, request) => engine
+                                .select_source(&r.user, &r.owner, &id, request, now)
                                 .and_then(|o| serde_json::to_value(o).map_err(|e| e.to_string())),
                             Action::Operation(id) => engine
                                 .operations

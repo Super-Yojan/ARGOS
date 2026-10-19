@@ -156,6 +156,7 @@ async fn restart_marks_unfinished_operations_and_preserves_request_identity() {
                     y: 3.,
                     yaw: None,
                 },
+                arrival_radius: None,
             },
             0.,
         )
