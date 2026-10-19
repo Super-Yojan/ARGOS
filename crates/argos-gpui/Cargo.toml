@@ -16,6 +16,7 @@ path = "src/main.rs"
 argos-core = { path = "../argos-core" }
 argos-zenoh = { path = "../argos-zenoh" }
 serde_json.workspace = true
+dotenvy = "0.15"
 terra-map = { path = "../terra-map" }
 gpui-kit = "=0.8.0"
 

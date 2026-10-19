@@ -14,7 +14,7 @@ MAPS_DEMO=1 cargo run -p argos-gpui
 
 The window is the map plus a read-only rover list. Drag to orbit in 3D, Shift-drag to pan, and scroll to zoom. The camera opens at `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON` (default 38.8297, -77.3075) and recenters on the fleet once rover positions arrive. It does not jump on every later pose.
 
-`ARGOS_ZENOH_ENDPOINT` defaults to `tcp/127.0.0.1:7447` and `ARGOS_ZENOH_PREFIX` to `terra/rover`, which matches a local Zorvane router. TerraPhone and the hosted fleet use prefix `terra/phone`. Set `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` together for an authenticated `tls/` router. The window does not send goals or teleop. A missing router still opens the map, including under `MAPS_DEMO=1`. Model loading is described in `crates/terra-map/src/MAPS.md`. The repository README lists every variable, the local-metre origin, and how to point at a LAN router or the deployed fleet.
+`cargo run -p argos-gpui` uses the hosted fleet (`tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`, user `terra`). Copy `.env.example` to `.env` and set `ARGOS_ZENOH_PASSWORD` there. The password has no default and is not in git. Without it the window still opens and the sidebar names that variable. `MAPS_DEMO=1` keeps working. Local Zorvane is the commented block in `.env.example` (`tcp/127.0.0.1:7447`, prefix `terra/rover`, no user). The window does not send goals or teleop. Model loading is described in `crates/terra-map/src/MAPS.md`. The repository README lists every variable and the local-metre origin.
 
 ## Service
 

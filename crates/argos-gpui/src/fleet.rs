@@ -8,40 +8,94 @@ use argos_core::{
 };
 use argos_zenoh::Client;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// GMU Fairfax. Used only when the start-location env vars are unset.
 pub const DEFAULT_START_LATITUDE: f64 = 38.8297;
 pub const DEFAULT_START_LONGITUDE: f64 = -77.3075;
+pub const DEFAULT_ENDPOINT: &str = "tls/argos.34.135.204.210.sslip.io:7448";
+pub const DEFAULT_PREFIX: &str = "terra/phone";
+pub const DEFAULT_USER: &str = "terra";
+pub const PASSWORD_NOTICE: &str = "Set ARGOS_ZENOH_PASSWORD in .env";
 const POSE_FRESH_SECONDS: f64 = 2.5;
+const SETTING_KEYS: [&str; 8] = [
+    "ARGOS_ZENOH_ENDPOINT",
+    "ARGOS_ZENOH_PREFIX",
+    "ARGOS_ZENOH_USER",
+    "ARGOS_ZENOH_PASSWORD",
+    "ARGOS_MAP_START_LAT",
+    "ARGOS_MAP_START_LON",
+    "ARGOS_MAP_ORIGIN_LAT",
+    "ARGOS_MAP_ORIGIN_LON",
+];
 
 #[derive(Clone, Debug)]
 pub struct DashboardConfig {
     pub endpoint: String,
     pub prefix: String,
     pub credentials: Option<(String, String)>,
+    /// Sidebar text when the hosted router needs a password that was not provided.
+    /// The window still opens, and no connection is attempted.
+    pub connect_notice: Option<String>,
     pub start_latitude: f64,
     pub start_longitude: f64,
     pub origin: LocalFrame,
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
-        let var = |key: &str| std::env::var(key).ok();
+        let mut process = BTreeMap::new();
+        for key in SETTING_KEYS {
+            if std::env::var_os(key).is_some() {
+                process.insert(key.to_string(), std::env::var(key).unwrap_or_default());
+            }
+        }
+        let files: Vec<_> = dotenv_paths()
+            .iter()
+            .map(|path| read_dotenv(path))
+            .collect();
+        let file = merge_dotenv(&process, &files);
+        let endpoint = process
+            .get("ARGOS_ZENOH_ENDPOINT")
+            .cloned()
+            .or_else(|| file.get("ARGOS_ZENOH_ENDPOINT").cloned());
+        let prefix = process
+            .get("ARGOS_ZENOH_PREFIX")
+            .cloned()
+            .or_else(|| file.get("ARGOS_ZENOH_PREFIX").cloned());
+        let user = process
+            .get("ARGOS_ZENOH_USER")
+            .cloned()
+            .or_else(|| file.get("ARGOS_ZENOH_USER").cloned());
+        let password = process
+            .get("ARGOS_ZENOH_PASSWORD")
+            .cloned()
+            .or_else(|| file.get("ARGOS_ZENOH_PASSWORD").cloned());
+        let start_lat = process
+            .get("ARGOS_MAP_START_LAT")
+            .cloned()
+            .or_else(|| file.get("ARGOS_MAP_START_LAT").cloned());
+        let start_lon = process
+            .get("ARGOS_MAP_START_LON")
+            .cloned()
+            .or_else(|| file.get("ARGOS_MAP_START_LON").cloned());
+        let origin_lat = process
+            .get("ARGOS_MAP_ORIGIN_LAT")
+            .cloned()
+            .or_else(|| file.get("ARGOS_MAP_ORIGIN_LAT").cloned());
+        let origin_lon = process
+            .get("ARGOS_MAP_ORIGIN_LON")
+            .cloned()
+            .or_else(|| file.get("ARGOS_MAP_ORIGIN_LON").cloned());
         Self::parse(
-            var("ARGOS_ZENOH_ENDPOINT").as_deref(),
-            var("ARGOS_ZENOH_PREFIX").as_deref(),
-            var("ARGOS_ZENOH_USER").as_deref(),
-            var("ARGOS_ZENOH_PASSWORD").as_deref(),
-            (
-                var("ARGOS_MAP_START_LAT").as_deref(),
-                var("ARGOS_MAP_START_LON").as_deref(),
-            ),
-            (
-                var("ARGOS_MAP_ORIGIN_LAT").as_deref(),
-                var("ARGOS_MAP_ORIGIN_LON").as_deref(),
-            ),
+            endpoint.as_deref(),
+            prefix.as_deref(),
+            user.as_deref(),
+            password.as_deref(),
+            (start_lat.as_deref(), start_lon.as_deref()),
+            (origin_lat.as_deref(), origin_lon.as_deref()),
         )
     }
     pub fn parse(
@@ -54,24 +108,35 @@ impl DashboardConfig {
     ) -> Result<Self, String> {
         let endpoint = match endpoint.map(str::trim).filter(|s| !s.is_empty()) {
             Some(endpoint) => endpoint.to_string(),
-            None => "tcp/127.0.0.1:7447".into(),
+            None => DEFAULT_ENDPOINT.into(),
         };
         if endpoint.len() > 512 || !(endpoint.starts_with("tcp/") || endpoint.starts_with("tls/")) {
             return Err("ARGOS_ZENOH_ENDPOINT must be tcp/host:port or tls/host:port".into());
         }
         let prefix = prefix.map(str::trim).filter(|s| !s.is_empty());
-        let prefix = Topics::new(prefix.unwrap_or("terra/rover")).map_err(|e| e.to_string())?;
-        let user = user.filter(|s| !s.is_empty());
-        let password = password.filter(|s| !s.is_empty());
-        let credentials = match (user, password) {
-            (None, None) => None,
-            (Some(user), Some(password)) => Some((user.to_string(), password.to_string())),
-            _ => {
-                return Err(
-                    "ARGOS_ZENOH_USER and ARGOS_ZENOH_PASSWORD must both be set, or neither".into(),
-                );
-            }
+        let prefix = Topics::new(prefix.unwrap_or(DEFAULT_PREFIX)).map_err(|e| e.to_string())?;
+        let user = match user.map(str::trim) {
+            None => Some(DEFAULT_USER),
+            Some("") => None,
+            Some(user) => Some(user),
         };
+        let password = password.map(str::trim).filter(|s| !s.is_empty());
+        let (credentials, connect_notice) =
+            if endpoint.starts_with("tls/") && password.is_none() && user.is_some() {
+                (None, Some(PASSWORD_NOTICE.to_string()))
+            } else {
+                let credentials = match (user, password) {
+                    (None, None) => None,
+                    (Some(user), Some(password)) => Some((user.to_string(), password.to_string())),
+                    _ => {
+                        return Err(
+                        "ARGOS_ZENOH_USER and ARGOS_ZENOH_PASSWORD must both be set, or neither"
+                            .into(),
+                    );
+                    }
+                };
+                (credentials, None)
+            };
         let start_latitude = coordinate("ARGOS_MAP_START_LAT", start.0, DEFAULT_START_LATITUDE)?;
         let start_longitude = coordinate("ARGOS_MAP_START_LON", start.1, DEFAULT_START_LONGITUDE)?;
         if !(-90. ..=90.).contains(&start_latitude) || !(-180. ..=180.).contains(&start_longitude) {
@@ -96,11 +161,55 @@ impl DashboardConfig {
             endpoint,
             prefix: prefix.prefix,
             credentials,
+            connect_notice,
             start_latitude,
             start_longitude,
             origin,
         })
     }
+}
+fn dotenv_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(root) = manifest.parent().and_then(Path::parent) {
+        paths.push(root.join(".env"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let path = cwd.join(".env");
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+/// Keys from a dotenv file. A missing or unreadable file is empty.
+pub fn read_dotenv(path: &Path) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    let Ok(entries) = dotenvy::from_path_iter(path) else {
+        return values;
+    };
+    for entry in entries {
+        let Ok((key, value)) = entry else {
+            continue;
+        };
+        values.insert(key, value);
+    }
+    values
+}
+/// File maps are lowest priority first. Keys already in `process` are left out.
+pub fn merge_dotenv(
+    process: &BTreeMap<String, String>,
+    files_low_to_high: &[BTreeMap<String, String>],
+) -> BTreeMap<String, String> {
+    let mut merged = BTreeMap::new();
+    for file in files_low_to_high {
+        for (key, value) in file {
+            if !process.contains_key(key) {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    merged
 }
 fn coordinate(name: &str, raw: Option<&str>, default: f64) -> Result<f64, String> {
     Ok(optional_coordinate(name, raw)?.unwrap_or(default))
@@ -227,6 +336,15 @@ pub struct FleetFeed {
 }
 impl FleetFeed {
     pub fn start(config: DashboardConfig) -> Self {
+        if let Some(notice) = &config.connect_notice {
+            return Self {
+                picture: Arc::new(Mutex::new(FleetPicture {
+                    link: "password".into(),
+                    detail: notice.clone(),
+                    marks: Vec::new(),
+                })),
+            };
+        }
         let picture = Arc::new(Mutex::new(FleetPicture {
             link: "connecting".into(),
             detail: format!("Connecting to {} ({})", config.endpoint, config.prefix),
@@ -318,15 +436,90 @@ mod tests {
     }
 
     #[test]
-    fn unset_env_defaults_to_the_gmu_fallback_and_zorvane_port() {
+    fn unset_env_defaults_to_the_hosted_fleet_and_asks_for_a_password() {
         let config =
             DashboardConfig::parse(None, None, None, None, (None, None), (None, None)).unwrap();
-        assert_eq!(config.endpoint, "tcp/127.0.0.1:7447");
-        assert_eq!(config.prefix, "terra/rover");
+        assert_eq!(config.endpoint, DEFAULT_ENDPOINT);
+        assert_eq!(config.prefix, DEFAULT_PREFIX);
         assert!(config.credentials.is_none());
+        assert_eq!(config.connect_notice.as_deref(), Some(PASSWORD_NOTICE));
         assert_eq!(config.start_latitude, DEFAULT_START_LATITUDE);
         assert_eq!(config.start_longitude, DEFAULT_START_LONGITUDE);
         assert_eq!(config.origin.latitude, DEFAULT_START_LATITUDE);
+        let picture = FleetFeed::start(config).picture();
+        assert_eq!(picture.link, "password");
+        assert_eq!(picture.detail, PASSWORD_NOTICE);
+        assert!(picture.marks.is_empty());
+    }
+
+    #[test]
+    fn password_from_the_environment_is_kept_and_local_zorvane_clears_the_user() {
+        let hosted = DashboardConfig::parse(
+            None,
+            None,
+            None,
+            Some("from-the-operator"),
+            (None, None),
+            (None, None),
+        )
+        .unwrap();
+        assert_eq!(
+            hosted.credentials,
+            Some((DEFAULT_USER.into(), "from-the-operator".into()))
+        );
+        assert!(hosted.connect_notice.is_none());
+        let local = DashboardConfig::parse(
+            Some("tcp/127.0.0.1:7447"),
+            Some("terra/rover"),
+            Some(""),
+            Some(""),
+            (None, None),
+            (None, None),
+        )
+        .unwrap();
+        assert_eq!(local.endpoint, "tcp/127.0.0.1:7447");
+        assert_eq!(local.prefix, "terra/rover");
+        assert!(local.credentials.is_none());
+        assert!(local.connect_notice.is_none());
+    }
+
+    #[test]
+    fn dotenv_yields_to_the_environment_and_the_current_directory_overrides_the_workspace() {
+        let dir = std::env::temp_dir().join(format!("argos-dotenv-{}", std::process::id()));
+        let root = dir.join("root");
+        let cwd = dir.join("cwd");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(
+            root.join(".env"),
+            "ARGOS_ZENOH_ENDPOINT=tls/from-workspace:7448\nARGOS_ZENOH_PREFIX=terra/phone\nARGOS_ZENOH_PASSWORD=from-workspace\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join(".env"),
+            "ARGOS_ZENOH_PREFIX=terra/rover\nARGOS_ZENOH_USER=local\n",
+        )
+        .unwrap();
+        assert!(read_dotenv(dir.join("missing.env").as_path()).is_empty());
+        let process = BTreeMap::from([("ARGOS_ZENOH_ENDPOINT".into(), "tcp/from-env:1".into())]);
+        let merged = merge_dotenv(
+            &process,
+            &[
+                read_dotenv(&root.join(".env")),
+                read_dotenv(&cwd.join(".env")),
+            ],
+        );
+        let value = |key: &str| {
+            process
+                .get(key)
+                .or_else(|| merged.get(key))
+                .map(String::as_str)
+        };
+        assert_eq!(value("ARGOS_ZENOH_ENDPOINT"), Some("tcp/from-env:1"));
+        assert_eq!(value("ARGOS_ZENOH_PREFIX"), Some("terra/rover"));
+        assert_eq!(value("ARGOS_ZENOH_USER"), Some("local"));
+        assert_eq!(value("ARGOS_ZENOH_PASSWORD"), Some("from-workspace"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -343,8 +536,15 @@ mod tests {
             .is_err()
         );
         assert!(
-            DashboardConfig::parse(None, None, Some("terra"), None, (None, None), (None, None))
-                .is_err()
+            DashboardConfig::parse(
+                Some("tcp/127.0.0.1:7447"),
+                None,
+                Some("terra"),
+                None,
+                (None, None),
+                (None, None)
+            )
+            .is_err()
         );
         assert!(
             DashboardConfig::parse(None, None, None, None, (Some("nope"), None), (None, None))

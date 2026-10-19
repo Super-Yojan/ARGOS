@@ -54,6 +54,7 @@ impl Dashboard {
                 }
             }
         });
+        let initial = feed.picture();
         Self {
             map,
             view,
@@ -62,8 +63,8 @@ impl Dashboard {
             objects: BTreeMap::new(),
             framed: BTreeSet::new(),
             rows: Vec::new(),
-            link: "connecting".into(),
-            detail: "Connecting".into(),
+            link: initial.link,
+            detail: initial.detail,
             _poll: poll,
         }
     }

@@ -6,9 +6,18 @@ As of October 19, 2026, new dashboard work targets `crates/argos-gpui` and `crat
 
 ## Start the dashboard
 
-Install stable Rust (edition 2024) and a C toolchain. Linux also needs the GPUI and Vulkan development packages (`libwayland`, `libxkbcommon`, `libxkbcommon-x11`, `libvulkan`, and X11/XCB headers). No API key is stored in this repository.
+Install stable Rust (edition 2024) and a C toolchain. Linux also needs the GPUI and Vulkan development packages (`libwayland`, `libxkbcommon`, `libxkbcommon-x11`, `libvulkan`, and X11/XCB headers). No API key or fleet password is stored in this repository.
 
-`GOOGLE_MAPS_API_KEY` in the process environment loads Google tiles. The Google Cloud project needs billing and the Map Tiles API. Without a key, or for an offline check, use the synthetic fixture:
+`cargo run -p argos-gpui` subscribes to the hosted fleet. Copy the example env file, set the password, and run from the repository root:
+
+```sh
+cp .env.example .env
+cargo run -p argos-gpui
+```
+
+`.env` is gitignored. A missing file is fine: the window still opens, and the sidebar says to set `ARGOS_ZENOH_PASSWORD` in `.env`. Variables already in the environment override `.env`. The loader reads `.env` from the workspace root and from the current directory.
+
+`GOOGLE_MAPS_API_KEY` in the process environment loads Google tiles. The Google Cloud project needs billing and the Map Tiles API. Without a key, or for an offline check, use the synthetic fixture. That still works when the password is missing:
 
 ```sh
 MAPS_DEMO=1 cargo run -p argos-gpui
@@ -29,13 +38,14 @@ The camera opens at a fallback location. It is not locked to a campus. Once one 
 | --- | --- | --- |
 | `ARGOS_MAP_START_LAT`, `ARGOS_MAP_START_LON` | 38.8297, -77.3075 | Camera until a rover position arrives |
 | `ARGOS_MAP_ORIGIN_LAT`, `ARGOS_MAP_ORIGIN_LON` | the start pair | Local-metre origin when Terra has not published a geographic alignment |
-| `ARGOS_ZENOH_ENDPOINT` | `tcp/127.0.0.1:7447` | Router to subscribe to. `tcp/` or `tls/` |
-| `ARGOS_ZENOH_PREFIX` | `terra/rover` | Key prefix. TerraPhone and the hosted fleet use `terra/phone` |
-| `ARGOS_ZENOH_USER`, `ARGOS_ZENOH_PASSWORD` | unset | Set both, or neither. `tls/` uses the system trust store |
+| `ARGOS_ZENOH_ENDPOINT` | `tls/argos.34.135.204.210.sslip.io:7448` | Hosted router. `tcp/` or `tls/` |
+| `ARGOS_ZENOH_PREFIX` | `terra/phone` | Key prefix. Local Zorvane uses `terra/rover` |
+| `ARGOS_ZENOH_USER` | `terra` | Bus user. Set it empty for a router with no authentication |
+| `ARGOS_ZENOH_PASSWORD` | unset | No default and never committed. `.env` or the environment |
 | `MAPS_DEMO` | unset | `1` draws the offline fixture and does not call Google |
 | `GOOGLE_MAPS_API_KEY` | unset | Photorealistic 3D Tiles. Not stored in this repo |
 
-A bad number, a half-set pair, or an endpoint that is not `tcp/` or `tls/` prints the reason and exits before the window opens. A router that is down does not: the window still opens on the start location and the sidebar shows the connection error. `MAPS_DEMO=1` keeps working in that case.
+A bad number, a half-set user/password pair on a `tcp/` router, or an endpoint that is not `tcp/` or `tls/` prints the reason and exits before the window opens. A hosted `tls/` router with no password does not exit: the sidebar tells you to set `ARGOS_ZENOH_PASSWORD` in `.env`. A router that is down does not exit either. `MAPS_DEMO=1` keeps working in both cases.
 
 Rover `x`/`y` are local metres. When the rover's localization report is version 1, mode `geographic`, and includes `originLatitude` / `originLongitude`, the marker uses that frame, including `anchorX`, `anchorY`, and `rotation`. Otherwise the marker uses `ARGOS_MAP_ORIGIN_*`. GPS fields on a local-mode report stay observations; they do not move the marker. Heading on the map is clockwise degrees. Terra yaw is radians from +x toward +y.
 
@@ -43,15 +53,18 @@ Markers are the `robot.glb` model at 12× scale and 80 m ellipsoid height so the
 
 `argos-gpui` only subscribes. Fleet membership still has to arrive on `<prefix>/fleet/state` before a pose is kept.
 
-Zorvane's router listens on `tcp/127.0.0.1:7447` with prefix `terra/rover`, which matches the defaults. A TerraPhone or the ARGOS server's loopback router is often `tcp/127.0.0.1:7448`. The hosted fleet router is `tls/argos.34.135.204.210.sslip.io:7448` with prefix `terra/phone` and user `terra`. Take the password from the operator secret store (`/etc/argos/fleet.password` on the deployed host). Do not put it in the repo.
+The built-in defaults are the hosted fleet: `tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`, user `terra`. Take the password from the operator secret store (`/etc/argos/fleet.password` on the deployed host) and put it only in `.env` or the environment. `tls/` uses the system trust store.
+
+Local Zorvane listens on `tcp/127.0.0.1:7447` with prefix `terra/rover` and no user. Comment out the hosted lines in `.env` and uncomment the Zorvane block from `.env.example`, including the empty user and password lines so the hosted user is not kept:
 
 ```sh
-ARGOS_ZENOH_ENDPOINT=tls/argos.34.135.204.210.sslip.io:7448 \
-ARGOS_ZENOH_PREFIX=terra/phone \
-ARGOS_ZENOH_USER=terra \
-ARGOS_ZENOH_PASSWORD='from-the-secret-store' \
-cargo run -p argos-gpui
+ARGOS_ZENOH_ENDPOINT=tcp/127.0.0.1:7447
+ARGOS_ZENOH_PREFIX=terra/rover
+ARGOS_ZENOH_USER=
+ARGOS_ZENOH_PASSWORD=
 ```
+
+A TerraPhone or the ARGOS server's loopback router is often `tcp/127.0.0.1:7448`.
 
 `pi@terra1.local` runs the `terra-rover` BLE and motor service. That process does not publish Zenoh poses. Poses come from TerraPhone or from a Zenoh router on the LAN. If that host is running the router:
 

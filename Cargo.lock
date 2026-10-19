@@ -240,6 +240,7 @@ version = "0.1.0"
 dependencies = [
  "argos-core",
  "argos-zenoh",
+ "dotenvy",
  "gpui-kit",
  "serde_json",
  "terra-map",
