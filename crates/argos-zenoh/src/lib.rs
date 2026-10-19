@@ -151,7 +151,7 @@ impl Client {
             .declare_subscriber(format!("{}/*/pose", topics.prefix))
             .callback(move |sample| {
                 if let Some(id) = direct_topics.rover_from_key(sample.key_expr().as_str(), "/pose")
-                    && let Ok(pose) = decode_body_pose(&sample.payload().to_bytes())
+                    && let Ok(pose) = decode_topic_pose(&sample.payload().to_bytes(), Some(id))
                 {
                     direct_cache
                         .lock()

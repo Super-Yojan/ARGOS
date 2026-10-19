@@ -12,7 +12,9 @@ MAPS_DEMO=1 cargo run -p argos-gpui
 
 `MAPS_DEMO=1` draws the crate's synthetic fixture and does not call Google. To load Photorealistic 3D Tiles, export `GOOGLE_MAPS_API_KEY` in the same process and omit `MAPS_DEMO`. The repository does not contain a key. The Google Cloud project needs billing and the Map Tiles API.
 
-The window is the map. Drag to orbit in 3D, Shift-drag to pan, scroll to zoom, and press 2 or 3 to switch modes. Fleet selection and Zenoh commands are not in this binary yet. Model loading and camera configuration are in `crates/terra-map/src/MAPS.md`.
+The window is the map plus a read-only rover list. Drag to orbit in 3D, Shift-drag to pan, and scroll to zoom. The camera opens at `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON` (default 38.8297, -77.3075) and recenters on the fleet once rover positions arrive. It does not jump on every later pose.
+
+`ARGOS_ZENOH_ENDPOINT` defaults to `tcp/127.0.0.1:7447` and `ARGOS_ZENOH_PREFIX` to `terra/rover`, which matches a local Zorvane router. TerraPhone and the hosted fleet use prefix `terra/phone`. Set `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` together for an authenticated `tls/` router. The window does not send goals or teleop. A missing router still opens the map, including under `MAPS_DEMO=1`. Model loading is described in `crates/terra-map/src/MAPS.md`. The repository README lists every variable, the local-metre origin, and how to point at a LAN router or the deployed fleet.
 
 ## Service
 

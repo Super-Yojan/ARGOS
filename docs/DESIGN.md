@@ -5,16 +5,17 @@ ARGOS is a fleet operator station. The GPUI dashboard (`crates/argos-gpui`) moun
 ```mermaid
 flowchart LR
   gpui[argos-gpui] --> map[terra-map Map View]
+  gpui -->|read-only| bus[Zenoh fleet]
   service[argos-server] --> store[(SQLite sessions and audit)]
   service --> zenoh[argos-zenoh]
   zenoh --> core[argos-core]
-  zenoh --> bus[Zenoh fleet]
+  zenoh --> bus
   ffi[argos-ffi / UniFFI] --> zenoh
 ```
 
 | Component | Responsibility |
 | --- | --- |
-| `crates/argos-gpui` | Dashboard window. Mounts `MapView`. No fleet or Zenoh UI yet |
+| `crates/argos-gpui` | Dashboard window. Mounts `MapView` and subscribes read-only to Zenoh |
 | `crates/terra-map` | Google 3D Tiles and georeferenced models (`terra_map`) |
 | `crates/argos-server` | OAuth/session roles, CSRF/origin checks, claims, command engine, SSE, persistence |
 | `crates/argos-core` | Contracts, projection, freshness, acknowledgement and operator state |

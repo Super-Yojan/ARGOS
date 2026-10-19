@@ -15,7 +15,7 @@ MAPS_DEMO=1 cargo run -p argos-gpui
 cargo run -p argos-server -- --demo --dev
 ```
 
-The GPUI window mounts `MapView` and does not sign into the service. The service listens on loopback port 8080. `http://127.0.0.1:8080/healthz` checks the process. There is no page at port 5173. The sections below describe what the removed browser did with that service; they are not instructions for the current window.
+The GPUI window mounts `MapView`, subscribes to Zenoh itself, and does not sign into the service. The service listens on loopback port 8080. `http://127.0.0.1:8080/healthz` checks the process. There is no page at port 5173. The sections below describe what the removed browser did with that service; they are not instructions for the current window.
 
 The local view uses an offline SVG metre grid. The geographic view shows raw
 GPS fixes directly, with accuracy and fix age. No compass, AR tracking, shared

@@ -534,18 +534,16 @@ impl MapView {
                                         .text_size(px(23.))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(rgb(ACCENT))
-                                        .child("terra"),
+                                        .child("ARGOS"),
                                 )
                                 .child(div().w(px(1.)).h(px(24.)).bg(rgb(RULE)))
-                                .child(
-                                    div()
-                                        .child(div().text_size(px(14.)).child("Spatial explorer"))
-                                        .child(label(if self.config.demo {
-                                            "OFFLINE GPU FIXTURE"
-                                        } else {
-                                            "GOOGLE PHOTOREALISTIC 3D"
-                                        })),
-                                ),
+                                .child(div().child(div().text_size(px(14.)).child("Map")).child(
+                                    label(if self.config.demo {
+                                        "OFFLINE GPU FIXTURE"
+                                    } else {
+                                        "GOOGLE PHOTOREALISTIC 3D"
+                                    }),
+                                )),
                         )
                         .child(control(
                             "reload-tiles",

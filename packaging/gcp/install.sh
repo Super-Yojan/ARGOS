@@ -3,7 +3,10 @@
 set -euo pipefail
 cd /tmp/argos-release
 install -o root -g root -m 755 bin/* /opt/argos/bin/
-cp -a web/. /opt/argos/web/
+mkdir -p /opt/argos/web
+if [ -d web ]; then
+  cp -a web/. /opt/argos/web/
+fi
 install -o root -g root -m 644 gcp/*.service gcp/*.timer /etc/systemd/system/
 install -o root -g root -m 755 gcp/refresh-router-tls.sh /opt/argos/bin/
 install -o root -g root -m 644 gcp/Caddyfile /etc/caddy/Caddyfile

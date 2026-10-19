@@ -8,12 +8,12 @@ The operator surface is the GPUI app in `crates/argos-gpui`. It opens a window a
 
 | Area | Current state |
 | --- | --- |
-| GPUI dashboard | One window, Map View only. No fleet list, selection, or Zenoh commands in the binary |
+| GPUI dashboard | One window. Map View, live rover markers, and a read-only Zenoh subscription. No goal, teleop, or other commands |
 | Map library | `crates/terra-map` (`terra_map`): Google 3D Tiles, local glTF/GLB instances, offline `MAPS_DEMO=1` fixture |
 | Operator access | Service still has GitHub OAuth allowlists, viewer/operator roles, per-tab control claim, CSRF checks |
 | Vehicle commands | Service still validates waypoint send/cancel, arm/disarm, autonomy selection, held driving, and latched stop. The GPUI window does not send them |
 | Navigation tuning | Service retains dimensions, clearance, planner speed/turn/look-ahead with revision acknowledgement |
-| Mapping | Rust client still validates occupancy run/frame and content heartbeats. The map window does not draw that grid yet |
+| Mapping | Rust client still validates occupancy run/frame and content heartbeats. The map sidebar summarizes the grid; it does not draw cells |
 | Hosting | Docker/Caddy and GCP packaging build `argos-server` without a browser bundle |
 | Removed UI | `apps/web` and `apps/apple` are gone. `argos-ffi` remains in the workspace |
 | Unity | Historical prototype under `spikes/`; not the dashboard platform |
@@ -21,8 +21,8 @@ The operator surface is the GPUI app in `crates/argos-gpui`. It opens a window a
 
 ## Next work and validation
 
-- Keep the GPUI window on the Map View until that surface is solid. Do not add a fleet or Zenoh panel in the same step as the map mount.
-- Wire the window to `argos-server` or Zenoh only after the map crate's camera, models, and offline fixture stay the supported path.
+- The GPUI window subscribes read-only to Zenoh and recenters on live rover positions. It does not send vehicle commands.
+- Keep the offline `MAPS_DEMO=1` fixture working when the router is down.
 - Validate real vehicle braking, control latency, phone lifecycle, and multi-client operator discipline against the service. Do not substitute demo results or the offline map fixture for physical evidence.
 - Keep study protocols and evidence in Masters-Thesis aligned with the interface that was actually tested. The React and Swift trees are no longer in this repository.
 

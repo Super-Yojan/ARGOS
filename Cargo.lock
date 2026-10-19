@@ -238,8 +238,12 @@ dependencies = [
 name = "argos-gpui"
 version = "0.1.0"
 dependencies = [
+ "argos-core",
+ "argos-zenoh",
  "gpui-kit",
+ "serde_json",
  "terra-map",
+ "zenoh",
 ]
 
 [[package]]
