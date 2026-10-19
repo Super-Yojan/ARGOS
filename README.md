@@ -2,7 +2,7 @@
 
 ARGOS (Adaptive Robotic Group Operator System) is the fleet operator system for Terra vehicles and the Zorvane simulator. The dashboard is a native GPUI application. `crates/terra-map` draws the Map View (wgpu Google Photorealistic 3D Tiles). `crates/argos-gpui` is the dashboard binary and mounts that view. A Rust Axum service owns authenticated operator sessions, command validation, audit history, and the Zenoh fleet connection. Terra owns sensing, onboard autonomy, motor control, and watchdogs.
 
-As of October 19, 2026, new dashboard work targets `crates/argos-gpui` and `crates/terra-map`. The React app and the SwiftUI apps have been removed. The Unity experiment remains under `spikes/` as historical prototype work. TerraPhone's native vehicle runtime is a separate application and remains in use. The window subscribes to Zenoh and draws each rover's position and heading. It does not publish goals, teleop, or other commands.
+As of October 19, 2026, new dashboard work targets `crates/argos-gpui` and `crates/terra-map`. The React app and the SwiftUI apps have been removed. The Unity experiment remains under `spikes/` as historical prototype work. TerraPhone's native vehicle runtime is a separate application and remains in use. The window subscribes to Zenoh and draws each rover's position and heading. For a selected rover it can publish an autonomy level, a drag-to-goal waypoint, and held teleop. Terra still owns sensing, planning, and the motor limits.
 
 ## Start the dashboard
 
@@ -30,7 +30,7 @@ export GOOGLE_MAPS_API_KEY='your-key'
 cargo run -p argos-gpui
 ```
 
-The window title is ARGOS. A sidebar lists the Zenoh link and each rover. Keyboard and pointer handling are the map's: drag to orbit in 3D, Shift-drag to pan, scroll to zoom, and 2 / 3 to switch modes when the map controls are shown. Map configuration, model conventions, and the standalone `learn-gpui` explorer are in [crates/terra-map/src/MAPS.md](crates/terra-map/src/MAPS.md).
+The window title is ARGOS. A sidebar lists the Zenoh link and each rover. Empty-space drag still orbits the map in 3D; Shift-drag pans, scroll zooms, and 2 / 3 switch modes when the map controls are shown. Dragging a rover marker, or its pending goal, does not pan. Release sends the goal. Esc, or dropping the ghost back on the rover, sends nothing. Map configuration, model conventions, and the standalone `learn-gpui` explorer are in [crates/terra-map/src/MAPS.md](crates/terra-map/src/MAPS.md).
 
 The camera opens at a fallback location. It is not locked to a campus. Once one or more rovers have a position, the view recenters on their centroid, and it recenters again only when that set of rovers changes. Pose updates after that leave the camera where the operator put it. With no rover seen yet, the fallback is `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON`. Unset, those default to GMU Fairfax (38.8297, -77.3075).
 
@@ -44,14 +44,28 @@ The camera opens at a fallback location. It is not locked to a campus. Once one 
 | `ARGOS_ZENOH_PASSWORD` | unset | No default and never committed. `.env` or the environment |
 | `MAPS_DEMO` | unset | `1` draws the offline fixture and does not call Google |
 | `GOOGLE_MAPS_API_KEY` | unset | Photorealistic 3D Tiles. Not stored in this repo |
+| `ARGOS_DRIVE_LINEAR` | 0.2 | Teleop speed cap, 0 through 0.5 m/s. Reverse uses the same cap |
+| `ARGOS_DRIVE_YAW_RATE` | 0.5 | Yaw-rate cap, through 1 rad/s |
+| `ARGOS_DRIVE_YAW_ACCEL` | 0.5 | How fast commanded yaw rate may rise, rad/s² |
+| `ARGOS_DRIVE_YAW_DECEL` | 0.8 | How fast commanded yaw rate may fall, rad/s² |
+| `ARGOS_DRIVE_MIN_RADIUS` | 0.5 | Minimum turn radius while rolling, metres. Spin off ignores in-place yaw |
+| `ARGOS_DRIVE_ALLOW_SPIN` | off | `1`, `true`, or `yes` allows a turn with no forward speed |
+| `ARGOS_DEGRADED_YAW_RATE` | 0.4 | Fallback yaw-rate warning when pose/quality is absent |
+| `ARGOS_DEGRADED_SETTLE` | 1.0 | How long that fallback warning stays up, seconds |
 
 A bad number, a half-set user/password pair on a `tcp/` router, or an endpoint that is not `tcp/` or `tls/` prints the reason and exits before the window opens. A hosted `tls/` router with no password does not exit: the sidebar tells you to set `ARGOS_ZENOH_PASSWORD` in `.env`. A router that is down does not exit either. `MAPS_DEMO=1` keeps working in both cases.
 
 Rover `x`/`y` are local metres. When the rover's localization report is version 1, mode `geographic`, and includes `originLatitude` / `originLongitude`, the marker uses that frame, including `anchorX`, `anchorY`, and `rotation`. Otherwise the marker uses `ARGOS_MAP_ORIGIN_*`. GPS fields on a local-mode report stay observations; they do not move the marker. Heading on the map is clockwise degrees. Terra yaw is radians from +x toward +y.
 
-Markers are the `robot.glb` model at 12× scale and 80 m ellipsoid height so they stay visible at neighborhood zoom. That height is display exaggeration, not ground clamping. Online rovers with a pose newer than 2.5 s draw in the model color. Stale and offline rovers are tinted. The sidebar summarizes occupancy (`width x height`, occupied cells, age). The map does not paint the grid.
+Markers are the `robot.glb` model at 12× scale and 80 m ellipsoid height so they stay visible at neighborhood zoom. That height is display exaggeration, not ground clamping. Online rovers with a pose newer than 2.5 s draw in the model color. Stale and offline rovers are tinted. The sidebar draws that rover's occupancy in a local grid. A cell at or above 65 is occupied; 0 through 64 are free; negative cells are unknown. The retired grid viewer cutoff of 50 is not used.
 
-`argos-gpui` only subscribes. Fleet membership still has to arrive on `<prefix>/fleet/state` before a pose is kept.
+Select a rover, then drag its marker on the map or in the local grid. A ghost follows the pointer, with the distance from the rover. Release publishes `{prefix}/{id}/goal`. A local drop sends `{"frame":"local","x","y","token"}` in metres, +x north and +y west. A geographic drop sends `{"frame":"wgs84","latitude","longitude","token"}` only when that rover advertises `outdoor_gps`, and only from L3 `waypoint`. Otherwise the sidebar says outdoor GPS goals are unsupported and nothing is published. The arrival-radius circle is shown for an outdoor drag and the radius is frozen at release. Cancel goal publishes `{"cancel":true}`. Dragging stays disabled until the rover is selected, the link is healthy, the level is L2 `waypoint_direct` or L3 `waypoint` (L3 only for outdoor), and the pose is fresh and not degraded. This release-to-send interaction is intentional: the outdoor GPS spec's click-then-confirm step is not what the window does.
+
+Autonomy buttons publish Terra's existing levels on `{prefix}/{id}/autonomy` as `{"level","token"}`: L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct`, L3 `waypoint`, plus `supervised` and `target_search`. `explore` is not offered. The sidebar shows requested and effective levels. `assigned_level` is the recommendation when a status includes it. `heading_requires_spin_or_replan` is shown on the rover card and the goal marker. Reverse path segments are drawn dashed in amber when a route sample carries a negative velocity, `reverse`, or `direction`. A pair with no direction is marked provisional. `Reversing` appears when the reported forward speed is negative. S / Down already drives in reverse and uses the same turn-radius cap.
+
+Drive mode publishes `{prefix}/{id}/teleop` at about 20 Hz only while a key is held: `{"linear","angular","operator_session_id","sequence","run_id","authority_revision"}`. WASD, arrows, and the on-screen pad share that path. The client cap defaults to 0.2 m/s, 0.5 rad/s yaw, 0.5 rad/s² accel, 0.8 rad/s² decel, and a 0.5 m turn radius, with in-place spin off. Those numbers match Terra's provisional turning policy and are defense in depth only. The payload does not claim an exemption. Space and Stop send the existing safety stop and a zero twist. Key release, focus loss, leaving drive, and switching rovers also send zero. Pose degradation does not block this teleop; it is informational. Phone Bluetooth manual is not given a VIO warning. New waypoint goals are refused while the pose is degraded. `<prefix>/{id}/pose/quality` (schema 1: `rover_id`, `run_id`, `sequence`, `degraded`, `reason`, `pose_age_s`, `imu_age_s`) drives that flag, including the same object nested on autonomy status. Until a quality message arrives, a yaw-rate heuristic is the fallback and is labeled that way. These quality and turning fields are provisional until Terra's turning-policy change lands.
+
+Fleet membership still has to arrive on `<prefix>/fleet/state` before a pose is kept. The window does not arm hardware. A latched stop stays latched until something else sends reset.
 
 The built-in defaults are the hosted fleet: `tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`, user `terra`. Take the password from the operator secret store (`/etc/argos/fleet.password` on the deployed host) and put it only in `.env` or the environment. `tls/` uses the system trust store.
 
@@ -120,7 +134,7 @@ Live transport tests need permission to bind loopback sockets. `ARGOS_CHECK_TYPE
 
 | Crate | Role |
 | --- | --- |
-| `crates/argos-gpui` | Dashboard. Mounts `MapView` and subscribes, read-only, to Zenoh. |
+| `crates/argos-gpui` | Dashboard. Mounts `MapView`, subscribes to Zenoh, and publishes goals, autonomy, and teleop for the selected rover. |
 | `crates/terra-map` | Map library (`terra_map`) and the `learn-gpui` explorer. |
 | `crates/argos-server` | HTTP sessions, command validation, audit, fleet worker. |
 | `crates/argos-zenoh` | Zenoh client, router binary, session log. |

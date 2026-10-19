@@ -22,6 +22,11 @@ struct InputState {
     rover_id: Option<u64>,
     keys: HeldInput,
     authority_generation: Option<(String, u64)>,
+    /// Set by the dashboard. Absent keeps the legacy unit twist.
+    guard: Option<TeleopGuard>,
+    deadman: bool,
+    lease_until: f64,
+    last_step: f64,
 }
 /// One native session; subscriptions retain only latest parsed telemetry.
 pub struct Client {
@@ -43,7 +48,9 @@ pub struct Client {
     session_id: String,
     ui_sequence: Mutex<InputOrder>,
     teleop_sequence: Arc<std::sync::atomic::AtomicU64>,
+    tracking: SharedTracking,
 }
+type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
 impl Client {
     pub fn connect(endpoint: &str, prefix: &str) -> Result<Self> {
         Self::connect_authenticated(endpoint, prefix, None)
@@ -125,8 +132,10 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
+        let tracking: SharedTracking = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let fleet_cache = cache.clone();
         let subscribed_topics = topics.clone();
+        let depth_tracking = tracking.clone();
         let depth = session
             .declare_subscriber(topics.depth())
             .callback(move |sample| {
@@ -136,9 +145,16 @@ impl Client {
                     return;
                 };
                 let payload = sample.payload().to_bytes();
+                let flag = serde_json::from_slice::<serde_json::Value>(&payload)
+                    .ok()
+                    .as_ref()
+                    .and_then(pose_tracking_flag);
                 let mut cache = fleet_cache.lock().unwrap();
                 match decode_pose(&payload) {
-                    Ok(Some(p)) => cache.pose(id, p, start.elapsed().as_secs_f64()),
+                    Ok(Some(p)) => {
+                        depth_tracking.lock().unwrap().insert(id, flag);
+                        cache.pose(id, p, start.elapsed().as_secs_f64());
+                    }
                     Ok(None) => {}
                     Err(e) => cache.notice(e.to_string()),
                 }
@@ -147,12 +163,19 @@ impl Client {
             .map_err(|e| Error(e.to_string()))?;
         let direct_cache = cache.clone();
         let direct_topics = topics.clone();
+        let pose_tracking = tracking.clone();
         let direct_pose = session
             .declare_subscriber(format!("{}/*/pose", topics.prefix))
             .callback(move |sample| {
+                let bytes = sample.payload().to_bytes();
                 if let Some(id) = direct_topics.rover_from_key(sample.key_expr().as_str(), "/pose")
-                    && let Ok(pose) = decode_topic_pose(&sample.payload().to_bytes(), Some(id))
+                    && let Ok(pose) = decode_topic_pose(&bytes, Some(id))
                 {
+                    let flag = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .ok()
+                        .as_ref()
+                        .and_then(pose_tracking_flag);
+                    pose_tracking.lock().unwrap().insert(id, flag);
                     direct_cache
                         .lock()
                         .unwrap()
@@ -340,6 +363,8 @@ impl Client {
                     "/pointcloud"
                 } else if key.ends_with("/autonomy/status") {
                     "/autonomy/status"
+                } else if key.ends_with("/pose/quality") {
+                    "/pose/quality"
                 } else if key.ends_with("/search/report") {
                     "/search/report"
                 } else if key.ends_with("/search/status") {
@@ -420,6 +445,8 @@ impl Client {
                     "cloud"
                 } else if suffix == "/map/occupancy" {
                     "occupancy"
+                } else if suffix == "/pose/quality" {
+                    "pose_quality"
                 } else {
                     "authority"
                 };
@@ -473,8 +500,26 @@ impl Client {
                     if active.is_none() {
                         input.rover_id = None;
                         input.keys.clear();
+                        if let Some(guard) = input.guard.as_mut() {
+                            guard.reset();
+                        }
                     }
-                    let sample = input.keys.sample();
+                    if input.deadman && input.lease_until > 0. && now >= input.lease_until {
+                        input.keys.clear();
+                    }
+                    let dt = if input.last_step > 0. {
+                        now - input.last_step
+                    } else {
+                        0.05
+                    };
+                    input.last_step = now;
+                    let (unit_linear, unit_angular) = input.keys.sample();
+                    // Defense in depth; Terra enforces the real limits.
+                    let sample = if let Some(guard) = input.guard.as_mut() {
+                        guard.step(unit_linear, unit_angular, dt)
+                    } else {
+                        (unit_linear, unit_angular)
+                    };
                     if let Some(id) = active {
                         if sample != (0., 0.) || last.is_some() {
                             let sequence = packet_sequence
@@ -551,6 +596,7 @@ impl Client {
             session_id,
             ui_sequence: Mutex::new(InputOrder::default()),
             teleop_sequence,
+            tracking,
         })
     }
     pub fn operator_state_snapshot(&self) -> String {
@@ -580,6 +626,37 @@ impl Client {
             }
         }
         result.to_string()
+    }
+    pub fn pose_tracking(&self, id: u64) -> Option<bool> {
+        self.tracking.lock().unwrap().get(&id).copied().flatten()
+    }
+    /// Replace the dashboard twist shaper. Legacy callers leave it unset.
+    ///
+    /// Defense in depth; Terra enforces the real limits.
+    pub fn set_teleop_guard(&self, limits: TeleopLimits) {
+        let mut held = self.held.lock().unwrap();
+        if let Some(guard) = held.guard.as_mut() {
+            guard.limits = limits;
+        } else {
+            held.guard = Some(TeleopGuard::new(limits));
+        }
+        held.deadman = true;
+    }
+    pub fn clear_teleop_guard(&self) {
+        let mut held = self.held.lock().unwrap();
+        if let Some(guard) = held.guard.as_mut() {
+            guard.reset();
+        }
+        held.guard = None;
+        held.deadman = false;
+        held.lease_until = 0.;
+    }
+    pub fn refresh_drive(&self, id: u64) {
+        let now = self.start.elapsed().as_secs_f64();
+        let mut held = self.held.lock().unwrap();
+        if held.deadman && held.rover_id == Some(id) && held.keys.is_held() {
+            held.lease_until = now + DRIVE_DEADMAN_SECONDS;
+        }
     }
     pub fn occupancy_grid(&self, id: u64) -> Option<(OccupancyGrid, f64, Option<String>)> {
         self.maps.lock().unwrap().get(&id).map(|(grid, at, frame)| {
@@ -985,6 +1062,9 @@ impl Client {
         held.authority_generation = accepted_generation;
         if down {
             held.keys.press(key);
+            if held.deadman {
+                held.lease_until = now + DRIVE_DEADMAN_SECONDS;
+            }
         } else {
             held.keys.release(key);
         }
@@ -1104,6 +1184,7 @@ impl Client {
             let _ = session.close().wait();
         }
         self.cache.lock().unwrap().disconnected();
+        self.tracking.lock().unwrap().clear();
         self.localizations.lock().unwrap().clear();
         self.operator_states.lock().unwrap().clear();
         self.maps.lock().unwrap().clear();

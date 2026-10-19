@@ -133,6 +133,72 @@ impl Camera {
             - 180.;
         self.target = ecef(self.latitude, self.longitude, self.altitude);
     }
+    /// Pixel from the top-left of a viewport `width` by `height` logical pixels.
+    pub fn project_ground(
+        &self,
+        width: u32,
+        height: u32,
+        latitude: f64,
+        longitude: f64,
+    ) -> Option<(f64, f64)> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let view = self.view(width, height);
+        let world = ecef(latitude, longitude, self.altitude);
+        let clip = view.view_projection * (world - view.origin).extend(1.);
+        if clip.w <= 1e-6 || !clip.x.is_finite() || !clip.y.is_finite() {
+            return None;
+        }
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        if ndc_x.abs() > 1.05 || ndc_y.abs() > 1.05 {
+            return None;
+        }
+        Some((
+            (ndc_x + 1.) * 0.5 * f64::from(width),
+            (1. - ndc_y) * 0.5 * f64::from(height),
+        ))
+    }
+    /// Latitude and longitude of a viewport pixel on the camera's ground plane.
+    pub fn unproject_ground(&self, width: u32, height: u32, x: f64, y: f64) -> Option<(f64, f64)> {
+        if width == 0 || height == 0 || !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        let view = self.view(width, height);
+        let inv = view.view_projection.inverse();
+        let ndc_x = (x / f64::from(width)) * 2. - 1.;
+        let ndc_y = 1. - (y / f64::from(height)) * 2.;
+        let lift = |z: f64| {
+            let hit = inv * DVec4::new(ndc_x, ndc_y, z, 1.);
+            if !hit.w.is_finite() || hit.w.abs() < 1e-8 {
+                return None;
+            }
+            Some(hit.truncate() / hit.w + view.origin)
+        };
+        let (near, far) = match (lift(-1.), lift(1.)) {
+            (Some(near), Some(far)) if near.distance_squared(far) > 1. => (near, far),
+            _ => lift(0.).zip(lift(1.))?,
+        };
+        let dir = far - near;
+        let (lat0, lon0) = (self.latitude.to_radians(), self.longitude.to_radians());
+        let up = DVec3::new(lat0.cos() * lon0.cos(), lat0.cos() * lon0.sin(), lat0.sin());
+        let denom = dir.dot(up);
+        if denom.abs() < 1e-8 {
+            return None;
+        }
+        let t = (view.origin - near).dot(up) / denom;
+        let hit = near + dir * t;
+        let east = DVec3::new(-lon0.sin(), lon0.cos(), 0.).normalize();
+        let north = up.cross(east).normalize();
+        let delta = hit - view.origin;
+        let north_m = delta.dot(north);
+        let east_m = delta.dot(east);
+        let latitude = self.latitude + (north_m / EARTH_RADIUS).to_degrees();
+        let longitude = self.longitude
+            + (east_m / (EARTH_RADIUS * self.latitude.to_radians().cos().max(0.05))).to_degrees();
+        (latitude.is_finite() && longitude.is_finite()).then_some((latitude, longitude))
+    }
     pub fn view(&self, width: u32, height: u32) -> View {
         let (lat, lon) = (self.latitude.to_radians(), self.longitude.to_radians());
         let up = DVec3::new(lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin());

@@ -4,13 +4,13 @@ ARGOS is the operator station for Terra vehicles and the Zorvane simulator. **Ne
 
 ```mermaid
 flowchart LR
-  operator[GPUI dashboard] -->|read-only Zenoh| bus[Terra / Zorvane]
+  operator[GPUI dashboard] -->|Zenoh| bus[Terra / Zorvane]
   operator --> tiles[terra-map]
   service[ARGOS Rust service] -->|Zenoh| bus
   bus --> motors[Vehicle hardware]
 ```
 
-Terra owns sensing, onboard planning, motor output, and watchdogs. The service displays observed state and submits operator intent once a client calls it. The GPUI window subscribes to the fleet bus and draws positions. It does not publish commands, and the service never gives the map a vehicle command by itself.
+Terra owns sensing, onboard planning, motor output, and watchdogs. The service displays observed state and submits operator intent once a client calls it. The GPUI window subscribes to the fleet bus, draws positions, and publishes goal, autonomy, and teleop for the selected rover. The service never gives the map a vehicle command by itself.
 
 ## Run and operate
 

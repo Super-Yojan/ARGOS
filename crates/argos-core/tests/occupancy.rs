@@ -1,4 +1,6 @@
-use argos_core::decode_occupancy;
+use argos_core::{
+    CellClass, OCCUPIED_THRESHOLD, cell_center, classify_cell, decode_occupancy, local_map,
+};
 fn packet() -> serde_json::Value {
     serde_json::json!({
         "schema_version": 1,
@@ -37,4 +39,22 @@ fn rejects_invalid_dimensions_values_and_geometry() {
             "{key}"
         );
     }
+}
+#[test]
+fn occupied_threshold_is_65_and_cell_centers_are_local() {
+    assert_eq!(OCCUPIED_THRESHOLD, 65);
+    assert_eq!(classify_cell(-1), CellClass::Unknown);
+    assert_eq!(classify_cell(0), CellClass::Free);
+    assert_eq!(classify_cell(50), CellClass::Free);
+    assert_eq!(classify_cell(64), CellClass::Free);
+    assert_eq!(classify_cell(65), CellClass::Occupied);
+    assert_eq!(classify_cell(100), CellClass::Occupied);
+    let grid = decode_occupancy(&serde_json::to_vec(&packet()).unwrap()).unwrap();
+    assert_eq!(cell_center(&grid, 0, 0), Some((-0.75, 3.25)));
+    assert_eq!(cell_center(&grid, 1, 1), Some((-0.25, 3.75)));
+    assert!(cell_center(&grid, 2, 0).is_none());
+    let map = local_map(&grid, 1);
+    assert_eq!(map.cols, 1);
+    assert_eq!(map.rows, 1);
+    assert_eq!(map.cells, vec![CellClass::Occupied]);
 }

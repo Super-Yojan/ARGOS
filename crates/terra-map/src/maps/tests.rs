@@ -4,6 +4,23 @@ use glam::{DMat4, DVec3};
 use url::Url;
 
 #[test]
+fn ground_pixels_round_trip_through_the_camera() {
+    let mut camera = Camera::new(38.8297, -77.3075, 40., 400., 0., 90.);
+    camera.set_mode(MapMode::TwoD);
+    let (x, y) = camera.project_ground(800, 600, 38.8297, -77.3075).unwrap();
+    assert!((x - 400.).abs() < 2.);
+    assert!((y - 300.).abs() < 2.);
+    let (lat, lon) = camera.unproject_ground(800, 600, x, y).unwrap();
+    assert!((lat - 38.8297).abs() < 1e-5);
+    assert!((lon + 77.3075).abs() < 1e-5);
+    let north = 38.8297 + (80. / EARTH_RADIUS).to_degrees();
+    let (nx, ny) = camera.project_ground(800, 600, north, -77.3075).unwrap();
+    assert!(ny < y);
+    let (back, _) = camera.unproject_ground(800, 600, nx, ny).unwrap();
+    assert!((back - north).abs() < 1e-4);
+}
+
+#[test]
 fn wgs84_equator_and_pole() {
     assert!((ecef(0.0, 0.0, 0.0) - DVec3::new(6_378_137.0, 0.0, 0.0)).length() < 0.001);
     assert!((ecef(90.0, 0.0, 0.0).z - 6_356_752.314_245).abs() < 0.001);

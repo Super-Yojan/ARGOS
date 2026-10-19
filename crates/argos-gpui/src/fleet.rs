@@ -1,10 +1,14 @@
-//! Background Zenoh subscription and the marker picture the map draws.
+//! Background Zenoh subscription and the commands the selected rover may receive.
 //!
-//! Connect and snapshot polling run on a thread named `argos-fleet`. The UI
-//! only reads [`FleetPicture`].
+//! Connect and snapshot polling run on a thread named `argos-fleet`. Publishing
+//! stays on that client and is idle until the window selects a rover.
 
 use argos_core::{
-    LocalFrame, OccupancyGrid, Snapshot, Topics, map_heading_degrees, rover_geographic,
+    CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState, LocalFrame, LocalMap,
+    OccupancyGrid, Pose, PoseWatch, RouteSample, Snapshot, TeleopLimits, Topics, classify_cell,
+    decode_autonomy_value, fallback_degrade_reason, geographic_goal_refusal, goal_blocked,
+    local_map, map_heading_degrees, outdoor_gps_advertised, reported_pose_quality,
+    rover_geographic,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -21,7 +25,7 @@ pub const DEFAULT_PREFIX: &str = "terra/phone";
 pub const DEFAULT_USER: &str = "terra";
 pub const PASSWORD_NOTICE: &str = "Set ARGOS_ZENOH_PASSWORD in .env";
 const POSE_FRESH_SECONDS: f64 = 2.5;
-const SETTING_KEYS: [&str; 8] = [
+const SETTING_KEYS: [&str; 16] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -30,6 +34,14 @@ const SETTING_KEYS: [&str; 8] = [
     "ARGOS_MAP_START_LON",
     "ARGOS_MAP_ORIGIN_LAT",
     "ARGOS_MAP_ORIGIN_LON",
+    "ARGOS_DRIVE_LINEAR",
+    "ARGOS_DRIVE_YAW_RATE",
+    "ARGOS_DRIVE_YAW_ACCEL",
+    "ARGOS_DRIVE_YAW_DECEL",
+    "ARGOS_DRIVE_MIN_RADIUS",
+    "ARGOS_DRIVE_ALLOW_SPIN",
+    "ARGOS_DEGRADED_YAW_RATE",
+    "ARGOS_DEGRADED_SETTLE",
 ];
 
 #[derive(Clone, Debug)]
@@ -43,6 +55,9 @@ pub struct DashboardConfig {
     pub start_latitude: f64,
     pub start_longitude: f64,
     pub origin: LocalFrame,
+    /// Defense in depth; Terra enforces the real limits.
+    pub teleop: TeleopLimits,
+    pub degrade: DegradeLimits,
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -57,6 +72,10 @@ impl DashboardConfig {
             .map(|path| read_dotenv(path))
             .collect();
         let file = merge_dotenv(&process, &files);
+        let mut settings = file.clone();
+        for (key, value) in &process {
+            settings.insert(key.clone(), value.clone());
+        }
         let endpoint = process
             .get("ARGOS_ZENOH_ENDPOINT")
             .cloned()
@@ -89,14 +108,16 @@ impl DashboardConfig {
             .get("ARGOS_MAP_ORIGIN_LON")
             .cloned()
             .or_else(|| file.get("ARGOS_MAP_ORIGIN_LON").cloned());
-        Self::parse(
+        let mut config = Self::parse(
             endpoint.as_deref(),
             prefix.as_deref(),
             user.as_deref(),
             password.as_deref(),
             (start_lat.as_deref(), start_lon.as_deref()),
             (origin_lat.as_deref(), origin_lon.as_deref()),
-        )
+        )?;
+        apply_drive_settings(&mut config, &settings)?;
+        Ok(config)
     }
     pub fn parse(
         endpoint: Option<&str>,
@@ -165,8 +186,70 @@ impl DashboardConfig {
             start_latitude,
             start_longitude,
             origin,
+            teleop: TeleopLimits::default(),
+            degrade: DegradeLimits::default(),
         })
     }
+}
+pub fn apply_drive_settings(
+    config: &mut DashboardConfig,
+    values: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let mut teleop = config.teleop;
+    let mut degrade = config.degrade;
+    if let Some(value) = number(values, "ARGOS_DRIVE_LINEAR")? {
+        teleop.linear = value;
+    }
+    if let Some(value) = number(values, "ARGOS_DRIVE_YAW_RATE")? {
+        teleop.yaw_rate = value;
+    }
+    if let Some(value) = number(values, "ARGOS_DRIVE_YAW_ACCEL")? {
+        teleop.yaw_accel = value;
+    }
+    if let Some(value) = number(values, "ARGOS_DRIVE_YAW_DECEL")? {
+        teleop.yaw_decel = value;
+    }
+    if let Some(value) = number(values, "ARGOS_DRIVE_MIN_RADIUS")? {
+        teleop.min_turn_radius = value;
+    }
+    if let Some(value) = values.get("ARGOS_DRIVE_ALLOW_SPIN") {
+        teleop.allow_spin = matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        );
+    }
+    if let Some(value) = number(values, "ARGOS_DEGRADED_YAW_RATE")? {
+        degrade.yaw_rate = value;
+    }
+    if let Some(value) = number(values, "ARGOS_DEGRADED_SETTLE")? {
+        degrade.settle = value;
+    }
+    config.teleop = teleop.validate().map_err(|error| error.to_string())?;
+    if !degrade.yaw_rate.is_finite()
+        || !degrade.settle.is_finite()
+        || degrade.yaw_rate <= 0.
+        || degrade.settle < 0.
+    {
+        return Err("degraded-pose limits must be finite and the yaw rate positive".into());
+    }
+    config.degrade = degrade;
+    Ok(())
+}
+fn number(values: &BTreeMap<String, String>, key: &str) -> Result<Option<f64>, String> {
+    let Some(raw) = values
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let value: f64 = raw
+        .parse()
+        .map_err(|_| format!("{key} must be a finite number"))?;
+    if !value.is_finite() {
+        return Err(format!("{key} must be a finite number"));
+    }
+    Ok(Some(value))
 }
 fn dotenv_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -228,19 +311,49 @@ fn optional_coordinate(name: &str, raw: Option<&str>) -> Result<Option<f64>, Str
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct GoalMark {
+    pub x: f64,
+    pub y: f64,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub state: String,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub struct RoverMark {
     pub id: u64,
     pub latitude: f64,
     pub longitude: f64,
     pub heading: f64,
+    pub local_x: f64,
+    pub local_y: f64,
+    pub yaw: f64,
+    pub sequence: u64,
     /// `online`, `pose stale`, or `offline`.
     pub status: String,
     pub occupancy: String,
+    pub grid: Option<LocalMap>,
+    pub requested_level: Option<String>,
+    pub effective_level: Option<String>,
+    pub recommended_level: Option<String>,
+    pub route: Vec<RouteSample>,
+    pub goal: Option<GoalMark>,
+    pub degraded: bool,
+    pub degrade_reason: String,
+    /// True when a pose/quality report, not the yaw-rate fallback, set `degraded`.
+    pub quality_reported: bool,
+    pub reversing: bool,
+    pub hold: Option<String>,
+    pub command_origin: CommandOrigin,
+    /// Metres. Provisional outdoor arrival radius from navigation telemetry.
+    pub arrival_radius: f64,
+    /// True only when navigation telemetry advertises `outdoor_gps`.
+    pub outdoor_gps: bool,
 }
 #[derive(Clone, Debug)]
 pub struct FleetPicture {
     pub link: String,
     pub detail: String,
+    pub command: String,
     pub marks: Vec<RoverMark>,
 }
 impl Default for FleetPicture {
@@ -248,6 +361,7 @@ impl Default for FleetPicture {
         Self {
             link: "connecting".into(),
             detail: "Connecting".into(),
+            command: String::new(),
             marks: Vec::new(),
         }
     }
@@ -256,6 +370,7 @@ impl Default for FleetPicture {
 pub fn fleet_marks(
     snapshot: &Snapshot,
     localizations: &Value,
+    operator: &Value,
     mut occupancy: impl FnMut(u64) -> Option<(OccupancyGrid, f64)>,
     origin: LocalFrame,
 ) -> Vec<RoverMark> {
@@ -276,21 +391,100 @@ pub fn fleet_marks(
             } else {
                 "offline"
             };
+            let report = decode_autonomy_value(&operator[&key]["authority"]).ok();
+            let quality = reported_pose_quality(&operator[&key]);
+            let grid = occupancy(rover.id);
             Some(RoverMark {
                 id: rover.id,
                 latitude,
                 longitude,
                 heading: map_heading_degrees(pose.yaw),
+                local_x: pose.x,
+                local_y: pose.y,
+                yaw: pose.yaw,
+                sequence: pose.sequence,
                 status: status.into(),
-                occupancy: occupancy(rover.id)
-                    .map(|(grid, age)| occupancy_summary(&grid, age))
+                occupancy: grid
+                    .as_ref()
+                    .map(|(grid, age)| occupancy_summary(grid, *age))
                     .unwrap_or_else(|| "no occupancy".into()),
+                grid: grid.as_ref().map(|(grid, _)| local_map(grid, 28)),
+                requested_level: report.as_ref().map(|report| report.requested.clone()),
+                effective_level: report.as_ref().and_then(|report| report.effective.clone()),
+                recommended_level: report
+                    .as_ref()
+                    .and_then(|report| report.recommended.clone()),
+                route: report
+                    .as_ref()
+                    .map(|report| report.route.clone())
+                    .unwrap_or_default(),
+                goal: goal_mark(rover, localizations, origin),
+                degraded: quality.as_ref().is_some_and(|quality| quality.degraded),
+                degrade_reason: quality
+                    .as_ref()
+                    .map(|quality| quality.reason.clone())
+                    .unwrap_or_default(),
+                quality_reported: quality.is_some(),
+                reversing: report
+                    .as_ref()
+                    .is_some_and(|report| report.commanded_linear.is_some_and(|speed| speed < 0.)),
+                hold: report.as_ref().and_then(|report| report.hold.clone()),
+                command_origin: report
+                    .as_ref()
+                    .map(|report| report.origin)
+                    .unwrap_or_default(),
+                arrival_radius: report
+                    .as_ref()
+                    .map(|report| report.arrival_radius)
+                    .unwrap_or(5.),
+                outdoor_gps: outdoor_gps_advertised(&operator[&key]),
             })
         })
         .collect()
 }
+fn goal_mark(
+    rover: &argos_core::RoverSnapshot,
+    localizations: &Value,
+    origin: LocalFrame,
+) -> Option<GoalMark> {
+    let goal = rover.goal.as_ref()?;
+    if goal.state == GoalState::Idle {
+        return None;
+    }
+    let (latitude, longitude) = if goal.latitude.is_some() && goal.longitude.is_some() {
+        (goal.latitude, goal.longitude)
+    } else {
+        let pose = Pose {
+            rover_id: rover.id,
+            sequence: 0,
+            x: goal.x,
+            y: goal.y,
+            yaw: 0.,
+        };
+        match rover_geographic(&pose, localizations.get(rover.id.to_string()), origin) {
+            Ok((latitude, longitude)) => (Some(latitude), Some(longitude)),
+            Err(_) => (None, None),
+        }
+    };
+    let state = match goal.state {
+        GoalState::Active => "active",
+        GoalState::Arrived => "arrived",
+        GoalState::Idle => "idle",
+    };
+    Some(GoalMark {
+        x: goal.x,
+        y: goal.y,
+        latitude,
+        longitude,
+        state: state.into(),
+    })
+}
 fn occupancy_summary(grid: &OccupancyGrid, age: f64) -> String {
-    let occupied = grid.occupancy.iter().filter(|cell| **cell > 0).count();
+    let occupied = grid
+        .occupancy
+        .iter()
+        .filter(|cell| classify_cell(**cell) == CellClass::Occupied)
+        .count();
     format!(
         "{}x{}, {occupied} occupied, {age:.1}s",
         grid.width, grid.height
@@ -333,42 +527,244 @@ pub fn framing_target(
 #[derive(Clone)]
 pub struct FleetFeed {
     picture: Arc<Mutex<FleetPicture>>,
+    client: Arc<Mutex<Option<Arc<Client>>>>,
+    limits: Arc<Mutex<TeleopLimits>>,
+    origin: LocalFrame,
 }
 impl FleetFeed {
     pub fn start(config: DashboardConfig) -> Self {
+        let limits = Arc::new(Mutex::new(config.teleop));
         if let Some(notice) = &config.connect_notice {
             return Self {
                 picture: Arc::new(Mutex::new(FleetPicture {
                     link: "password".into(),
                     detail: notice.clone(),
+                    command: String::new(),
                     marks: Vec::new(),
                 })),
+                client: Arc::new(Mutex::new(None)),
+                limits,
+                origin: config.origin,
             };
         }
+        let origin = config.origin;
         let picture = Arc::new(Mutex::new(FleetPicture {
             link: "connecting".into(),
             detail: format!("Connecting to {} ({})", config.endpoint, config.prefix),
+            command: String::new(),
             marks: Vec::new(),
         }));
+        let client = Arc::new(Mutex::new(None));
         let shared = picture.clone();
+        let slot = client.clone();
         std::thread::Builder::new()
             .name("argos-fleet".into())
-            .spawn(move || run(config, shared))
+            .spawn(move || run(config, shared, slot))
             .expect("argos-fleet thread");
-        Self { picture }
+        Self {
+            picture,
+            client,
+            limits,
+            origin,
+        }
+    }
+    pub fn origin(&self) -> LocalFrame {
+        self.origin
     }
     pub fn picture(&self) -> FleetPicture {
         self.picture.lock().unwrap().clone()
     }
+    pub fn limits(&self) -> TeleopLimits {
+        *self.limits.lock().unwrap()
+    }
+    pub fn set_linear(&self, linear: f64) -> Result<(), String> {
+        self.update_limits(|limits| limits.linear = linear)
+    }
+    pub fn set_spin(&self, allow_spin: bool) -> Result<(), String> {
+        self.update_limits(|limits| limits.allow_spin = allow_spin)
+    }
+    pub fn set_yaw_rate(&self, yaw_rate: f64) -> Result<(), String> {
+        self.update_limits(|limits| limits.yaw_rate = yaw_rate)
+    }
+    pub fn set_yaw_accel(&self, yaw_accel: f64) -> Result<(), String> {
+        self.update_limits(|limits| limits.yaw_accel = yaw_accel)
+    }
+    pub fn set_yaw_decel(&self, yaw_decel: f64) -> Result<(), String> {
+        self.update_limits(|limits| limits.yaw_decel = yaw_decel)
+    }
+    pub fn set_min_radius(&self, min_turn_radius: f64) -> Result<(), String> {
+        self.update_limits(|limits| limits.min_turn_radius = min_turn_radius)
+    }
+    fn update_limits(&self, edit: impl FnOnce(&mut TeleopLimits)) -> Result<(), String> {
+        let mut limits = self.limits.lock().unwrap();
+        edit(&mut limits);
+        let checked = (*limits).validate().map_err(|error| error.to_string())?;
+        *limits = checked;
+        if let Some(client) = self.client.lock().unwrap().clone() {
+            client.set_teleop_guard(*limits);
+        }
+        Ok(())
+    }
+    pub fn publish_level(&self, id: u64, level: &str) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        let level = level.to_string();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                let token = format!("gpui-{id}-{}", unix_millis());
+                let bytes = argos_core::encode_level_request(&level, &token)
+                    .map_err(|error| error.to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| "level payload".to_string())?;
+                client
+                    .operator_command(id, "autonomy", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!("Sent {level} to rover {id}"))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Publish a confirmed goal. Local is the default. Geographic is refused
+    /// unless this rover's telemetry advertises `outdoor_gps`.
+    pub fn publish_goal(&self, id: u64, goal: GoalRequest) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let geographic = matches!(goal, GoalRequest::Geographic { .. });
+                {
+                    let current = picture.lock().unwrap();
+                    if current.link != "healthy" {
+                        return Err("Link is down".to_string());
+                    }
+                    let mark = current
+                        .marks
+                        .iter()
+                        .find(|mark| mark.id == id)
+                        .ok_or("Select a rover that is in the fleet")?;
+                    if let Some(reason) = geographic_goal_refusal(mark.outdoor_gps)
+                        && geographic
+                    {
+                        return Err(reason.to_string());
+                    }
+                    if let Some(reason) = goal_blocked(mark.degraded) {
+                        return Err(format!("{reason} ({})", mark.degrade_reason));
+                    }
+                }
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client
+                    .send_goal(id, goal)
+                    .map_err(|error| error.to_string())?;
+                Ok("Goal sent".to_string())
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    pub fn cancel_goal(&self, id: u64) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client.cancel_goal(id).map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!("Cancel sent to rover {id}"))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    pub fn begin_drive(&self, id: u64) -> Result<(), String> {
+        {
+            let current = self.picture.lock().unwrap();
+            if current.link != "healthy" {
+                return Err("Link is down".into());
+            }
+            let mark = current
+                .marks
+                .iter()
+                .find(|mark| mark.id == id)
+                .ok_or("Rover is not in the fleet")?;
+            if mark.status != "online" {
+                return Err("Pose is stale".into());
+            }
+        }
+        let client = self.connected()?;
+        client.set_teleop_guard(*self.limits.lock().unwrap());
+        Ok(())
+    }
+    pub fn end_drive(&self) {
+        if let Ok(client) = self.connected() {
+            client.clear_input();
+            client.clear_teleop_guard();
+        }
+    }
+    pub fn drive_key(&self, id: u64, key: &str, down: bool) -> Result<(), String> {
+        if down {
+            let current = self.picture.lock().unwrap();
+            if current.link != "healthy" {
+                return Err("Link is down".into());
+            }
+            let mark = current
+                .marks
+                .iter()
+                .find(|mark| mark.id == id)
+                .ok_or("Rover is not in the fleet")?;
+            if mark.status != "online" {
+                return Err("Pose is stale".into());
+            }
+        }
+        let client = self.connected()?;
+        client
+            .input(id, key, down)
+            .map_err(|error| error.to_string())
+    }
+    pub fn refresh_drive(&self, id: u64) {
+        if let Ok(client) = self.connected() {
+            client.refresh_drive(id);
+        }
+    }
+    pub fn emergency_stop(&self, id: u64) -> Result<(), String> {
+        let client = self.connected()?;
+        client.clear_teleop_guard();
+        client
+            .action(id, "safety", serde_json::json!({"action": "stop"}))
+            .map_err(|error| error.to_string())?;
+        self.picture.lock().unwrap().command = format!("Stop sent to rover {id}");
+        Ok(())
+    }
+    fn connected(&self) -> Result<Arc<Client>, String> {
+        self.client
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "Not connected".to_string())
+    }
 }
-fn run(config: DashboardConfig, picture: Arc<Mutex<FleetPicture>>) {
+fn unix_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+fn run(
+    config: DashboardConfig,
+    picture: Arc<Mutex<FleetPicture>>,
+    slot: Arc<Mutex<Option<Arc<Client>>>>,
+) {
     loop {
         let credentials = config
             .credentials
             .as_ref()
             .map(|(user, password)| (user.as_str(), password.as_str()));
         match Client::connect_authenticated(&config.endpoint, &config.prefix, credentials) {
-            Ok(client) => poll(&client, &config, &picture),
+            Ok(client) => {
+                let client = Arc::new(client);
+                *slot.lock().unwrap() = Some(client.clone());
+                poll(&client, &config, &picture);
+                *slot.lock().unwrap() = None;
+            }
             Err(error) => {
                 let mut current = picture.lock().unwrap();
                 current.link = "disconnected".into();
@@ -379,6 +775,8 @@ fn run(config: DashboardConfig, picture: Arc<Mutex<FleetPicture>>) {
     }
 }
 fn poll(client: &Client, config: &DashboardConfig, picture: &Mutex<FleetPicture>) {
+    let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
+    let started = std::time::Instant::now();
     loop {
         let snapshot = client.snapshot();
         if snapshot.link == "failed" || snapshot.link == "disconnected" {
@@ -386,12 +784,34 @@ fn poll(client: &Client, config: &DashboardConfig, picture: &Mutex<FleetPicture>
         }
         let localizations =
             serde_json::from_str::<Value>(&client.localization_snapshot()).unwrap_or(Value::Null);
-        let marks = fleet_marks(
+        let operator =
+            serde_json::from_str::<Value>(&client.operator_state_snapshot()).unwrap_or(Value::Null);
+        let mut marks = fleet_marks(
             &snapshot,
             &localizations,
+            &operator,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             config.origin,
         );
+        let now = started.elapsed().as_secs_f64();
+        for mark in &mut marks {
+            if mark.quality_reported {
+                continue;
+            }
+            let (degraded, reason) = watches.entry(mark.id).or_default().observe(
+                mark.yaw,
+                mark.sequence,
+                now,
+                client.pose_tracking(mark.id),
+                config.degrade,
+            );
+            mark.degraded = degraded;
+            mark.degrade_reason = if degraded {
+                fallback_degrade_reason(reason)
+            } else {
+                String::new()
+            };
+        }
         {
             let mut current = picture.lock().unwrap();
             current.detail = describe(&snapshot, &marks);
@@ -601,11 +1021,12 @@ mod tests {
             resolution: 0.5,
             origin_x: 0.,
             origin_y: 0.,
-            occupancy: vec![0, 40],
+            occupancy: vec![0, 65],
         };
         let marks = fleet_marks(
             &snapshot,
             &localizations,
+            &Value::Null,
             |id| (id == 3).then(|| (grid.clone(), 0.4)),
             origin,
         );
@@ -634,7 +1055,7 @@ mod tests {
             rovers: vec![rover(1, "online", Some(first.clone()), Some(0.1))],
             notice: None,
         };
-        let marks = fleet_marks(&snapshot, &Value::Null, |_| None, origin);
+        let marks = fleet_marks(&snapshot, &Value::Null, &Value::Null, |_| None, origin);
         let previous = BTreeSet::new();
         let (ids, latitude, longitude) = framing_target(&previous, &marks).unwrap();
         assert_eq!(ids, BTreeSet::from([1]));
@@ -648,7 +1069,13 @@ mod tests {
             rovers: vec![rover(1, "online", Some(moved), Some(3.))],
             ..snapshot.clone()
         };
-        let moved_marks = fleet_marks(&moved_snapshot, &Value::Null, |_| None, origin);
+        let moved_marks = fleet_marks(
+            &moved_snapshot,
+            &Value::Null,
+            &Value::Null,
+            |_| None,
+            origin,
+        );
         assert_eq!(moved_marks[0].status, "pose stale");
         assert!(moved_marks[0].latitude > marks[0].latitude);
         assert!(framing_target(&ids, &moved_marks).is_none());
@@ -662,7 +1089,7 @@ mod tests {
             ],
             ..snapshot
         };
-        let both_marks = fleet_marks(&both, &Value::Null, |_| None, origin);
+        let both_marks = fleet_marks(&both, &Value::Null, &Value::Null, |_| None, origin);
         assert_eq!(both_marks[0].status, "offline");
         let (ids, latitude, _) = framing_target(&ids, &both_marks).unwrap();
         assert_eq!(ids, BTreeSet::from([1, 2]));

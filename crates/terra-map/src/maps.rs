@@ -101,6 +101,7 @@ pub struct MapView {
     generation: u64,
     epoch: u64,
     drag: Option<Point<Pixels>>,
+    frame: Option<Bounds<Pixels>>,
     focus: FocusHandle,
     _poll: Task<()>,
 }
@@ -188,6 +189,7 @@ impl MapView {
             generation: 0,
             epoch: 0,
             drag: None,
+            frame: None,
             focus: cx.focus_handle(),
             _poll: poll,
         }
@@ -238,7 +240,48 @@ impl MapView {
             });
         }
     }
+    /// Position inside the map element of a ground coordinate.
+    pub fn project_local(&self, latitude: f64, longitude: f64) -> Option<Point<Pixels>> {
+        let frame = self.frame?;
+        let window = self.project(latitude, longitude)?;
+        Some(point(window.x - frame.origin.x, window.y - frame.origin.y))
+    }
+    /// Window position of a ground coordinate, when it is inside the viewport.
+    pub fn project(&self, latitude: f64, longitude: f64) -> Option<Point<Pixels>> {
+        let frame = self.frame?;
+        let width = f32::from(frame.size.width).max(1.) as u32;
+        let height = f32::from(frame.size.height).max(1.) as u32;
+        let (x, y) = self
+            .camera
+            .project_ground(width, height, latitude, longitude)?;
+        Some(point(
+            frame.origin.x + px(x as f32),
+            frame.origin.y + px(y as f32),
+        ))
+    }
+    /// Ground latitude and longitude under a window pixel.
+    pub fn ground_at(&self, position: Point<Pixels>) -> Option<(f64, f64)> {
+        let frame = self.frame?;
+        let width = f32::from(frame.size.width).max(1.);
+        let height = f32::from(frame.size.height).max(1.);
+        let x = f32::from(position.x - frame.origin.x) as f64;
+        let y = f32::from(position.y - frame.origin.y) as f64;
+        self.camera
+            .unproject_ground(width as u32, height as u32, x, y)
+    }
+    /// Ground metres per logical pixel at the camera target.
+    pub fn metres_per_pixel(&self) -> Option<f64> {
+        let frame = self.frame?;
+        let height = f32::from(frame.size.height).max(1.) as u32;
+        let width = f32::from(frame.size.width).max(1.) as u32;
+        let view = self.camera.view(width, height);
+        Some(view.meters_per_pixel.unwrap_or_else(|| {
+            let half = self.camera.distance * (camera::FOV * 0.5).tan();
+            2. * half / f64::from(height)
+        }))
+    }
     fn resize(&mut self, bounds: Bounds<Pixels>, scale: f32) {
+        self.frame = Some(bounds);
         let size = worker::render_size(
             f32::from(bounds.size.width) as f64,
             f32::from(bounds.size.height) as f64,

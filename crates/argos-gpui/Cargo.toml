@@ -2,7 +2,7 @@
 name = "argos-gpui"
 version.workspace = true
 edition.workspace = true
-description = "ARGOS operator dashboard. Map View with a read-only Zenoh fleet."
+description = "ARGOS operator dashboard. Map View with Zenoh goals, autonomy, and teleop."
 
 [lib]
 name = "argos_gpui"

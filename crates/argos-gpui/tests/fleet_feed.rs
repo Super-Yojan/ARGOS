@@ -1,7 +1,8 @@
 //! Headless check that a Zorvane-shaped publisher moves the map's data layer.
-use argos_core::{Anchor, LocalFrame};
-use argos_gpui::{DashboardConfig, fleet_marks};
+use argos_core::{Anchor, GoalRequest, LocalFrame};
+use argos_gpui::{DashboardConfig, FleetFeed, fleet_marks};
 use argos_zenoh::Client;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zenoh::Wait;
 
@@ -51,10 +52,18 @@ fn zorvane_pose_updates_marks_and_occupancy() {
             .wait()
             .unwrap();
         let located = serde_json::Value::Null;
-        !fleet_marks(&client.snapshot(), &located, |_| None, origin).is_empty()
+        !fleet_marks(
+            &client.snapshot(),
+            &located,
+            &serde_json::Value::Null,
+            |_| None,
+            origin,
+        )
+        .is_empty()
     });
     let start = fleet_marks(
         &client.snapshot(),
+        &serde_json::Value::Null,
         &serde_json::Value::Null,
         |_| None,
         origin,
@@ -80,6 +89,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
         let marks = fleet_marks(
             &client.snapshot(),
             &serde_json::Value::Null,
+            &serde_json::Value::Null,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             origin,
         );
@@ -92,6 +102,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
     });
     let moved = fleet_marks(
         &client.snapshot(),
+        &serde_json::Value::Null,
         &serde_json::Value::Null,
         |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
         origin,
@@ -119,7 +130,13 @@ fn zorvane_pose_updates_marks_and_occupancy() {
             .unwrap();
         let localizations: serde_json::Value =
             serde_json::from_str(&client.localization_snapshot()).unwrap();
-        let marks = fleet_marks(&client.snapshot(), &localizations, |_| None, origin);
+        let marks = fleet_marks(
+            &client.snapshot(),
+            &localizations,
+            &serde_json::Value::Null,
+            |_| None,
+            origin,
+        );
         let Some(mark) = marks.first() else {
             return false;
         };
@@ -133,4 +150,194 @@ fn zorvane_pose_updates_marks_and_occupancy() {
     });
     drop(client);
     drop(router);
+}
+
+#[test]
+fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{}", socket.local_addr().unwrap().port());
+    drop(socket);
+    let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"router\"").unwrap();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let router = zenoh::open(config).wait().unwrap();
+    let wire = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let recorded = wire.clone();
+    let _inbox = router
+        .declare_subscriber("terra/rover/3/**")
+        .callback(move |sample| {
+            let key = sample.key_expr().to_string();
+            let body = String::from_utf8_lossy(&sample.payload().to_bytes()).into_owned();
+            recorded.lock().unwrap().push((key, body));
+        })
+        .wait()
+        .unwrap();
+    let level = Arc::new(Mutex::new("teleop".to_string()));
+    let publish_level = level.clone();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let publish_stop = stop.clone();
+    let publisher = router.clone();
+    let pump = std::thread::spawn(move || {
+        let mut sequence = 1u64;
+        while !publish_stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let level = publish_level.lock().unwrap().clone();
+            let _ = publisher
+                .put(
+                    "terra/rover/fleet/state",
+                    br#"{"count":1,"max_count":1,"ids":[3]}"#.as_slice(),
+                )
+                .wait();
+            let pose =
+                format!(r#"{{"x":1.0,"y":0.5,"yaw":0.1,"sequence":{sequence},"tracked":true}}"#);
+            let _ = publisher.put("terra/rover/3/pose", pose).wait();
+            let _ = publisher
+                .put(
+                    "terra/rover/3/map/occupancy",
+                    br#"{"schema_version":1,"rover_id":3,"run_id":"run","sequence":1,"width":2,"height":2,"resolution":0.5,"origin_x":0,"origin_y":0,"occupancy":[-1,0,64,65]}"#.as_slice(),
+                )
+                .wait();
+            let status = format!(
+                r#"{{"requested_level":"{level}","effective_level":"{level}","assigned_level":"waypoint","active_source":"none","safety":"clear","reason":"idle","revision":1,"run_id":"run","token":"status","result":"accepted","supported_levels":["teleop","assisted_teleop","waypoint","waypoint_direct","supervised","target_search"],"paused":false,"global_route":[[0.0,0.0],[1.0,0.5]]}}"#
+            );
+            let _ = publisher
+                .put("terra/rover/3/autonomy/status", status)
+                .wait();
+            sequence += 1;
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let dashboard = DashboardConfig::parse(
+        Some(&endpoint),
+        Some("terra/rover"),
+        Some(""),
+        Some(""),
+        (Some("0"), Some("0")),
+        (None, None),
+    )
+    .unwrap();
+    let feed = FleetFeed::start(dashboard);
+    wait_for(|| {
+        let picture = feed.picture();
+        picture.link == "healthy"
+            && picture.marks.first().is_some_and(|mark| {
+                mark.status == "online"
+                    && mark.occupancy.starts_with("2x2, 1 occupied")
+                    && mark.requested_level.as_deref() == Some("teleop")
+                    && mark.recommended_level.as_deref() == Some("waypoint")
+                    && !mark.outdoor_gps
+                    && mark.grid.as_ref().is_some_and(|grid| {
+                        grid.cells.contains(&argos_core::CellClass::Occupied)
+                            && grid.cells.contains(&argos_core::CellClass::Free)
+                            && grid.cells.contains(&argos_core::CellClass::Unknown)
+                    })
+            })
+    });
+    feed.begin_drive(3).unwrap();
+    feed.drive_key(3, "a", true).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    feed.drive_key(3, "a", false).unwrap();
+    assert!(
+        wire.lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.ends_with("/teleop"))
+            .all(|(_, body)| !body.contains("\"angular\":0.3") && !body.contains("\"linear\":0.2")),
+        "turn-only input published a twist"
+    );
+    feed.drive_key(3, "w", true).unwrap();
+    wait_for(|| {
+        wire.lock().unwrap().iter().any(|(key, body)| {
+            key.ends_with("/teleop")
+                && body.contains("\"linear\":0.2")
+                && body.contains("\"angular\":0.0")
+        })
+    });
+    feed.drive_key(3, "w", false).unwrap();
+    wait_for(|| {
+        wire.lock().unwrap().iter().rev().any(|(key, body)| {
+            key.ends_with("/teleop")
+                && body.contains("\"linear\":0.0")
+                && body.contains("\"angular\":0.0")
+        })
+    });
+    feed.drive_key(3, "w", true).unwrap();
+    std::thread::sleep(Duration::from_millis(900));
+    assert!(
+        wire.lock().unwrap().iter().rev().any(|(key, body)| {
+            key.ends_with("/teleop")
+                && body.contains("\"linear\":0.0")
+                && body.contains("\"angular\":0.0")
+        }),
+        "deadman did not return the twist to zero"
+    );
+    feed.end_drive();
+    wire.lock().unwrap().clear();
+    feed.publish_goal(
+        3,
+        GoalRequest::Local {
+            x: 1.25,
+            y: -0.5,
+            yaw: None,
+        },
+    );
+    wait_for(|| {
+        wire.lock().unwrap().iter().any(|(key, body)| {
+            key.ends_with("/goal")
+                && body.contains("\"frame\":\"local\"")
+                && body.contains("1.25")
+                && body.contains("-0.5")
+        })
+    });
+    feed.publish_goal(
+        3,
+        GoalRequest::Geographic {
+            latitude: 38.83,
+            longitude: -77.3,
+            yaw: None,
+        },
+    );
+    wait_for(|| feed.picture().command.contains("unsupported"));
+    assert!(
+        wire.lock()
+            .unwrap()
+            .iter()
+            .all(|(_, body)| !body.contains("wgs84"))
+    );
+    feed.publish_level(3, "waypoint");
+    wait_for(|| {
+        wire.lock().unwrap().iter().any(|(key, body)| {
+            key.ends_with("/autonomy") && body.contains("\"level\":\"waypoint\"")
+        })
+    });
+    *level.lock().unwrap() = "teleop".into();
+    let _ = router
+        .put(
+            "terra/rover/3/pose/quality",
+            br#"{"schema_version":1,"rover_id":3,"run_id":"run","sequence":900,"degraded":true,"reason":"tracking lost","pose_age_s":0.2,"imu_age_s":null}"#,
+        )
+        .wait();
+    wait_for(|| {
+        feed.picture().marks.first().is_some_and(|mark| {
+            mark.degraded
+                && mark.quality_reported
+                && mark.degrade_reason == "tracking lost"
+                && !mark.degrade_reason.contains("fallback")
+        })
+    });
+    feed.publish_goal(
+        3,
+        GoalRequest::Local {
+            x: 0.5,
+            y: 0.5,
+            yaw: None,
+        },
+    );
+    wait_for(|| feed.picture().command.contains("degraded"));
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    pump.join().unwrap();
 }

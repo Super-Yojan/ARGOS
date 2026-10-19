@@ -20,6 +20,9 @@ impl HeldInput {
     pub fn clear(&mut self) {
         self.keys.clear();
     }
+    pub fn is_held(&self) -> bool {
+        !self.keys.is_empty()
+    }
     pub fn sample(&self) -> (f64, f64) {
         (
             (self.keys.contains("w") as i8 - self.keys.contains("s") as i8) as f64,

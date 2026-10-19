@@ -16,5 +16,14 @@ pub use operator::*;
 mod occupancy;
 pub use occupancy::*;
 
+mod autonomy;
+pub use autonomy::*;
+
+mod drive;
+pub use drive::*;
+
+mod drag;
+pub use drag::*;
+
 mod search;
 pub use search::*;

@@ -217,6 +217,19 @@ impl LocalFrame {
         frame.validate().ok()?;
         Some(frame)
     }
+    /// Inverse of [`Self::geographic`].
+    pub fn local(&self, latitude: f64, longitude: f64) -> Result<(f64, f64)> {
+        self.validate()?;
+        let (north, west) = Anchor {
+            latitude: self.latitude,
+            longitude: self.longitude,
+        }
+        .local(latitude, longitude)?;
+        let (sin, cos) = (self.rotation.sin(), self.rotation.cos());
+        let dx = cos * north + sin * west;
+        let dy = -sin * north + cos * west;
+        Ok((dx + self.anchor_x, dy + self.anchor_y))
+    }
 }
 fn component(value: &Value, key: &str) -> Option<f64> {
     match value.get(key) {
