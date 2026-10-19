@@ -8,10 +8,10 @@ The operator surface is the GPUI app in `crates/argos-gpui`. It opens a window a
 
 | Area | Current state |
 | --- | --- |
-| GPUI dashboard | One window. Map View, live rover markers, local occupancy, drag-to-goal, autonomy levels, and held teleop |
+| GPUI dashboard | One window. Map View, live rover markers, local occupancy, drag-to-goal, hold-to-arm, autonomy levels, and held teleop |
 | Map library | `crates/terra-map` (`terra_map`): Google 3D Tiles, local glTF/GLB instances, offline `MAPS_DEMO=1` fixture |
 | Operator access | Service still has GitHub OAuth allowlists, viewer/operator roles, per-tab control claim, CSRF checks |
-| Vehicle commands | Service still validates waypoint send/cancel, arm/disarm, autonomy selection, held driving, and latched stop. The GPUI window sends goal, cancel, autonomy, teleop, and safety stop on the Zenoh keys Terra already consumes. It does not arm hardware |
+| Vehicle commands | Service still validates waypoint send/cancel, arm/disarm, autonomy selection, held driving, and latched stop. The GPUI window sends goal, cancel, autonomy, teleop, safety stop, safety reset, and the existing hardware arm/disarm payload. A one-second hold is required before arm. Reset does not arm |
 | Navigation tuning | Service retains dimensions, clearance, planner speed/turn/look-ahead with revision acknowledgement |
 | Mapping | Rust client still validates occupancy run/frame and content heartbeats. The sidebar draws the local grid. Occupied means 65 or higher |
 | Hosting | Docker/Caddy and GCP packaging build `argos-server` without a browser bundle |

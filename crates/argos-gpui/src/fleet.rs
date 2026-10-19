@@ -5,11 +5,12 @@
 
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
-    LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport, Pose, PoseWatch, RawGps,
-    RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal, classify_cell,
-    decode_autonomy_value, decode_raw_gps, encode_source_request, fallback_degrade_reason,
-    goal_blocked, local_map, map_heading_degrees, reported_outdoor, reported_pose_quality,
-    rover_geographic, source_change_refusal,
+    HardwareCommand, HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission,
+    OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
+    admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_raw_gps, drive_block,
+    encode_hardware, encode_source_request, fallback_degrade_reason, goal_blocked, local_map,
+    map_heading_degrees, reported_outdoor, reported_pose_quality, rover_geographic,
+    source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -385,6 +386,9 @@ pub struct RoverMark {
     /// True when outdoor GPS is the acknowledged navigation source.
     pub outdoor_gps: bool,
     pub disarmed: bool,
+    pub hardware: HardwareObservation,
+    pub authority_revision: u64,
+    pub safety: String,
     pub run_id: String,
     pub navigation_revision: u64,
     pub outdoor: Option<OutdoorReport>,
@@ -438,7 +442,9 @@ pub fn fleet_marks(
             let report = decode_autonomy_value(&operator[&key]["authority"]).ok();
             let quality = reported_pose_quality(&operator[&key]);
             let outdoor = reported_outdoor(&operator[&key]);
-            let hardware = &operator[&key]["hardware"];
+            let hardware_value = &operator[&key]["hardware"];
+            let hardware = HardwareObservation::from_status(hardware_value);
+            let authority = &operator[&key]["authority"];
             let grid = occupancy(rover.id);
             let raw_gps = decode_raw_gps(localizations.get(&key).unwrap_or(&Value::Null));
             Some(RoverMark {
@@ -487,12 +493,13 @@ pub fn fleet_marks(
                 outdoor_gps: outdoor
                     .as_ref()
                     .is_some_and(|report| report.acknowledged_outdoor()),
-                disarmed: hardware.is_object()
-                    && hardware["armed"] == false
-                    && hardware["arming"] != true,
+                disarmed: hardware.present && !hardware.armed && !hardware.arming,
+                hardware,
+                authority_revision: authority["revision"].as_u64().unwrap_or(0),
+                safety: authority["safety"].as_str().unwrap_or("").to_string(),
                 run_id: report
                     .as_ref()
-                    .and_then(|_| operator[&key]["authority"]["run_id"].as_str())
+                    .and_then(|_| authority["run_id"].as_str())
                     .unwrap_or("")
                     .to_string(),
                 navigation_revision: outdoor
@@ -740,6 +747,9 @@ impl FleetFeed {
                     if let Some(reason) = goal_blocked(mark.degraded) {
                         return Err(format!("{reason} ({})", mark.degrade_reason));
                     }
+                    if let Some(reason) = drive_block(&mark.hardware) {
+                        return Err(reason.into());
+                    }
                 }
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
@@ -824,6 +834,9 @@ impl FleetFeed {
             if mark.status != "online" {
                 return Err("Pose is stale".into());
             }
+            if let Some(reason) = drive_block(&mark.hardware) {
+                return Err(reason.into());
+            }
         }
         let client = self.connected()?;
         client.set_teleop_guard(*self.limits.lock().unwrap());
@@ -849,6 +862,9 @@ impl FleetFeed {
             if mark.status != "online" {
                 return Err("Pose is stale".into());
             }
+            if let Some(reason) = drive_block(&mark.hardware) {
+                return Err(reason.into());
+            }
         }
         let client = self.connected()?;
         client
@@ -859,6 +875,36 @@ impl FleetFeed {
         if let Ok(client) = self.connected() {
             client.refresh_drive(id);
         }
+    }
+    pub fn publish_hardware(&self, id: u64, command: HardwareCommand) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let bytes = encode_hardware(&command).map_err(|error| error.to_string())?;
+                let payload =
+                    String::from_utf8(bytes).map_err(|_| "hardware payload".to_string())?;
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client
+                    .operator_command(id, "hardware", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(match command {
+                    HardwareCommand::Arm { .. } => format!("Arm request sent to rover {id}"),
+                    HardwareCommand::Disarm { .. } => format!("Disarm sent to rover {id}"),
+                    HardwareCommand::Reset => "Reset is a safety action".into(),
+                })
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    pub fn safety_reset(&self, id: u64) -> Result<(), String> {
+        let client = self.connected()?;
+        client
+            .action(id, "safety", serde_json::json!({"action": "reset"}))
+            .map_err(|error| error.to_string())?;
+        self.picture.lock().unwrap().command = format!("Reset sent to rover {id}");
+        Ok(())
     }
     pub fn emergency_stop(&self, id: u64) -> Result<(), String> {
         let client = self.connected()?;
@@ -1221,6 +1267,49 @@ mod tests {
         assert!((marks[0].heading - 270.).abs() < 1e-6);
         assert_eq!(marks[0].status, "online");
         assert_eq!(marks[0].occupancy, "2x1, 1 occupied, 0.4s");
+    }
+
+    #[test]
+    fn hardware_status_is_copied_onto_the_rover() {
+        let origin = LocalFrame::origin(0., 0.).unwrap();
+        let snapshot = Snapshot {
+            link: "healthy".into(),
+            fleet_age: Some(0.1),
+            rovers: vec![rover(3, "online", Some(pose(0., 0., 0.)), Some(0.1))],
+            notice: None,
+        };
+        let operator = serde_json::json!({
+            "3": {
+                "authority": {
+                    "requested_level": "waypoint",
+                    "run_id": "run",
+                    "revision": 4,
+                    "safety": "clear"
+                },
+                "hardware": {
+                    "ready": true,
+                    "armed": false,
+                    "arming": true,
+                    "reason": "arming",
+                    "token": "arm-1",
+                    "result": "",
+                    "age": 0.2
+                }
+            }
+        });
+        let marks = fleet_marks(&snapshot, &Value::Null, &operator, |_| None, origin);
+        assert!(marks[0].hardware.present);
+        assert!(marks[0].hardware.arming);
+        assert!(!marks[0].hardware.armed);
+        assert!(!marks[0].disarmed);
+        assert_eq!(marks[0].hardware.token, "arm-1");
+        assert_eq!(marks[0].authority_revision, 4);
+        assert_eq!(marks[0].safety, "clear");
+        assert_eq!(marks[0].run_id, "run");
+        assert_eq!(
+            drive_block(&marks[0].hardware),
+            Some(argos_core::ARM_TO_DRIVE)
+        );
     }
 
     #[test]

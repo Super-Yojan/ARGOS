@@ -207,6 +207,12 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             let _ = publisher
                 .put("terra/rover/3/autonomy/status", status)
                 .wait();
+            let _ = publisher
+                .put(
+                    "terra/rover/3/hardware/status",
+                    br#"{"ready":true,"armed":true,"arming":false,"reason":"armed","token":"arm-1","result":"accepted"}"#,
+                )
+                .wait();
             sequence += 1;
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -227,6 +233,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             && picture.marks.first().is_some_and(|mark| {
                 mark.status == "online"
                     && mark.occupancy.starts_with("2x2, 1 occupied")
+                    && mark.hardware.armed
                     && mark.requested_level.as_deref() == Some("teleop")
                     && mark.recommended_level.as_deref() == Some("waypoint")
                     && !mark.outdoor_gps
