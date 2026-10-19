@@ -37,7 +37,7 @@
 //! `{"schema_version":1,"source","token","run_id","navigation_revision"}`.
 //! Selecting a source does not arm hardware and does not start a mission.
 
-use crate::{GoalRequest, Result, invalid, valid_token};
+use crate::{Result, invalid, valid_token};
 use serde_json::{Value, json};
 use std::result::Result as StdResult;
 
@@ -105,16 +105,7 @@ pub struct RawGps {
     pub age_s: Option<f64>,
 }
 
-/// A map click that has not been sent.
-#[derive(Clone, Debug, PartialEq)]
-pub struct GeographicDraft {
-    pub rover_id: u64,
-    pub latitude: f64,
-    pub longitude: f64,
-    /// Frozen when the operator confirms, not when Terra republishes a radius.
-    pub arrival_radius_m: f64,
-}
-
+#[derive(Clone, Copy, Debug)]
 pub struct OutdoorAdmission<'a> {
     pub report: Option<&'a OutdoorReport>,
     pub latitude: f64,
@@ -318,55 +309,55 @@ pub fn app_update_required(report: Option<&OutdoorReport>) -> bool {
 }
 
 /// Geographic admission. The WGS84 destination is not rewritten here.
-pub fn admit_outdoor_goal(gate: OutdoorAdmission<'_>) -> StdResult<(), String> {
+pub fn admit_outdoor_goal(gate: OutdoorAdmission<'_>) -> StdResult<(), &'static str> {
     let Some(report) = gate.report else {
-        return Err(APP_UPDATE_REQUIRED.into());
+        return Err(APP_UPDATE_REQUIRED);
     };
     if app_update_required(Some(report)) {
-        return Err(APP_UPDATE_REQUIRED.into());
+        return Err(APP_UPDATE_REQUIRED);
     }
     if !report.acknowledged_outdoor() {
-        return Err("Outdoor GPS is not acknowledged".into());
+        return Err("Outdoor GPS is not acknowledged");
     }
     if report.run_id != gate.run_id {
-        return Err("Rover run changed; review a new waypoint".into());
+        return Err("Rover run changed; review a new waypoint");
     }
     if report.navigation_revision != gate.navigation_revision {
-        return Err("Navigation revision changed; review a new waypoint".into());
+        return Err("Navigation revision changed; review a new waypoint");
     }
     if report
         .age_s
         .is_none_or(|age| age > OUTDOOR_STATUS_MAX_AGE_S)
     {
-        return Err("Outdoor navigation telemetry is stale".into());
+        return Err("Outdoor navigation telemetry is stale");
     }
     if let Some(label) = report.hold_label() {
-        return Err(label.into());
+        return Err(label);
     }
     if report.hold_reason.is_some() {
-        return Err("Outdoor navigation is holding".into());
+        return Err("Outdoor navigation is holding");
     }
     if !report.ready {
-        return Err("Outdoor navigation is not ready".into());
+        return Err("Outdoor navigation is not ready");
     }
     if !(ARRIVAL_RADIUS_MIN_M..=ARRIVAL_RADIUS_MAX_M).contains(&gate.arrival_radius_m) {
-        return Err("Arrival radius must be from 2 through 20 m".into());
+        return Err("Arrival radius must be from 2 through 20 m");
     }
     let (Some(latitude), Some(longitude)) = (report.gps_latitude, report.gps_longitude) else {
-        return Err("GPS stale".into());
+        return Err("GPS stale");
     };
     if !latitude.is_finite() || !longitude.is_finite() {
-        return Err("GPS stale".into());
+        return Err("GPS stale");
     }
     if report.gps_age_s.is_none_or(|age| age > GPS_MAX_AGE_S) {
-        return Err("GPS stale".into());
+        return Err("GPS stale");
     }
     let accuracy = report.gps_accuracy_m.ok_or("GPS stale")?;
     if accuracy > GPS_MAX_UNCERTAINTY_M {
-        return Err("GPS uncertainty exceeds 10 m".into());
+        return Err("GPS uncertainty exceeds 10 m");
     }
     if accuracy > gate.arrival_radius_m {
-        return Err("GPS uncertainty is larger than the arrival radius".into());
+        return Err("GPS uncertainty is larger than the arrival radius");
     }
     if report
         .heading_age_s
@@ -375,23 +366,23 @@ pub fn admit_outdoor_goal(gate: OutdoorAdmission<'_>) -> StdResult<(), String> {
             .heading_accuracy_deg
             .is_none_or(|uncertainty| uncertainty > HEADING_MAX_UNCERTAINTY_DEG)
     {
-        return Err("Heading uncertain".into());
+        return Err("Heading uncertain");
     }
     if !gate.latitude.is_finite()
         || !gate.longitude.is_finite()
         || !(-85. ..=85.).contains(&gate.latitude)
         || !(-180. ..=180.).contains(&gate.longitude)
     {
-        return Err("geographic coordinates outside Terra bounds".into());
+        return Err("geographic coordinates outside Terra bounds");
     }
     let distance = geodesic_metres(latitude, longitude, gate.latitude, gate.longitude);
     if !distance.is_finite() || distance > MISSION_MAX_DISTANCE_M {
-        return Err("Mission distance exceeds 500 m".into());
+        return Err("Mission distance exceeds 500 m");
     }
     if let Some(level) = gate.level
         && level != "waypoint"
     {
-        return Err("Outdoor GPS missions require L3 Waypoint".into());
+        return Err("Outdoor GPS missions require L3 Waypoint");
     }
     Ok(())
 }
@@ -403,66 +394,6 @@ pub fn freeze_arrival_radius(requested: Option<f64>, reported: f64) -> StdResult
     } else {
         Err("Arrival radius must be from 2 through 20 m".into())
     }
-}
-
-/// Map click drafts a destination. It does not publish.
-pub fn draft_map_click(
-    rover_id: u64,
-    latitude: f64,
-    longitude: f64,
-    report: Option<&OutdoorReport>,
-    arrival_radius_m: f64,
-) -> StdResult<GeographicDraft, &'static str> {
-    if app_update_required(report) {
-        return Err(APP_UPDATE_REQUIRED);
-    }
-    let report = report.ok_or(APP_UPDATE_REQUIRED)?;
-    if !report.acknowledged_outdoor() {
-        return Err("Outdoor GPS is not acknowledged");
-    }
-    if !latitude.is_finite()
-        || !longitude.is_finite()
-        || !(-85. ..=85.).contains(&latitude)
-        || !(-180. ..=180.).contains(&longitude)
-    {
-        return Err("geographic coordinates outside Terra bounds");
-    }
-    let arrival_radius_m =
-        if (ARRIVAL_RADIUS_MIN_M..=ARRIVAL_RADIUS_MAX_M).contains(&arrival_radius_m) {
-            arrival_radius_m
-        } else {
-            return Err("Arrival radius must be from 2 through 20 m");
-        };
-    Ok(GeographicDraft {
-        rover_id,
-        latitude,
-        longitude,
-        arrival_radius_m,
-    })
-}
-
-/// Confirm rechecks readiness and returns the original WGS84 destination.
-pub fn confirm_geographic_goal(
-    draft: &GeographicDraft,
-    report: Option<&OutdoorReport>,
-    level: Option<&str>,
-    run_id: &str,
-) -> StdResult<GoalRequest, String> {
-    let revision = report.map(|report| report.navigation_revision).unwrap_or(0);
-    admit_outdoor_goal(OutdoorAdmission {
-        report,
-        latitude: draft.latitude,
-        longitude: draft.longitude,
-        arrival_radius_m: draft.arrival_radius_m,
-        level,
-        run_id,
-        navigation_revision: revision,
-    })?;
-    Ok(GoalRequest::Geographic {
-        latitude: draft.latitude,
-        longitude: draft.longitude,
-        yaw: None,
-    })
 }
 
 pub fn source_change_refusal(

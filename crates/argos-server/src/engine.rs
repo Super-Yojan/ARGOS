@@ -384,7 +384,8 @@ impl<F: Fleet> Engine<F> {
                 level: None,
                 run_id: &a.run_id,
                 navigation_revision: report.navigation_revision,
-            })?;
+            })
+            .map_err(str::to_string)?;
             (
                 "waypoint".to_string(),
                 Some(radius),
@@ -1314,4 +1315,5 @@ fn geographic_publication_block(
         navigation_revision: revision,
     })
     .err()
+    .map(str::to_string)
 }

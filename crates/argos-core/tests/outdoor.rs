@@ -1,8 +1,7 @@
 use argos_core::{
-    APP_UPDATE_REQUIRED, ARRIVAL_RADIUS_DEFAULT_M, GoalRequest, OutdoorAdmission, OutdoorReport,
-    admit_outdoor_goal, app_update_required, confirm_geographic_goal, decode_raw_gps,
-    draft_map_click, encode_source_request, freeze_arrival_radius, geodesic_metres, hold_label,
-    reported_outdoor, source_change_refusal,
+    APP_UPDATE_REQUIRED, ARRIVAL_RADIUS_DEFAULT_M, OutdoorAdmission, OutdoorReport,
+    admit_outdoor_goal, app_update_required, decode_raw_gps, encode_source_request,
+    freeze_arrival_radius, geodesic_metres, hold_label, reported_outdoor, source_change_refusal,
 };
 use serde_json::json;
 
@@ -140,48 +139,19 @@ fn readiness_fails_closed_and_hold_reasons_stay_distinct() {
 }
 
 #[test]
-fn map_click_drafts_and_confirm_sends_the_same_wgs84_point() {
-    let report = ready();
-    let draft = draft_map_click(3, 38.8299, -77.3075, Some(&report), 5.).unwrap();
-    assert!((draft.arrival_radius_m - 5.).abs() < 1e-9);
-    assert!(draft_map_click(3, 38.8299, -77.3075, None, 5.).is_err());
-    let mut local = report.clone();
-    local.source = "local".into();
-    local.acknowledged = true;
-    assert_eq!(
-        draft_map_click(3, 38.8299, -77.3075, Some(&local), 5.).unwrap_err(),
-        "Outdoor GPS is not acknowledged"
-    );
-    let goal = confirm_geographic_goal(&draft, Some(&report), Some("waypoint"), "run").unwrap();
-    match goal {
-        GoalRequest::Geographic {
-            latitude,
-            longitude,
-            yaw: None,
-        } => {
-            assert_eq!(latitude, draft.latitude);
-            assert_eq!(longitude, draft.longitude);
-        }
-        other => panic!("destination changed: {other:?}"),
-    }
-    let bytes = goal.encode("goal-1").unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["frame"], "wgs84");
-    assert_eq!(body["latitude"], 38.8299);
-    assert_eq!(body["longitude"], -77.3075);
-    assert!(body.get("arrival_radius").is_none());
-    assert!(
-        confirm_geographic_goal(&draft, Some(&report), Some("waypoint_direct"), "run").is_err()
-    );
-    let mut stale = report.clone();
-    stale.gps_age_s = Some(9.);
-    assert!(confirm_geographic_goal(&draft, Some(&stale), Some("waypoint"), "run").is_err());
+fn arrival_radius_stays_in_the_reviewed_range() {
     assert_eq!(
         freeze_arrival_radius(None, 5.).unwrap(),
         ARRIVAL_RADIUS_DEFAULT_M
     );
     assert!(freeze_arrival_radius(Some(1.), 5.).is_err());
     assert!(freeze_arrival_radius(Some(20.), 5.).is_ok());
+    let mut local = ready();
+    local.source = "local".into();
+    assert_eq!(
+        admit_outdoor_goal(gate(Some(&local))).unwrap_err(),
+        "Outdoor GPS is not acknowledged"
+    );
 }
 
 #[test]

@@ -25,8 +25,10 @@ pub const DEFAULT_ENDPOINT: &str = "tls/argos.34.135.204.210.sslip.io:7448";
 pub const DEFAULT_PREFIX: &str = "terra/phone";
 pub const DEFAULT_USER: &str = "terra";
 pub const PASSWORD_NOTICE: &str = "Set ARGOS_ZENOH_PASSWORD in .env";
+pub const MAPS_API_KEY_ENV: &str = "GOOGLE_MAPS_API_KEY";
+pub const MAPS_KEY_NOTICE: &str = "Set GOOGLE_MAPS_API_KEY in .env";
 const POSE_FRESH_SECONDS: f64 = 2.5;
-const SETTING_KEYS: [&str; 16] = [
+const SETTING_KEYS: [&str; 17] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -43,9 +45,10 @@ const SETTING_KEYS: [&str; 16] = [
     "ARGOS_DRIVE_ALLOW_SPIN",
     "ARGOS_DEGRADED_YAW_RATE",
     "ARGOS_DEGRADED_SETTLE",
+    MAPS_API_KEY_ENV,
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DashboardConfig {
     pub endpoint: String,
     pub prefix: String,
@@ -59,6 +62,10 @@ pub struct DashboardConfig {
     /// Defense in depth; Terra enforces the real limits.
     pub teleop: TeleopLimits,
     pub degrade: DegradeLimits,
+    /// Tiles key resolved from the environment, then `.env`. Never logged.
+    pub maps_api_key: Option<String>,
+    /// Set when tiles need a key and none was loaded. Absent in `MAPS_DEMO=1`.
+    pub maps_notice: Option<String>,
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -118,6 +125,14 @@ impl DashboardConfig {
             (origin_lat.as_deref(), origin_lon.as_deref()),
         )?;
         apply_drive_settings(&mut config, &settings)?;
+        let maps_api_key = maps_api_key(&process, &file);
+        let maps_demo = std::env::var("MAPS_DEMO").ok().as_deref() == Some("1");
+        config.maps_notice = if maps_api_key.is_none() && !maps_demo {
+            Some(MAPS_KEY_NOTICE.to_string())
+        } else {
+            None
+        };
+        config.maps_api_key = maps_api_key;
         Ok(config)
     }
     pub fn parse(
@@ -189,7 +204,27 @@ impl DashboardConfig {
             origin,
             teleop: TeleopLimits::default(),
             degrade: DegradeLimits::default(),
+            maps_api_key: None,
+            maps_notice: None,
         })
+    }
+}
+/// `GOOGLE_MAPS_API_KEY` from the process, otherwise from `.env`. Empty is missing.
+/// A process value wins even when it is blank, so the file cannot replace it.
+pub fn maps_api_key(
+    process: &BTreeMap<String, String>,
+    file: &BTreeMap<String, String>,
+) -> Option<String> {
+    let raw = if process.contains_key(MAPS_API_KEY_ENV) {
+        process.get(MAPS_API_KEY_ENV)
+    } else {
+        file.get(MAPS_API_KEY_ENV)
+    }?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 pub fn apply_drive_settings(
@@ -699,7 +734,8 @@ impl FleetFeed {
                             level,
                             run_id: &mark.run_id,
                             navigation_revision: mark.navigation_revision,
-                        })?;
+                        })
+                        .map_err(str::to_string)?;
                     }
                     if let Some(reason) = goal_blocked(mark.degraded) {
                         return Err(format!("{reason} ({})", mark.degrade_reason));
@@ -1038,6 +1074,50 @@ mod tests {
         assert_eq!(value("ARGOS_ZENOH_PREFIX"), Some("terra/rover"));
         assert_eq!(value("ARGOS_ZENOH_USER"), Some("local"));
         assert_eq!(value("ARGOS_ZENOH_PASSWORD"), Some("from-workspace"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn maps_key_loads_from_dotenv_and_the_environment_overrides_the_file() {
+        let dir = std::env::temp_dir().join(format!("argos-maps-key-{}", std::process::id()));
+        let root = dir.join("root");
+        let cwd = dir.join("cwd");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(
+            root.join(".env"),
+            "GOOGLE_MAPS_API_KEY=from-workspace-file\n# GOOGLE_MAPS_API_KEY=commented-placeholder\n",
+        )
+        .unwrap();
+        std::fs::write(cwd.join(".env"), "GOOGLE_MAPS_API_KEY=from-cwd-file\n").unwrap();
+        let absent = BTreeMap::new();
+        let from_files = merge_dotenv(
+            &absent,
+            &[
+                read_dotenv(&root.join(".env")),
+                read_dotenv(&cwd.join(".env")),
+            ],
+        );
+        assert_eq!(
+            maps_api_key(&absent, &from_files).as_deref(),
+            Some("from-cwd-file")
+        );
+        let process = BTreeMap::from([(MAPS_API_KEY_ENV.into(), "from-environment".into())]);
+        let overridden = merge_dotenv(
+            &process,
+            &[
+                read_dotenv(&root.join(".env")),
+                read_dotenv(&cwd.join(".env")),
+            ],
+        );
+        assert_eq!(
+            maps_api_key(&process, &overridden).as_deref(),
+            Some("from-environment")
+        );
+        assert!(!overridden.contains_key(MAPS_API_KEY_ENV));
+        let blank = BTreeMap::from([(MAPS_API_KEY_ENV.into(), "   ".into())]);
+        assert!(maps_api_key(&blank, &from_files).is_none());
+        assert_eq!(MAPS_KEY_NOTICE, "Set GOOGLE_MAPS_API_KEY in .env");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

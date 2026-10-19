@@ -269,6 +269,11 @@ impl MapView {
         self.camera
             .unproject_ground(width as u32, height as u32, x, y)
     }
+    /// Pull the camera in for a short ground gesture. Preview only.
+    pub fn frame_near(&mut self) {
+        self.camera.distance = 110.;
+        self.camera.pitch = 1.35;
+    }
     /// Ground metres per logical pixel at the camera target.
     pub fn metres_per_pixel(&self) -> Option<f64> {
         let frame = self.frame?;

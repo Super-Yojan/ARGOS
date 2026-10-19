@@ -21,7 +21,7 @@ The operator surface is the GPUI app in `crates/argos-gpui`. It opens a window a
 
 ## Next work and validation
 
-- The GPUI window recenters on live rover positions. Local goals send when the operator releases a drag. Outdoor GPS goals are drafted by a map click and sent by a separate confirm, and only after an acknowledged `outdoor_gps` capability.
+- The GPUI window recenters on live rover positions. Local and outdoor GPS goals both send when the operator releases a drag. Outdoor release is the explicit action and replaces the spec's confirm step. It still requires an acknowledged `outdoor_gps` capability, and the server rechecks readiness before publication.
 - Keep the offline `MAPS_DEMO=1` fixture working when the router is down.
 - Validate real vehicle braking, control latency, phone lifecycle, and multi-client operator discipline against the service. Do not substitute demo results or the offline map fixture for physical evidence.
 - Keep study protocols and evidence in Masters-Thesis aligned with the interface that was actually tested. The React and Swift trees are no longer in this repository.

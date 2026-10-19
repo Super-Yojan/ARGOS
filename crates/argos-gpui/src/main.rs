@@ -3,14 +3,16 @@
 //! The camera starts at `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON` until rover
 //! positions arrive, then recenters on the fleet. `MAPS_DEMO=1` still draws the
 //! offline fixture. Dragging a selected rover's marker sends a goal on release.
-//! Esc, or dropping the ghost back on the rover, sends nothing. Outdoor GPS map
-//! clicks only draft a destination; a separate confirm publishes it.
+//! Esc, or dropping the ghost back on the rover, sends nothing. An acknowledged
+//! outdoor GPS rover uses the same gesture on the map: the ghost shows the
+//! arrival radius and GPS distance, and release publishes the WGS84 point.
+//! That release is the explicit operator action. The outdoor GPS spec's
+//! separate confirm step is not used.
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, CellClass, DragAnchor, DragEnd, DragGate, DragSpace, GeographicDraft,
-    GoalDrag, HEADING_HOLD, HEADING_HOLD_LABEL, OPERATOR_LEVELS, PlanarPoint, Travel,
-    confirm_geographic_goal, draft_map_click, drag_disabled_reason, geodesic_metres, level_label,
-    phase_label, pose_warning_text,
+    APP_UPDATE_REQUIRED, CellClass, DragAnchor, DragEnd, DragGate, DragSpace, GoalDrag,
+    HEADING_HOLD, HEADING_HOLD_LABEL, OPERATOR_LEVELS, OutdoorAdmission, PlanarPoint, Travel,
+    drag_disabled_reason, geodesic_metres, level_label, phase_label, pose_warning_text,
 };
 use argos_gpui::{DashboardConfig, FleetFeed, RoverMark, framing_target};
 use gpui_kit::{prelude::*, *};
@@ -40,21 +42,22 @@ struct Dashboard {
     marks: Vec<RoverMark>,
     selected: Option<u64>,
     drag: Option<ActiveDrag>,
-    draft: Option<GeographicDraft>,
-    map_press: Option<Point<Pixels>>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    show_occupancy: bool,
     driving: bool,
     held: BTreeSet<String>,
     link: String,
     detail: String,
     command: String,
     note: String,
+    maps_notice: Option<String>,
     preview: bool,
     preview_done: bool,
+    close_preview: bool,
     _poll: Task<()>,
 }
 impl Dashboard {
-    fn new(map: Map, feed: FleetFeed, cx: &mut Context<Self>) -> Self {
+    fn new(map: Map, feed: FleetFeed, maps_notice: Option<String>, cx: &mut Context<Self>) -> Self {
         let model =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terra-map/src/assets/robot.glb");
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
@@ -72,6 +75,10 @@ impl Dashboard {
                             }
                         }
                         this.sync();
+                        if this.close_preview {
+                            this.close_preview = false;
+                            this.view.update(cx, |map, _| map.frame_near());
+                        }
                         cx.notify();
                     })
                     .is_err()
@@ -93,17 +100,18 @@ impl Dashboard {
             marks: Vec::new(),
             selected: None,
             drag: None,
-            draft: None,
-            map_press: None,
             grid_frame: Arc::new(Mutex::new(None)),
+            show_occupancy: true,
             driving: false,
             held: BTreeSet::new(),
             link: initial.link,
             detail: initial.detail,
             command: initial.command,
             note: String::new(),
+            maps_notice,
             preview: std::env::var("ARGOS_PREVIEW_DRAG").ok().as_deref() == Some("1"),
             preview_done: false,
+            close_preview: false,
             _poll: poll,
         }
     }
@@ -122,14 +130,6 @@ impl Dashboard {
             self.stop_drive();
             self.selected = None;
             self.drag = None;
-            self.draft = None;
-        }
-        if self
-            .draft
-            .as_ref()
-            .is_some_and(|draft| self.selected != Some(draft.rover_id))
-        {
-            self.draft = None;
         }
         if self.driving
             && let Some(id) = self.selected
@@ -162,50 +162,36 @@ impl Dashboard {
             return;
         };
         self.selected = Some(mark.id);
-        if mark.outdoor_gps {
-            let latitude = mark
-                .raw_gps
-                .map(|gps| gps.latitude)
-                .unwrap_or(mark.latitude);
-            let longitude = mark
-                .raw_gps
-                .map(|gps| gps.longitude)
-                .unwrap_or(mark.longitude);
-            if let Ok(draft) = draft_map_click(
-                mark.id,
-                latitude + 0.00025,
-                longitude,
-                mark.outdoor.as_ref(),
-                mark.arrival_radius,
-            ) {
-                self.note = format!(
-                    "{:.1} m — confirm sends",
-                    geodesic_metres(latitude, longitude, draft.latitude, draft.longitude)
-                );
-                self.draft = Some(draft);
-                self.preview_done = true;
-            }
+        if !mark.outdoor_gps
+            && (mark.raw_gps.is_some() || mark.outdoor.is_some())
+            && mark
+                .outdoor
+                .as_ref()
+                .is_none_or(|report| report.source != "local")
+        {
             return;
         }
-        let geographic = false;
+        let geographic = mark.outdoor_gps;
         let level = mark
             .effective_level
             .clone()
             .or_else(|| mark.requested_level.clone());
-        let gate = DragGate {
-            selected: true,
-            link_healthy: self.link == "healthy",
-            pose_fresh: true,
-            degraded: mark.degraded,
-            level: level.as_deref(),
-            geographic,
-            outdoor: mark.outdoor_gps,
+        let gate = if geographic {
+            geographic_gate(&mark, &self.link, true)
+        } else {
+            DragGate {
+                selected: true,
+                link_healthy: self.link == "healthy",
+                pose_fresh: true,
+                degraded: mark.degraded,
+                level: level.as_deref(),
+                geographic: false,
+                outdoor: mark.outdoor_gps,
+                admission: None,
+            }
         };
         let started = if geographic {
-            let rover = PlanarPoint {
-                x: mark.latitude,
-                y: mark.longitude,
-            };
+            let rover = gps_point(&mark);
             GoalDrag::start(
                 mark.id,
                 DragAnchor::Rover,
@@ -230,13 +216,20 @@ impl Dashboard {
                 gate,
             )
         };
-        let Ok(mut goal) = started else {
-            return;
+        let mut goal = match started {
+            Ok(goal) => goal,
+            Err(reason) => {
+                if geographic {
+                    self.note = reason.into();
+                }
+                return;
+            }
         };
         if geographic {
+            let rover = gps_point(&mark);
             goal.move_to(PlanarPoint {
-                x: mark.latitude + 0.00025,
-                y: mark.longitude,
+                x: rover.x + 0.00025,
+                y: rover.y,
             });
         } else {
             goal.move_to(PlanarPoint {
@@ -244,12 +237,19 @@ impl Dashboard {
                 y: mark.local_y + 1.,
             });
         }
-        self.note = format!("{:.1} m", goal.distance_m());
+        self.note = match goal.arrival_radius_m {
+            Some(radius) => format!(
+                "{:.1} m GPS · arrival radius {radius:.0} m",
+                goal.distance_m()
+            ),
+            None => format!("{:.1} m", goal.distance_m()),
+        };
         self.drag = Some(ActiveDrag {
             goal,
             from_map: geographic,
         });
         self.preview_done = true;
+        self.close_preview = true;
     }
     fn sync_markers(&mut self, seen: &BTreeSet<u64>, goals: bool) {
         let objects = if goals {
@@ -396,79 +396,6 @@ impl Dashboard {
             }
         }
     }
-    fn draft_from_click(&mut self, down: Point<Pixels>, up: Point<Pixels>, cx: &mut Context<Self>) {
-        let dx = f32::from(up.x - down.x);
-        let dy = f32::from(up.y - down.y);
-        if dx.hypot(dy) > 8. || self.drag.is_some() {
-            return;
-        }
-        let Some(id) = self.selected else {
-            return;
-        };
-        let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
-            return;
-        };
-        if mark.app_update_required {
-            self.note = APP_UPDATE_REQUIRED.into();
-            return;
-        }
-        if !mark.outdoor_gps {
-            return;
-        }
-        let Some((latitude, longitude)) = self.view.read(cx).ground_at(up) else {
-            return;
-        };
-        match draft_map_click(
-            id,
-            latitude,
-            longitude,
-            mark.outdoor.as_ref(),
-            mark.arrival_radius,
-        ) {
-            Ok(draft) => {
-                let from = mark
-                    .raw_gps
-                    .map(|gps| (gps.latitude, gps.longitude))
-                    .unwrap_or((mark.latitude, mark.longitude));
-                self.note = format!(
-                    "{:.1} m — confirm sends, Esc discards",
-                    geodesic_metres(from.0, from.1, draft.latitude, draft.longitude)
-                );
-                self.draft = Some(draft);
-            }
-            Err(reason) => self.note = reason.into(),
-        }
-    }
-    fn confirm_draft(&mut self) {
-        let Some(draft) = self.draft.clone() else {
-            return;
-        };
-        let Some(mark) = self
-            .marks
-            .iter()
-            .find(|mark| mark.id == draft.rover_id)
-            .cloned()
-        else {
-            self.draft = None;
-            return;
-        };
-        let level = mark
-            .effective_level
-            .as_deref()
-            .or(mark.requested_level.as_deref());
-        match confirm_geographic_goal(&draft, mark.outdoor.as_ref(), level, &mark.run_id) {
-            Ok(goal) => {
-                self.feed
-                    .publish_goal(draft.rover_id, goal, Some(draft.arrival_radius_m));
-                self.note = format!(
-                    "GPS goal sent. Arrival radius frozen at {:.0} m",
-                    draft.arrival_radius_m
-                );
-                self.draft = None;
-            }
-            Err(reason) => self.note = reason,
-        }
-    }
     fn begin_drag(&mut self, id: u64, anchor: DragAnchor, from_map: bool) {
         if self.driving {
             self.note = "Leave drive before dragging a goal".into();
@@ -477,35 +404,36 @@ impl Dashboard {
         let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
             return;
         };
-        if mark.outdoor_gps {
-            self.note = "Click the map to draft a GPS goal. Confirm sends it.".into();
+        if !from_map && mark.outdoor_gps {
+            self.note =
+                "Outdoor GPS is the source. Drag the map marker to send a WGS84 goal.".into();
             return;
         }
-        let geographic = false;
-        let _ = from_map;
+        let geographic = from_map && mark.outdoor_gps;
         let level = mark
             .effective_level
             .clone()
             .or_else(|| mark.requested_level.clone());
-        let gate = DragGate {
-            selected: self.selected == Some(id),
-            link_healthy: self.link == "healthy",
-            pose_fresh: mark.status == "online",
-            degraded: mark.degraded,
-            level: level.as_deref(),
-            geographic,
-            outdoor: mark.outdoor_gps,
+        let gate = if geographic {
+            geographic_gate(&mark, &self.link, self.selected == Some(id))
+        } else {
+            DragGate {
+                selected: self.selected == Some(id),
+                link_healthy: self.link == "healthy",
+                pose_fresh: mark.status == "online",
+                degraded: mark.degraded,
+                level: level.as_deref(),
+                geographic: false,
+                outdoor: false,
+                admission: None,
+            }
         };
         let (space, rover, cursor, radius) = if geographic {
-            let rover = PlanarPoint {
-                x: mark.latitude,
-                y: mark.longitude,
-            };
-            let cursor = goal_geo(&mark).unwrap_or(rover);
-            let cursor = if anchor == DragAnchor::Rover {
-                rover
+            let rover = gps_point(&mark);
+            let cursor = if anchor == DragAnchor::Goal {
+                goal_geo(&mark).unwrap_or(rover)
             } else {
-                cursor
+                rover
             };
             (
                 DragSpace::Geographic,
@@ -533,7 +461,7 @@ impl Dashboard {
         };
         match GoalDrag::start(id, anchor, space, rover, cursor, radius, gate) {
             Ok(goal) => {
-                self.note = format!("{:.1} m — release sends, Esc cancels", goal.distance_m());
+                self.note = drag_note(&goal);
                 self.drag = Some(ActiveDrag { goal, from_map });
             }
             Err(reason) => self.note = reason.into(),
@@ -577,10 +505,7 @@ impl Dashboard {
             return;
         };
         active.goal.move_to(next);
-        self.note = format!(
-            "{:.1} m — release sends, Esc cancels",
-            active.goal.distance_m()
-        );
+        self.note = drag_note(&active.goal);
     }
     fn release_drag(&mut self) {
         let Some(active) = self.drag.take() else {
@@ -589,26 +514,29 @@ impl Dashboard {
         let id = active.goal.id;
         let radius = active.goal.arrival_radius_m;
         let geographic = active.goal.space == DragSpace::Geographic;
-        if let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() {
-            let level = mark
-                .effective_level
-                .clone()
-                .or_else(|| mark.requested_level.clone());
-            let gate = DragGate {
+        let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
+            self.note = "Drag cancelled".into();
+            return;
+        };
+        let level = mark
+            .effective_level
+            .clone()
+            .or_else(|| mark.requested_level.clone());
+        let gate = if geographic {
+            geographic_gate(&mark, &self.link, self.selected == Some(id))
+        } else {
+            DragGate {
                 selected: self.selected == Some(id),
                 link_healthy: self.link == "healthy",
                 pose_fresh: mark.status == "online",
                 degraded: mark.degraded,
                 level: level.as_deref(),
-                geographic,
-                outdoor: mark.outdoor_gps,
-            };
-            if let Some(reason) = drag_disabled_reason(gate) {
-                self.note = reason.into();
-                return;
+                geographic: false,
+                outdoor: false,
+                admission: None,
             }
-        }
-        match active.goal.release() {
+        };
+        match active.goal.release(gate) {
             DragEnd::Cancelled(reason) => self.note = reason.into(),
             DragEnd::Send(goal) => {
                 self.feed.publish_goal(id, goal, radius);
@@ -689,7 +617,6 @@ impl Render for Dashboard {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     this.cancel_drag();
-                    this.draft = None;
                     cx.stop_propagation();
                     return;
                 }
@@ -752,6 +679,14 @@ impl Render for Dashboard {
                             .text_color(rgb(0x98aeb9))
                             .child(format!("{} · {}", self.link, self.detail)),
                     )
+                    .when_some(self.maps_notice.clone(), |this, notice| {
+                        this.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(rgb(0xf0c36a))
+                                .child(notice),
+                        )
+                    })
                     .when(!note.is_empty(), |this| {
                         this.child(
                             div()
@@ -810,7 +745,6 @@ impl Render for Dashboard {
                         rover_panel(
                             mark,
                             drag_local,
-                            self.draft.clone(),
                             driving,
                             limits,
                             &self.link,
@@ -818,9 +752,22 @@ impl Render for Dashboard {
                             cx,
                         )
                     }))
+                    .child(button(
+                        "occupancy-overlay",
+                        if self.show_occupancy {
+                            "Map grid on"
+                        } else {
+                            "Map grid off"
+                        },
+                        rgb(if self.show_occupancy { 0x245c49 } else { 0x1b2c38 }),
+                        cx.listener(|this, _, _, cx| {
+                            this.show_occupancy = !this.show_occupancy;
+                            cx.notify();
+                        }),
+                    ))
                     .child(
                         div().mt_2().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-                            "Local goals: drag a marker, release sends. Outdoor GPS: click the map, then confirm.",
+                            "Drag a marker and release to send. Outdoor GPS sends WGS84 from the map marker. Esc cancels. The map grid is the local occupancy draped at the rover.",
                         ),
                     ),
             )
@@ -830,22 +777,6 @@ impl Render for Dashboard {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _, _| {
-                            this.map_press = Some(event.position);
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseUpEvent, _, cx| {
-                            let down = this.map_press.take();
-                            if let Some(down) = down {
-                                this.draft_from_click(down, event.position, cx);
-                            }
-                            cx.notify();
-                        }),
-                    )
                     .child(self.view.clone())
                     .child(overlay)
                         .children(handles.into_iter().map(|(id, anchor, at)| {
@@ -877,6 +808,64 @@ impl Render for Dashboard {
                             )
                     })),
             )
+    }
+}
+
+fn gps_point(mark: &RoverMark) -> PlanarPoint {
+    if let Some(gps) = mark.raw_gps {
+        return PlanarPoint {
+            x: gps.latitude,
+            y: gps.longitude,
+        };
+    }
+    if let Some(report) = &mark.outdoor
+        && let (Some(latitude), Some(longitude)) = (report.gps_latitude, report.gps_longitude)
+    {
+        return PlanarPoint {
+            x: latitude,
+            y: longitude,
+        };
+    }
+    PlanarPoint {
+        x: mark.latitude,
+        y: mark.longitude,
+    }
+}
+
+fn geographic_gate<'a>(mark: &'a RoverMark, link: &str, selected: bool) -> DragGate<'a> {
+    let level = mark
+        .effective_level
+        .as_deref()
+        .or(mark.requested_level.as_deref());
+    let point = gps_point(mark);
+    let radius = mark.arrival_radius.clamp(2., 20.);
+    DragGate {
+        selected,
+        link_healthy: link == "healthy",
+        pose_fresh: mark.status == "online",
+        degraded: mark.degraded,
+        level,
+        geographic: true,
+        outdoor: mark.outdoor_gps,
+        admission: Some(OutdoorAdmission {
+            report: mark.outdoor.as_ref(),
+            latitude: point.x,
+            longitude: point.y,
+            arrival_radius_m: radius,
+            level,
+            run_id: &mark.run_id,
+            navigation_revision: mark.navigation_revision,
+        }),
+    }
+}
+
+fn drag_note(goal: &GoalDrag) -> String {
+    match goal.arrival_radius_m {
+        Some(radius) => format!(
+            "{:.1} m GPS · arrival radius {radius:.0} m — release sends, Esc cancels",
+            goal.distance_m()
+        ),
+        None => format!("{:.1} m — release sends, Esc cancels", goal.distance_m()),
     }
 }
 
@@ -936,11 +925,9 @@ fn level_line(mark: &RoverMark) -> String {
     format!("{current}{recommended}")
 }
 
-#[allow(clippy::too_many_arguments)]
 fn rover_panel(
     mark: RoverMark,
     drag: Option<(u64, f64, f64, f64, Option<f64>)>,
-    draft: Option<GeographicDraft>,
     driving: bool,
     limits: argos_core::TeleopLimits,
     link: &str,
@@ -959,24 +946,31 @@ fn rover_panel(
         degraded: mark.degraded,
         level: level.as_deref(),
         geographic: false,
-        outdoor: mark.outdoor_gps,
+        outdoor: false,
+        admission: None,
     };
-    let local_reason = drag_disabled_reason(local_gate);
-    let draft_here = draft.filter(|draft| draft.rover_id == id);
     let outdoor = if mark.app_update_required {
         APP_UPDATE_REQUIRED.to_string()
     } else if mark.outdoor_gps {
-        "Outdoor GPS acknowledged. Click the map, then confirm.".into()
+        "Outdoor GPS acknowledged. Drag the map marker. Release sends the WGS84 goal.".into()
     } else {
         "Local navigation. Outdoor GPS stays off until the vehicle acknowledges it.".into()
     };
-    let drag_line = match (drag.filter(|item| item.0 == id), local_reason) {
-        (Some((_, _, _, distance, radius)), _) => match radius {
-            Some(radius) => format!("{distance:.1} m · arrival radius {radius:.0} m"),
+    let drag_line = if let Some((_, _, _, distance, radius)) = drag.filter(|item| item.0 == id) {
+        match radius {
+            Some(radius) => format!("{distance:.1} m GPS · arrival radius {radius:.0} m"),
             None => format!("{distance:.1} m"),
-        },
-        (None, Some(reason)) => reason.to_string(),
-        (None, None) => "Drag the rover or its goal. Release sends.".into(),
+        }
+    } else if mark.outdoor_gps {
+        match drag_disabled_reason(geographic_gate(&mark, link, true)) {
+            Some(reason) => reason.to_string(),
+            None => "Drag the map marker. Release sends the GPS goal.".into(),
+        }
+    } else {
+        match drag_disabled_reason(local_gate) {
+            Some(reason) => reason.to_string(),
+            None => "Drag the rover or its goal. Release sends.".into(),
+        }
     };
     div()
         .flex()
@@ -1103,73 +1097,6 @@ fn rover_panel(
                 .text_color(rgb(0xf0c36a))
                 .child(drag_line),
         )
-        .when_some(draft_here.clone(), |panel, draft| {
-            let from = mark
-                .raw_gps
-                .map(|gps| (gps.latitude, gps.longitude))
-                .unwrap_or((mark.latitude, mark.longitude));
-            let distance = geodesic_metres(from.0, from.1, draft.latitude, draft.longitude);
-            panel
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(0xf0c36a))
-                        .child(format!(
-                            "Draft {:.5}, {:.5} · {:.1} m",
-                            draft.latitude, draft.longitude, distance
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .items_center()
-                        .child(div().text_size(px(12.)).child(format!(
-                            "Arrival radius {:.0} m, frozen on confirm",
-                            draft.arrival_radius_m
-                        )))
-                        .child(button(
-                            "draft-radius",
-                            "Radius",
-                            rgb(0x1b2c38),
-                            cx.listener(|this, _, _, cx| {
-                                if let Some(draft) = this.draft.as_mut() {
-                                    draft.arrival_radius_m = match draft.arrival_radius_m {
-                                        radius if radius < 5. => 5.,
-                                        radius if radius < 10. => 10.,
-                                        radius if radius < 20. => 20.,
-                                        _ => 2.,
-                                    };
-                                }
-                                cx.notify();
-                            }),
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(button(
-                            "confirm-goal",
-                            "Confirm GPS goal",
-                            rgb(0x245c49),
-                            cx.listener(|this, _, _, cx| {
-                                this.confirm_draft();
-                                cx.notify();
-                            }),
-                        ))
-                        .child(button(
-                            "discard-goal",
-                            "Discard",
-                            rgb(0x1b2c38),
-                            cx.listener(|this, _, _, cx| {
-                                this.draft = None;
-                                this.note = "GPS draft discarded".into();
-                                cx.notify();
-                            }),
-                        )),
-                )
-        })
         .when(
             mark.route
                 .iter()
@@ -1665,13 +1592,16 @@ fn drag_handle_at(
 fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
     let view = dashboard.view.clone();
     let drag = dashboard.drag.as_ref().map(|active| active.goal.clone());
-    let draft = dashboard.draft.clone();
     let marks = dashboard.marks.clone();
     let origin = dashboard.feed.origin();
+    let show_occupancy = dashboard.show_occupancy;
     canvas(
         |bounds, _, _| bounds,
-        move |bounds, _, window, cx| {
+        move |_bounds, _, window, cx| {
             let map = view.read(cx);
+            if show_occupancy {
+                paint_occupancy(window, map, &marks, &origin);
+            }
             for mark in &marks {
                 let mut previous: Option<Point<Pixels>> = None;
                 for sample in &mark.route {
@@ -1699,26 +1629,6 @@ fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                     previous = Some(at);
                 }
             }
-            if let Some(draft) = &draft
-                && let Some(ghost) = map.project(draft.latitude, draft.longitude)
-            {
-                if let Some(mark) = marks.iter().find(|mark| mark.id == draft.rover_id)
-                    && let Some(rover) = map.project(mark.latitude, mark.longitude)
-                {
-                    stroke(window, rover, ghost, rgb(0xf0c36a), true);
-                }
-                let metres = map.metres_per_pixel().unwrap_or(1.);
-                let pixels = (draft.arrival_radius_m / metres).clamp(4., 240.) as f32;
-                for step in 0..24 {
-                    let angle = step as f32 / 24. * std::f32::consts::TAU;
-                    let at = point(
-                        ghost.x + px(pixels * angle.cos()),
-                        ghost.y + px(pixels * angle.sin()),
-                    );
-                    paint_dot(window, at, 4., rgb(0xf0c36a));
-                }
-                paint_dot(window, ghost, 8., rgb(0xf0c36a));
-            }
             let Some(goal) = &drag else {
                 return;
             };
@@ -1735,21 +1645,26 @@ fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             let Some(ghost) = map.project(latitude, longitude) else {
                 return;
             };
-            if let Some(rover) = map.project(mark.latitude, mark.longitude) {
+            let rover_at = map.project(mark.latitude, mark.longitude);
+            if let Some(rover) = rover_at {
                 stroke(window, rover, ghost, rgb(0xf0c36a), false);
             }
             if let Some(radius) = goal.arrival_radius_m {
-                let metres = map.metres_per_pixel().unwrap_or(1.);
-                let pixels = (radius / metres).clamp(4., 240.) as f32;
+                let mut metres = ground_metres_per_pixel(map, latitude, longitude);
+                if let Some(rover) = rover_at {
+                    let span = f32::from(ghost.x - rover.x).hypot(f32::from(ghost.y - rover.y));
+                    let distance = goal.distance_m();
+                    if distance > 2. && span > 8. {
+                        metres = distance / f64::from(span);
+                    }
+                }
+                let pixels = (radius / metres).clamp(8., 240.) as f32;
                 for step in 0..24 {
                     let angle = step as f32 / 24. * std::f32::consts::TAU;
                     let at = point(
                         ghost.x + px(pixels * angle.cos()),
                         ghost.y + px(pixels * angle.sin()),
                     );
-                    if at.x < bounds.origin.x || at.y < bounds.origin.y {
-                        continue;
-                    }
                     window.paint_quad(quad(
                         Bounds {
                             origin: point(at.x - px(2.), at.y - px(2.)),
@@ -1778,6 +1693,79 @@ fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
     )
     .absolute()
     .size_full()
+}
+
+/// Local occupancy draped through the localization origin. Cells stay in the
+/// rover frame; the overlay does not claim a geographic obstacle location.
+fn paint_occupancy(
+    window: &mut Window,
+    map: &MapView,
+    marks: &[RoverMark],
+    origin: &argos_core::LocalFrame,
+) {
+    for mark in marks {
+        let Some(grid) = &mark.grid else {
+            continue;
+        };
+        if grid.cols == 0 {
+            continue;
+        }
+        let metres = ground_metres_per_pixel(map, mark.latitude, mark.longitude).max(0.05);
+        let cell_m = grid.span_x / f64::from(grid.cols);
+        let pixels = (cell_m / metres).clamp(2., 40.) as f32;
+        for (index, &(x, y)) in grid.centers.iter().enumerate() {
+            let Some(class) = grid.cells.get(index).copied() else {
+                continue;
+            };
+            if class == CellClass::Unknown {
+                continue;
+            }
+            let Ok((latitude, longitude)) = origin.geographic(x, y) else {
+                continue;
+            };
+            let Some(at) = map.project(latitude, longitude) else {
+                continue;
+            };
+            let mut color = rgb(cell_color(class));
+            color.a = match class {
+                CellClass::Free => 0.38,
+                CellClass::Occupied => 0.78,
+                CellClass::Unknown => 0.,
+            };
+            window.paint_quad(quad(
+                Bounds {
+                    origin: point(at.x - px(pixels * 0.5), at.y - px(pixels * 0.5)),
+                    size: size(px(pixels), px(pixels)),
+                },
+                Corners::default(),
+                color,
+                Edges::default(),
+                transparent_black(),
+                BorderStyle::default(),
+            ));
+        }
+    }
+}
+
+/// Ground metres per pixel from the camera, measured near a coordinate.
+/// The 3D view does not publish a ground scale, so two projected points supply it.
+fn ground_metres_per_pixel(map: &MapView, latitude: f64, longitude: f64) -> f64 {
+    let fallback = map.metres_per_pixel().unwrap_or(1.).max(0.05);
+    let Some(origin) = map.project(latitude, longitude) else {
+        return fallback;
+    };
+    // A long step can leave the 3D frustum and make project() return nothing.
+    for step in [0.00002_f64, -0.00002, 0.00005] {
+        let Some(other) = map.project(latitude + step, longitude) else {
+            continue;
+        };
+        let pixels = f32::from(other.x - origin.x).hypot(f32::from(other.y - origin.y));
+        let metres = geodesic_metres(latitude, longitude, latitude + step, longitude);
+        if metres.is_finite() && metres > 0.2 && pixels > 2. {
+            return (metres / f64::from(pixels)).max(0.02);
+        }
+    }
+    fallback
 }
 
 fn drive_pad(driving: bool, cx: &mut Context<Dashboard>) -> impl IntoElement {
@@ -1864,11 +1852,15 @@ fn main() {
         eprintln!("argos-gpui: {error}");
         std::process::exit(1);
     });
+    // Resolve the tiles key before MapConfig reads the process environment.
+    let maps_api_key = config.maps_api_key.clone();
+    let maps_notice = config.maps_notice.clone();
     let feed = FleetFeed::start(config.clone());
     let map = Map::new(MapConfig {
         latitude: config.start_latitude,
         longitude: config.start_longitude,
         show_controls: false,
+        api_key: maps_api_key,
         ..MapConfig::default()
     })
     .unwrap_or_else(|error| {
@@ -1891,7 +1883,7 @@ fn main() {
             },
             cx,
             |window, cx| {
-                let view = cx.new(|cx| Dashboard::new(map, feed, cx));
+                let view = cx.new(|cx| Dashboard::new(map, feed, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
                 view

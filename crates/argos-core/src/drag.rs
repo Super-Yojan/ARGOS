@@ -3,7 +3,7 @@
 //! The outdoor GPS spec drafted a click and then asked for a separate confirm.
 //! The dashboard uses the release as that explicit operator action instead.
 
-use crate::{GoalRequest, geographic_goal_refusal};
+use crate::{GoalRequest, OutdoorAdmission, admit_outdoor_goal, geographic_goal_refusal};
 
 /// Ground distance that still counts as dropping the ghost on the rover.
 pub const DROP_ON_SELF_METRES: f64 = 0.75;
@@ -37,6 +37,9 @@ pub struct DragGate<'a> {
     pub level: Option<&'a str>,
     pub geographic: bool,
     pub outdoor: bool,
+    /// Full outdoor readiness. When set, it replaces the boolean capability flag.
+    /// Latitude and longitude are the destination under review.
+    pub admission: Option<OutdoorAdmission<'a>>,
 }
 
 /// Why a drag cannot start. `None` means the press may begin a drag.
@@ -51,10 +54,16 @@ pub fn drag_disabled_reason(gate: DragGate<'_>) -> Option<&'static str> {
         return Some("Pose is stale");
     }
     if gate.geographic {
-        if let Some(reason) = geographic_goal_refusal(gate.outdoor) {
+        if let Some(mut admission) = gate.admission {
+            if admission.level.is_none() {
+                admission.level = Some("");
+            }
+            if let Err(reason) = admit_outdoor_goal(admission) {
+                return Some(reason);
+            }
+        } else if let Some(reason) = geographic_goal_refusal(gate.outdoor) {
             return Some(reason);
-        }
-        if gate.level != Some("waypoint") {
+        } else if gate.level != Some("waypoint") {
             return Some("Outdoor goals need L3 Waypoint");
         }
     } else if !matches!(gate.level, Some("waypoint" | "waypoint_direct")) {
@@ -136,9 +145,15 @@ impl GoalDrag {
         DragEnd::Cancelled("Drag cancelled")
     }
 
-    pub fn release(self) -> DragEnd {
+    /// Release is the explicit operator action. A geographic drop is admitted
+    /// again at the cursor, using the radius frozen when the drag began.
+    pub fn release(self, gate: DragGate<'_>) -> DragEnd {
         if self.distance_m() < DROP_ON_SELF_METRES {
             return DragEnd::Cancelled("Dropped on the rover; goal not sent");
+        }
+        let gate = reviewed_gate(&self, gate);
+        if let Some(reason) = drag_disabled_reason(gate) {
+            return DragEnd::Cancelled(reason);
         }
         let goal = match self.space {
             DragSpace::Local => GoalRequest::Local {
@@ -154,6 +169,19 @@ impl GoalDrag {
         };
         DragEnd::Send(goal)
     }
+}
+
+fn reviewed_gate<'a>(drag: &GoalDrag, mut gate: DragGate<'a>) -> DragGate<'a> {
+    if drag.space == DragSpace::Geographic
+        && let Some(admission) = gate.admission.as_mut()
+    {
+        admission.latitude = drag.cursor.x;
+        admission.longitude = drag.cursor.y;
+        if let Some(radius) = drag.arrival_radius_m {
+            admission.arrival_radius_m = radius;
+        }
+    }
+    gate
 }
 
 fn finite_point(point: PlanarPoint) -> bool {
