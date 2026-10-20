@@ -32,7 +32,7 @@ pub(super) fn transform(object: &ObjectRecord) -> DMat4 {
         up.extend(0.),
         ecef(p.latitude, p.longitude, p.altitude).extend(1.),
     ) * DMat4::from_rotation_z(-object.heading.to_radians())
-        * DMat4::from_scale(DVec3::splat(object.scale))
+        * DMat4::from_scale(DVec3::from_array(object.axis_scale) * object.scale)
 }
 fn read_limited(path: &Path, budget: &mut usize) -> Result<Vec<u8>> {
     let file = std::fs::File::open(path)

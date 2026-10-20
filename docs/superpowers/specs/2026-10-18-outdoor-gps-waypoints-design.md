@@ -21,8 +21,9 @@ alignment check. Raw GPS display stays independent of navigation readiness.
   velocity estimates to the autonomy arbiter. Pose and map share the AR frame.
 - L3 `waypoint` checks sensor and map freshness and uses the local route planner.
   L2 `waypoint_direct` intentionally bypasses obstacle avoidance.
-- The iOS hardware adapter currently keeps L3 disarmed without compatible wheel
-  feedback. This requirement remains; this feature does not enable open-loop L3.
+- User-approved revision (2026-10-19): L3 and outdoor GPS use fresh phone VIO
+  for motion feedback; wheel encoders are not required. Compatible differential
+  actuator routing, arming and all freshness/stop checks remain mandatory.
 - The phone's latest observed GPS uncertainty was approximately 4 m. A local
   follower's sub-metre arrival threshold cannot be reused for GPS arrival.
 - The deployed ARGOS service currently treats raw GPS as observation and rejects
@@ -88,7 +89,7 @@ Proposed initial outdoor defaults:
 | GPS uncertainty | At most 10 m and no larger than the reviewed arrival radius |
 | True heading | Valid; source age at most 2 s; uncertainty at most 30 degrees |
 | Local pose and occupancy | Existing L3 freshness, tracking and validity checks |
-| Motor feedback | Existing L3 hardware-feedback requirement |
+| Motion feedback | Fresh phone VIO and compatible differential actuator routing |
 | Outdoor forward speed | At most 0.3 m/s and within existing lower limits |
 | Mission distance at admission | At most 500 m from the current GPS fix |
 | Arrival radius | Default 5 m; operator-configurable from 2 through 20 m |
@@ -112,7 +113,7 @@ than reinterpreting a previous local planning target.
 
 An observed blocked route may remain held under the existing obstacle policy.
 The UI must distinguish `GPS stale`, `heading uncertain`, `tracking lost`,
-`obstacle map stale`, `route blocked`, `wheel feedback unavailable` and `paused`.
+`obstacle map stale`, `route blocked`, `hardware unavailable` and `paused`.
 No GPS loss changes the source to local navigation automatically.
 
 ## Components to change
@@ -158,7 +159,7 @@ Automated regression coverage must establish:
   wraparound, calibrated mount rotation and an arbitrary AR yaw/origin.
 - No stored geographic-to-AR transform or alignment timer; GPS jumps never move
   the local pose/map. Non-finite, stale, future and replayed samples fail closed.
-- A stale GPS/heading, map, pose or missing wheel feedback cannot produce motion.
+- A stale GPS/heading, map, pose or unavailable hardware cannot produce motion.
   Sensor recovery does not resume a paused mission without operator action.
 - Intermediate guidance completion cannot complete the GPS mission; three
   distinct valid fixes are required for arrival. Poor accuracy cannot enlarge the

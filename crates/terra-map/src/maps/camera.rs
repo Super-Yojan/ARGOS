@@ -141,6 +141,14 @@ impl Camera {
         latitude: f64,
         longitude: f64,
     ) -> Option<(f64, f64)> {
+        let (x, y) = self.project_ground_unclipped(width, height, latitude, longitude)?;
+        if x < -0.025 * width as f64 || x > 1.025 * width as f64
+            || y < -0.025 * height as f64 || y > 1.025 * height as f64 { return None; }
+        Some((x, y))
+    }
+    /// Project polygon vertices outside the viewport; callers clip the polygon.
+    pub fn project_ground_unclipped(&self, width: u32, height: u32,
+        latitude: f64, longitude: f64) -> Option<(f64, f64)> {
         if width == 0 || height == 0 {
             return None;
         }
@@ -152,16 +160,43 @@ impl Camera {
         }
         let ndc_x = clip.x / clip.w;
         let ndc_y = clip.y / clip.w;
-        if ndc_x.abs() > 1.05 || ndc_y.abs() > 1.05 {
-            return None;
-        }
         Some((
             (ndc_x + 1.) * 0.5 * f64::from(width),
             (1. - ndc_y) * 0.5 * f64::from(height),
         ))
     }
+    /// Screen bounds of a transformed model box, clipped to the viewport.
+    pub fn project_box(&self, width: u32, height: u32, transform: DMat4,
+        min: DVec3, max: DVec3) -> Option<((f64, f64), (f64, f64))> {
+        if width == 0 || height == 0 || !min.is_finite() || !max.is_finite() {
+            return None;
+        }
+        let view = self.view(width, height);
+        let mut lo = (f64::INFINITY, f64::INFINITY);
+        let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for x in [min.x, max.x] {
+            for y in [min.y, max.y] {
+                for z in [min.z, max.z] {
+                    let world = transform.transform_point3(DVec3::new(x, y, z));
+                    let clip = view.view_projection * (world - view.origin).extend(1.);
+                    // Do not create a giant hit area across the near plane.
+                    if !clip.is_finite() || clip.w <= 1e-6 { return None; }
+                    let px = (clip.x / clip.w + 1.) * 0.5 * f64::from(width);
+                    let py = (1. - clip.y / clip.w) * 0.5 * f64::from(height);
+                    lo = (lo.0.min(px), lo.1.min(py));
+                    hi = (hi.0.max(px), hi.1.max(py));
+                }
+            }
+        }
+        lo = (lo.0.max(0.), lo.1.max(0.));
+        hi = (hi.0.min(f64::from(width)), hi.1.min(f64::from(height)));
+        (hi.0 > lo.0 && hi.1 > lo.1).then_some((lo, hi))
+    }
     /// Latitude and longitude of a viewport pixel on the camera's ground plane.
     pub fn unproject_ground(&self, width: u32, height: u32, x: f64, y: f64) -> Option<(f64, f64)> {
+        self.unproject_ground_at_altitude(width, height, x, y, self.altitude)
+    }
+    pub fn unproject_ground_at_altitude(&self, width: u32, height: u32, x: f64, y: f64, altitude: f64) -> Option<(f64, f64)> {
         if width == 0 || height == 0 || !x.is_finite() || !y.is_finite() {
             return None;
         }
@@ -187,11 +222,12 @@ impl Camera {
         if denom.abs() < 1e-8 {
             return None;
         }
-        let t = (view.origin - near).dot(up) / denom;
+        let plane = ecef(self.latitude, self.longitude, altitude);
+        let t = (plane - near).dot(up) / denom;
         let hit = near + dir * t;
         let east = DVec3::new(-lon0.sin(), lon0.cos(), 0.).normalize();
         let north = up.cross(east).normalize();
-        let delta = hit - view.origin;
+        let delta = hit - plane;
         let north_m = delta.dot(north);
         let east_m = delta.dot(east);
         let latitude = self.latitude + (north_m / EARTH_RADIUS).to_degrees();

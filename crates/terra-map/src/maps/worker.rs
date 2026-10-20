@@ -331,6 +331,7 @@ fn run(
         return Ok(());
     }
     let mut renderer = Renderer::new()?;
+    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
     let pool = Pool::new(http.clone(), stop.clone());
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut resident: HashMap<usize, Resident> = HashMap::new();
@@ -419,7 +420,9 @@ fn run(
                     changed = true;
                 }
                 Ok(Payload::Mesh(content, ttl)) => {
-                    let bytes = content.bytes();
+                    // Include the CPU surface acceleration data in the resident budget.
+                    let bytes = content.bytes() + content.primitives.iter()
+                        .map(|p| p.indices.len() / 3 * 128).sum::<usize>();
                     while total_bytes.saturating_add(bytes) > config.cache_bytes
                         || resident.len() >= config.max_resident_tiles
                     {
@@ -590,6 +593,7 @@ fn objects_only(
     message: String,
 ) -> Result<()> {
     let mut renderer = Renderer::new()?;
+    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut dirty = true;
     while !stop.load(Ordering::Relaxed) {
@@ -665,6 +669,7 @@ fn demo(
     );
     content.primitives[0].transform = DMat4::IDENTITY;
     let mut renderer = Renderer::new()?;
+    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
     renderer.upload(0, &content, world)?;
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut dirty = true;

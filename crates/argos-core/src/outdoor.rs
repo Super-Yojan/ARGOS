@@ -1,9 +1,8 @@
 //! Outdoor GPS navigation telemetry and geographic waypoint admission.
 //!
-//! Provisional until the Terra outdoor PR lands. The capability name
-//! `outdoor_gps` and the sources `local` and `outdoor_gps` are the names in
-//! `docs/superpowers/specs/2026-10-18-outdoor-gps-waypoints-design.md`. Every
-//! other JSON name below is a guess and has to be reconciled with that PR.
+//! Version-1 contract shared with Terra's outdoor mission controller.
+//! Geographic goal envelopes also carry reviewed run_id, navigation_revision,
+//! and arrival_radius_m; coordinates are never converted into the AR frame.
 //!
 //! Terra publishes version-1 status on `{prefix}/{id}/navigation/outdoor`.
 //! The same object may be nested at `outdoor` or `authority.navigation.outdoor`.
@@ -33,7 +32,7 @@
 //! }
 //! ```
 //!
-//! A source change is `{prefix}/{id}/navigation/source` (provisional):
+//! A source change is `{prefix}/{id}/navigation/source` :
 //! `{"schema_version":1,"source","token","run_id","navigation_revision"}`.
 //! Selecting a source does not arm hardware and does not start a mission.
 
@@ -48,23 +47,27 @@ pub const LOCAL_SOURCE: &str = "local";
 pub const GPS_MAX_AGE_S: f64 = 3.;
 pub const GPS_MAX_UNCERTAINTY_M: f64 = 10.;
 pub const HEADING_MAX_AGE_S: f64 = 2.;
-pub const HEADING_MAX_UNCERTAINTY_DEG: f64 = 30.;
+// Temporary field-test allowance; freshness remains independently enforced.
+pub const HEADING_MAX_UNCERTAINTY_DEG: f64 = 35.;
 pub const MISSION_MAX_DISTANCE_M: f64 = 500.;
-pub const ARRIVAL_RADIUS_DEFAULT_M: f64 = 5.;
+pub const ARRIVAL_RADIUS_DEFAULT_M: f64 = 10.;
 pub const ARRIVAL_RADIUS_MIN_M: f64 = 2.;
 pub const ARRIVAL_RADIUS_MAX_M: f64 = 20.;
 /// How old the outdoor status object itself may be. Provisional.
 pub const OUTDOOR_STATUS_MAX_AGE_S: f64 = 3.;
 
-/// Spec hold the window must show distinctly. Wire tokens are provisional;
-/// the display phrases are the ones in the outdoor GPS spec.
+/// Distinct sensor and mission holds reported by Terra.
 pub const OUTDOOR_HOLDS: &[(&str, &str)] = &[
     ("gps_stale", "GPS stale"),
+    ("gps_uncertain", "GPS uncertain"),
+    ("authority_lost", "Authority lost"),
+    ("disarmed", "Disarmed"),
     ("heading_uncertain", "Heading uncertain"),
     ("tracking_lost", "Tracking lost"),
     ("obstacle_map_stale", "Obstacle map stale"),
     ("route_blocked", "Route blocked"),
     ("wheel_feedback_unavailable", "Wheel feedback unavailable"),
+    ("hardware_unavailable", "Hardware unavailable"),
     ("paused", "Paused"),
 ];
 
@@ -436,6 +439,7 @@ pub fn encode_source_request(
     let bytes = serde_json::to_vec(&json!({
         "schema_version": OUTDOOR_SCHEMA,
         "source": source,
+        "arrival_radius_m": ARRIVAL_RADIUS_DEFAULT_M,
         "token": token,
         "run_id": run_id,
         "navigation_revision": navigation_revision,
@@ -479,4 +483,40 @@ fn finite_coord(value: &Value, key: &str, limit: f64) -> Option<f64> {
         .get(key)
         .and_then(Value::as_f64)
         .filter(|number| number.is_finite() && number.abs() <= limit)
+}
+
+/// A resume is operator intent, never an automatic consequence of recovered sensors.
+/// The vehicle rechecks pose/map/feedback and arming at receipt.
+pub fn outdoor_resume_refusal(
+    report: &OutdoorReport,
+    run: &str,
+    revision: u64,
+) -> Option<&'static str> {
+    if app_update_required(Some(report)) || !report.acknowledged_outdoor() {
+        return Some("Outdoor GPS is not acknowledged");
+    }
+    if report.run_id != run || report.navigation_revision != revision {
+        return Some("Navigation identity changed");
+    }
+    if report.phase != "paused" {
+        return Some("No paused outdoor mission");
+    }
+    if report.age_s.is_none_or(|a| a > OUTDOOR_STATUS_MAX_AGE_S) {
+        return Some("Outdoor status stale");
+    }
+    if report.gps_age_s.is_none_or(|a| a > GPS_MAX_AGE_S)
+        || report
+            .gps_accuracy_m
+            .is_none_or(|a| a > GPS_MAX_UNCERTAINTY_M || a > report.arrival_radius_m)
+    {
+        return Some("GPS stale or uncertain");
+    }
+    if report.heading_age_s.is_none_or(|a| a > HEADING_MAX_AGE_S)
+        || report
+            .heading_accuracy_deg
+            .is_none_or(|a| a > HEADING_MAX_UNCERTAINTY_DEG)
+    {
+        return Some("Heading uncertain");
+    }
+    None
 }

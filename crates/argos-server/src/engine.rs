@@ -34,6 +34,14 @@ pub trait Fleet: Send + 'static {
         Err("Navigation source selection unavailable".into())
     }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String>;
+    fn send_reviewed_goal(
+        &mut self,
+        id: &str,
+        goal: &Waypoint,
+        _review: Option<(String, u64, f64)>,
+    ) -> Result<String, String> {
+        self.send_goal(id, goal)
+    }
     fn cancel(&mut self, id: &str) -> Result<(), String>;
     fn hardware(
         &mut self,
@@ -999,8 +1007,18 @@ impl<F: Fleet> Engine<F> {
                 } else if let Some(report) = report.filter(|report| {
                     report.token.as_deref() == op.mode_token.as_deref()
                         && report.run_id == op.run_id
-                        && Some(report.navigation_revision.to_string()).as_ref()
-                            == op.navigation_revision.as_ref()
+                        && op
+                            .navigation_revision
+                            .as_ref()
+                            .and_then(|r| r.parse::<u64>().ok())
+                            .is_some_and(|r| {
+                                report.navigation_revision
+                                    == if report.result.as_deref() == Some("accepted") {
+                                        r.saturating_add(1)
+                                    } else {
+                                        r
+                                    }
+                            })
                         && report
                             .age_s
                             .is_some_and(|age| age.is_finite() && (0.0..3.).contains(&age))
@@ -1195,9 +1213,16 @@ impl<F: Fleet> Engine<F> {
                             op.phase = "interrupted".into();
                             op.message = reason;
                         } else {
-                            match self.fleet.send_goal(
+                            match self.fleet.send_reviewed_goal(
                                 &op.rover_id,
                                 op.waypoint.as_ref().expect("waypoint operation"),
+                                op.arrival_radius.and_then(|r| {
+                                    Some((
+                                        op.run_id.clone(),
+                                        op.navigation_revision.as_ref()?.parse().ok()?,
+                                        r,
+                                    ))
+                                }),
                             ) {
                                 Ok(token) => {
                                     op.goal_token = Some(token);

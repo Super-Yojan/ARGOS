@@ -24,6 +24,7 @@ fn disarmed() -> HardwareObservation {
         armed: false,
         arming: false,
         reason: "disarmed".into(),
+        stop_detail: String::new(),
         token: String::new(),
         result: String::new(),
         age: 0.1,
@@ -293,4 +294,51 @@ fn a_hold_that_loses_its_gate_does_not_publish() {
         Some("Take control to arm this vehicle.")
     );
     assert!(!control.pending_arm());
+}
+
+#[test]
+fn paused_armed_status_blocks_drive_and_does_not_acknowledge_resume() {
+    let mut status = HardwareObservation::from_status(&json!({
+        "armed": true, "arming": false, "age": 0.1, "motion_paused": true,
+        "stop_reason": "watchdog_paused"
+    }));
+    assert!(status.motion_paused());
+    assert_eq!(drive_block(&status), Some("Motion paused · command stream interrupted · Resume required"));
+    let mut control = ArmControl::new();
+    let command = hold_until_arm(&mut control);
+    if let HardwareCommand::Arm { token, .. } = command { status.token = token; }
+    control.tick(0.01, open(), &status, "run", 1);
+    assert!(control.pending_arm());
+    status.reason = "Armed".into();
+    control.tick(0.01, open(), &status, "run", 1);
+    assert!(!control.pending_arm());
+    assert_eq!(drive_block(&status), None);
+}
+
+#[test]
+fn drive_blocks_distinguish_missing_stale_arming_and_pause_cause() {
+    assert_eq!(drive_block(&HardwareObservation::default()), Some("Hardware status unavailable"));
+    let mut status = disarmed();
+    status.armed = true;
+    status.age = 0.5;
+    assert_eq!(drive_block(&status), Some("Hardware status is stale · waiting for an update"));
+    status.age = 0.1;
+    status.arming = true;
+    assert_eq!(drive_block(&status), Some("Arming · wait for hardware confirmation"));
+    let paused = HardwareObservation::from_status(&json!({
+        "armed": true, "age": 0.1, "motion_paused": true,
+        "stop_reason": "watchdog_paused",
+        "stop_diagnostic": "Camera tracking lost in tracking-dependent mode"
+    }));
+    assert!(paused.motion_paused());
+    assert_eq!(drive_block(&paused), Some("Camera tracking lost in tracking-dependent mode"));
+    let fault = HardwareObservation::from_status(&json!({
+        "armed": false, "age": 0.1, "fault": "hardware_gate_open"
+    }));
+    assert_eq!(drive_block(&fault), Some("hardware_gate_open"));
+    let older_phone = HardwareObservation::from_status(&json!({
+        "armed": false, "age": 0.1, "reason": "Bluetooth write stalled"
+    }));
+    assert_eq!(drive_block(&older_phone), Some("Bluetooth write stalled"));
+    assert_eq!(drive_block(&disarmed()), Some(ARM_TO_DRIVE));
 }

@@ -151,7 +151,7 @@ pub fn decode_body_pose(bytes: &[u8]) -> Result<Pose> {
 ///
 /// `rotation` is radians from local +x/+y into north/west, matching Terra's
 /// geographic reference. +x is north and +y is west after that rotation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocalFrame {
     pub latitude: f64,
     pub longitude: f64,

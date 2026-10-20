@@ -694,6 +694,7 @@ impl Client {
                 | "hardware"
                 | "navigation/settings"
                 | "navigation/source"
+                | "navigation/resume"
                 | "search"
                 | "search/action"
                 | "search/report/ack"
@@ -713,6 +714,14 @@ impl Client {
                 || !value["parameters"].is_object()
             {
                 return Err(invalid("invalid navigation settings request"));
+            }
+        } else if matches!(kind, "navigation/source" | "navigation/resume") {
+            if value["schema_version"] != 1
+                || value["token"].as_str().is_none_or(|t| !valid_token(t))
+                || !value["run_id"].is_string()
+                || value["navigation_revision"].as_u64().is_none()
+            {
+                return Err(invalid("invalid navigation request"));
             }
         } else if kind.starts_with("search") {
             validate_search_command(kind, payload)?;
@@ -768,13 +777,21 @@ impl Client {
         } else {
             0.5
         };
+        // L0 selection and confirmed L0 control do not consume camera pose.
+        // Fresh membership, authority, run/revision and hardware checks below remain.
+        let manual_without_pose = (kind == "autonomy" && value["level"] == "teleop")
+            || (matches!(kind, "hardware" | "teleop")
+                && self.operator_states.lock().unwrap()
+                    .get(&(id, "authority".into()))
+                    .is_some_and(|(authority, at)| at.elapsed().as_secs_f64() < 0.5
+                        && authority["requested_level"] == "teleop"));
         if !neutral {
             let snapshot = self.snapshot();
             if snapshot.link != "healthy"
                 || !snapshot.rovers.iter().any(|r| {
                     r.id == id
                         && r.membership == "online"
-                        && (kind == "navigation/settings"
+                        && (manual_without_pose || kind == "navigation/settings"
                             || r.pose_age.is_some_and(|a| a < freshness))
                 })
             {
@@ -812,6 +829,29 @@ impl Client {
                     return Err(invalid(
                         "settings require current authority and ready disarmed hardware",
                     ));
+                }
+            } else if kind == "navigation/resume" {
+                let (raw, at) = states
+                    .get(&(id, "outdoor".into()))
+                    .ok_or_else(|| invalid("Outdoor status unavailable"))?;
+                let mut report = argos_core::OutdoorReport::decode(raw)?;
+                report.age_s = Some(at.elapsed().as_secs_f64());
+                if let Some(reason) = argos_core::outdoor_resume_refusal(
+                    &report,
+                    value["run_id"].as_str().unwrap(),
+                    value["navigation_revision"].as_u64().unwrap(),
+                ) {
+                    return Err(invalid(reason));
+                }
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("Hardware unavailable"))?;
+                if at.elapsed().as_secs_f64() >= 0.5
+                    || hardware["armed"] != true
+                    || authority["requested_level"] != "waypoint"
+                    || authority["safety"] == "emergency_stop"
+                {
+                    return Err(invalid("Arm in L3 before resuming"));
                 }
             } else if kind == "navigation/source" {
                 let source = value["source"].as_str();
@@ -1180,14 +1220,72 @@ impl Client {
             .snapshot(self.start.elapsed().as_secs_f64())
     }
     pub fn send_goal(&self, id: u64, goal: GoalRequest) -> Result<String> {
+        self.send_reviewed_goal(id, goal, None)
+    }
+    /// Preserve the geographic review envelope and recheck it immediately before publication.
+    pub fn send_reviewed_goal(
+        &self,
+        id: u64,
+        goal: GoalRequest,
+        review: Option<(String, u64, f64)>,
+    ) -> Result<String> {
         let _action = self.actions.lock().unwrap();
+        if let GoalRequest::Geographic {
+            latitude,
+            longitude,
+            ..
+        } = goal
+        {
+            let (run, revision, radius) = review
+                .as_ref()
+                .ok_or_else(|| invalid("Geographic review required"))?;
+            let states = self.operator_states.lock().unwrap();
+            let (raw, at) = states
+                .get(&(id, "outdoor".into()))
+                .ok_or_else(|| invalid("Outdoor status unavailable"))?;
+            let mut report = argos_core::OutdoorReport::decode(raw)?;
+            report.age_s = Some(at.elapsed().as_secs_f64());
+            let (authority, at) = states
+                .get(&(id, "authority".into()))
+                .ok_or_else(|| invalid("Authority unavailable"))?;
+            if at.elapsed().as_secs_f64() >= 0.5
+                || authority["run_id"] != *run
+                || authority["safety"] != "clear"
+            {
+                return Err(invalid("Authority changed"));
+            }
+            argos_core::admit_outdoor_goal(argos_core::OutdoorAdmission {
+                report: Some(&report),
+                latitude,
+                longitude,
+                arrival_radius_m: *radius,
+                level: authority["requested_level"].as_str(),
+                run_id: run,
+                navigation_revision: *revision,
+            })
+            .map_err(invalid)?;
+            let (hardware, at) = states
+                .get(&(id, "hardware".into()))
+                .ok_or_else(|| invalid("Hardware unavailable"))?;
+            if at.elapsed().as_secs_f64() >= 0.5 || hardware["armed"] != true {
+                return Err(invalid("Motors are not armed"));
+            }
+        }
         let token = uuid::Uuid::new_v4().to_string();
-        let payload = self.cache.lock().unwrap().prepare_goal(
+        let mut payload = self.cache.lock().unwrap().prepare_goal(
             id,
             &goal,
             &token,
             self.start.elapsed().as_secs_f64(),
         )?;
+        if let Some((run, revision, radius)) = review {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&payload).map_err(|_| invalid("Invalid goal"))?;
+            value["run_id"] = serde_json::json!(run);
+            value["navigation_revision"] = serde_json::json!(revision);
+            value["arrival_radius_m"] = serde_json::json!(radius);
+            payload = serde_json::to_vec(&value).map_err(|_| invalid("Invalid goal"))?;
+        }
         self.publish(id, payload.clone())?;
         let _ = self.recorder.record(serde_json::json!({
             "kind": "goal_sent",
@@ -1442,6 +1540,15 @@ mod forest_tests {
                 .operator_command(8, "autonomy", r#"{"level":"teleop","token":"manual"}"#)
                 .is_err()
         );
+        // Camera pose can be old while control authority and membership are fresh.
+        client.cache.lock().unwrap().fleet(
+            decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(),
+            client.start.elapsed().as_secs_f64(),
+        );
+        client.operator_states.lock().unwrap().get_mut(&(8, "authority".into())).unwrap().1 = Instant::now();
+        assert!(client.operator_command(8, "autonomy", r#"{"level":"teleop","token":"manual-no-camera"}"#).is_ok());
+        assert!(client.operator_command(8, "hardware", r#"{"action":"arm","token":"manual-arm","run_id":"run","authority_revision":1}"#).is_ok());
+        assert!(client.operator_command(8, "autonomy", r#"{"level":"assisted_teleop","token":"assisted-no-camera"}"#).is_err());
         client.disconnect();
         router.stop().unwrap();
     }

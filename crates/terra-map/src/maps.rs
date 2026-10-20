@@ -10,6 +10,7 @@ mod metrics;
 mod navigation;
 mod objects;
 mod renderer;
+mod surface;
 #[cfg(test)]
 mod tests;
 mod tiles;
@@ -153,6 +154,13 @@ impl MapView {
                                 this.metrics.ui_image_ms =
                                     image_started.elapsed().as_secs_f64() * 1000.;
                             }
+                            // Keep close zoom above the same visible surface used by rover models.
+                            if let Some(altitude) = this.controller.surface_altitude(this.camera.latitude, this.camera.longitude)
+                                && (altitude - this.camera.altitude).abs() > 0.05 {
+                                this.camera.altitude = altitude;
+                                this.camera.target = camera::ecef(this.camera.latitude, this.camera.longitude, altitude);
+                                this.send();
+                            }
                             if this.status != frame.status
                                 || this.tile_count != frame.tiles
                                 || !this.retired.is_empty()
@@ -194,6 +202,9 @@ impl MapView {
             _poll: poll,
         }
     }
+    /// Altitude of the plane used for map projection and occupancy overlays.
+    pub fn ground_altitude(&self) -> f64 { self.camera.altitude }
+
     pub fn controller(&self) -> api::Map {
         self.controller.clone()
     }
@@ -240,6 +251,19 @@ impl MapView {
             });
         }
     }
+    /// Model hit bounds inside this map element. Bounds use the loader's Z-up
+    /// local coordinates; position, scale, heading and camera match rendering.
+    pub fn object_bounds_local(&self, id: api::ObjectId, min: [f64; 3], max: [f64; 3]) -> Option<Bounds<Pixels>> {
+        let frame = self.frame?;
+        let snapshot = self.controller.snapshot();
+        let object = snapshot.objects.iter().find(|object| object.id == id)?;
+        let (lo, hi) = self.camera.project_box(
+            f32::from(frame.size.width).max(1.) as u32,
+            f32::from(frame.size.height).max(1.) as u32,
+            objects::transform(object), min.into(), max.into())?;
+        Some(Bounds { origin: point(px(lo.0 as f32), px(lo.1 as f32)),
+            size: size(px((hi.0 - lo.0) as f32), px((hi.1 - lo.1) as f32)) })
+    }
     /// Position inside the map element of a ground coordinate.
     pub fn project_local(&self, latitude: f64, longitude: f64) -> Option<Point<Pixels>> {
         let frame = self.frame?;
@@ -251,13 +275,23 @@ impl MapView {
         let frame = self.frame?;
         let width = f32::from(frame.size.width).max(1.) as u32;
         let height = f32::from(frame.size.height).max(1.) as u32;
-        let (x, y) = self
-            .camera
-            .project_ground(width, height, latitude, longitude)?;
+        let mut camera = self.camera.clone();
+        camera.altitude = self.controller.surface_altitude(latitude, longitude).unwrap_or(camera.altitude);
+        let (x, y) = camera.project_ground(width, height, latitude, longitude)?;
         Some(point(
             frame.origin.x + px(x as f32),
             frame.origin.y + px(y as f32),
         ))
+    }
+    /// Window position without viewport rejection, for clipped polygon painting.
+    pub fn project_unclipped(&self, latitude: f64, longitude: f64) -> Option<Point<Pixels>> {
+        let frame = self.frame?;
+        let mut camera = self.camera.clone();
+        camera.altitude = self.controller.surface_altitude(latitude, longitude).unwrap_or(camera.altitude);
+        let (x, y) = camera.project_ground_unclipped(
+            f32::from(frame.size.width).max(1.) as u32,
+            f32::from(frame.size.height).max(1.) as u32, latitude, longitude)?;
+        Some(point(frame.origin.x + px(x as f32), frame.origin.y + px(y as f32)))
     }
     /// Ground latitude and longitude under a window pixel.
     pub fn ground_at(&self, position: Point<Pixels>) -> Option<(f64, f64)> {
@@ -266,8 +300,12 @@ impl MapView {
         let height = f32::from(frame.size.height).max(1.);
         let x = f32::from(position.x - frame.origin.x) as f64;
         let y = f32::from(position.y - frame.origin.y) as f64;
-        self.camera
-            .unproject_ground(width as u32, height as u32, x, y)
+        let mut coordinate = self.camera.unproject_ground(width as u32, height as u32, x, y)?;
+        for _ in 0..4 {
+            let Some(altitude) = self.controller.surface_altitude(coordinate.0, coordinate.1) else { break; };
+            coordinate = self.camera.unproject_ground_at_altitude(width as u32, height as u32, x, y, altitude)?;
+        }
+        Some(coordinate)
     }
     /// Pull the camera in for a short ground gesture. Preview only.
     pub fn frame_near(&mut self) {

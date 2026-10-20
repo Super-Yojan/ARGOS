@@ -194,7 +194,12 @@ impl Fleet for DemoFleet {
         report.token = Some(token.into());
         report.result = Some("accepted".into());
         report.run_id = run_id.into();
-        report.navigation_revision = navigation_revision.into();
+        report.navigation_revision = navigation_revision
+            .parse::<u64>()
+            .map_err(|_| "Invalid navigation revision")?
+            .checked_add(1)
+            .ok_or("Navigation revision exhausted")?
+            .to_string();
         report.age = 0.;
         rover.outdoor = Some(report);
         Ok(())
@@ -547,6 +552,20 @@ impl Fleet for LiveFleet {
             )
             .map_err(|error| error.to_string())
     }
+    fn send_reviewed_goal(
+        &mut self,
+        id: &str,
+        goal: &Waypoint,
+        review: Option<(String, u64, f64)>,
+    ) -> Result<String, String> {
+        self.client()?
+            .send_reviewed_goal(
+                id.parse().map_err(|_| "Invalid rover ID")?,
+                goal.core(),
+                review,
+            )
+            .map_err(|e| e.to_string())
+    }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String> {
         self.client()?
             .send_goal(id.parse().map_err(|_| "Invalid rover ID")?, goal.core())
@@ -614,6 +633,14 @@ impl Fleet for Box<dyn Fleet> {
     }
     fn send_goal(&mut self, id: &str, goal: &Waypoint) -> Result<String, String> {
         self.as_mut().send_goal(id, goal)
+    }
+    fn send_reviewed_goal(
+        &mut self,
+        id: &str,
+        goal: &Waypoint,
+        review: Option<(String, u64, f64)>,
+    ) -> Result<String, String> {
+        self.as_mut().send_reviewed_goal(id, goal, review)
     }
     fn hardware(
         &mut self,

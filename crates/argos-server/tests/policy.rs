@@ -49,7 +49,8 @@ impl Fleet for Fake {
             outdoor.token = Some(token.into());
             outdoor.result = Some("accepted".into());
             outdoor.run_id = run_id.into();
-            outdoor.navigation_revision = navigation_revision.into();
+            outdoor.navigation_revision =
+                (navigation_revision.parse::<u64>().unwrap() + 1).to_string();
             outdoor.age = 0.;
         }
         if self

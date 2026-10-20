@@ -122,6 +122,7 @@ pub(super) struct ObjectRecord {
     pub position: GeoPosition,
     pub heading: f64,
     pub scale: f64,
+    pub axis_scale: [f64; 3],
     pub highlight: Option<Color>,
 }
 #[derive(Clone)]
@@ -151,6 +152,7 @@ pub struct Map {
     owner: u64,
     config: Arc<MapConfig>,
     state: Arc<Mutex<State>>,
+    pub(super) surface: super::surface::SharedSurface,
 }
 impl Map {
     pub fn new(config: MapConfig) -> Result<Self, MapError> {
@@ -178,6 +180,7 @@ impl Map {
         Ok(Self {
             owner: NEXT.fetch_add(1, Ordering::Relaxed),
             config: Arc::new(config),
+            surface: Default::default(),
             state: Arc::new(Mutex::new(State {
                 revision: 1,
                 scene_revision: 1,
@@ -191,6 +194,12 @@ impl Map {
                 events: VecDeque::new(),
             })),
         })
+    }
+    /// Height of the top visible map mesh at this coordinate. Visual placement only;
+    /// roofs and tree canopies are surfaces too, not evidence of traversable ground.
+    pub fn surface_altitude(&self, latitude: f64, longitude: f64) -> Option<f64> {
+        self.surface.lock().unwrap().iter().filter_map(|surface| surface.altitude(latitude, longitude))
+            .max_by(f64::total_cmp)
     }
     pub fn config(&self) -> &MapConfig {
         &self.config
@@ -260,6 +269,7 @@ impl Map {
                 position,
                 heading: 0.,
                 scale: 1.,
+                axis_scale: [1.; 3],
                 highlight: None,
             },
         );
@@ -292,6 +302,13 @@ impl Map {
             return Err(MapError::InvalidTransform);
         }
         self.edit(id, |o| o.scale = scale)
+    }
+    /// Scale model axes independently in local east/north/up coordinates.
+    pub fn set_object_axis_scale(&self, id: ObjectId, scale: [f64; 3]) -> Result<(), MapError> {
+        if scale.iter().any(|v| !v.is_finite() || *v <= 0.) {
+            return Err(MapError::InvalidTransform);
+        }
+        self.edit(id, |o| o.axis_scale = scale)
     }
     /// Apply an unlit emissive color tint; this does not cast light onto terrain.
     pub fn illuminate_3d_object(&self, id: ObjectId, color: Color) -> Result<(), MapError> {

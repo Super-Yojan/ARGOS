@@ -30,7 +30,7 @@ export GOOGLE_MAPS_API_KEY='your-key'
 cargo run -p argos-gpui
 ```
 
-The window title is ARGOS. A sidebar lists the Zenoh link and each rover. Empty-space drag still orbits the map in 3D; Shift-drag pans, scroll zooms, and 2 / 3 switch modes when the map controls are shown. Dragging a rover marker, or its pending goal, does not pan. Release sends the goal. Esc, or dropping the ghost back on the rover, sends nothing. Map configuration, model conventions, and the standalone `learn-gpui` explorer are in [crates/terra-map/src/MAPS.md](crates/terra-map/src/MAPS.md).
+The window title is ARGOS. A sidebar lists the Zenoh link and each rover. Empty-space drag still orbits the map in 3D; Shift-drag pans, scroll zooms, and 2 / 3 switch modes when the map controls are shown. Click a 3D rover or its ground marker to select it directly and activate this window's local control claim. The selected rover and marker turn green; this does not arm the rover or establish an exclusive remote ownership lease. Hold Control while dragging it to move the 3D model as a destination preview; its ground marker stays at the live position. No sidebar selection is needed. Dragging a pending goal also edits its destination. These gestures do not pan. Release sends the goal and restores the model to live telemetry. Esc, or dropping the ghost back on the rover, sends nothing. Map configuration, model conventions, and the standalone `learn-gpui` explorer are in [crates/terra-map/src/MAPS.md](crates/terra-map/src/MAPS.md).
 
 The camera opens at a fallback location. It is not locked to a campus. Once one or more rovers have a position, the view recenters on their centroid, and it recenters again only when that set of rovers changes. Pose updates after that leave the camera where the operator put it. With no rover seen yet, the fallback is `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON`. Unset, those default to GMU Fairfax (38.8297, -77.3075).
 
@@ -61,7 +61,7 @@ Markers are the `robot.glb` model at 12× scale and 80 m ellipsoid height so the
 
 Select a rover. On the local navigation source, drag its marker on the map or in the local grid. A ghost follows the pointer, with the distance from the rover. Release publishes `{prefix}/{id}/goal` as `{"frame":"local","x","y","token"}` in metres, +x north and +y west. Local drags stay on L2 `waypoint_direct` or L3 `waypoint`, with a healthy link and a fresh pose that is not degraded.
 
-Outdoor GPS is a separate navigation source. The sidebar toggle sends `{prefix}/{id}/navigation/source` and can change only while that rover is disarmed and has no active mission. Selecting a source does not arm the rover. After the vehicle has acknowledged `outdoor_gps`, drag its map marker. The ghost shows the arrival radius (5 m, or the radius in the outdoor report) and the GPS distance. Release publishes `{"frame":"wgs84","latitude","longitude","token"}` with those coordinates unchanged, and only from L3 `waypoint`. The radius is frozen at release and is not added to the goal JSON. Esc, or dropping the ghost back on the rover, sends nothing. That release is the explicit operator action; it replaces the outdoor spec's separate confirm step. The drag stays disabled, with the admission reason, until the capability is acknowledged, the level is L3, and GPS, heading, and status are fresh. The server still rechecks that readiness immediately before publication and keeps the run, navigation revision, control claim, and audit. Cancel goal still publishes `{"cancel":true}`. A rover with no version-1 outdoor capability shows **App update required**. The card keeps the raw GPS fix visible during a hold and names `GPS stale`, `Heading uncertain`, `Tracking lost`, `Obstacle map stale`, `Route blocked`, `Wheel feedback unavailable`, and `Paused` separately, along with the mission phase and remaining distance. Outdoor status field names besides `outdoor_gps` are provisional until Terra's PR lands. The same local occupancy grid can be drawn on the map around each rover. **Map grid** toggles that overlay. It uses the localization origin and does not claim those cells are geographic obstacles.
+Outdoor GPS is a separate navigation source. The sidebar toggle sends `{prefix}/{id}/navigation/source` and can change only while that rover is disarmed and has no active mission. Selecting a source does not arm the rover. After the vehicle has acknowledged `outdoor_gps`, drag its map marker. The ghost shows the arrival radius (5 m, or the radius in the outdoor report) and the GPS distance. Release publishes `{"frame":"wgs84","latitude","longitude","token"}` with those coordinates unchanged, and only from L3 `waypoint`. The radius is frozen at release; `run_id`, `navigation_revision`, and `arrival_radius_m` travel with the geographic goal so Terra validates the exact review. Esc, or dropping the ghost back on the rover, sends nothing. That release is the explicit operator action; it replaces the outdoor spec's separate confirm step. The drag stays disabled, with the admission reason, until the capability is acknowledged, the level is L3, and GPS, heading, and status are fresh. The server still rechecks that readiness immediately before publication and keeps the run, navigation revision, control claim, and audit. Cancel goal still publishes `{"cancel":true}`. A rover with no version-1 outdoor capability shows **App update required**. The card keeps the raw GPS fix visible during a hold and names `GPS stale`, `Heading uncertain`, `Tracking lost`, `Obstacle map stale`, `Route blocked`, `Wheel feedback unavailable`, and `Paused` separately, along with the mission phase and remaining distance. The version-1 fields match Terra's outdoor controller. A paused mission exposes **Resume outdoor mission**; recovered sensors alone never resume motion. Source acceptance advances the navigation revision. The same local occupancy grid can be drawn on the map around each rover. **Map grid** toggles that overlay. It uses the localization origin and does not claim those cells are geographic obstacles.
 
 Autonomy buttons publish Terra's existing levels on `{prefix}/{id}/autonomy` as `{"level","token"}`: L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct`, L3 `waypoint`, plus `supervised` and `target_search`. `explore` is not offered. The sidebar shows requested and effective levels. `assigned_level` is the recommendation when a status includes it. `heading_requires_spin_or_replan` is shown on the rover card and the goal marker. Reverse path segments are drawn dashed in amber when a route sample carries a negative velocity, `reverse`, or `direction`. A pair with no direction is marked provisional. `Reversing` appears when the reported forward speed is negative. S / Down already drives in reverse and uses the same turn-radius cap.
 
@@ -70,6 +70,25 @@ Drive mode publishes `{prefix}/{id}/teleop` at about 20 Hz only while a key is h
 Fleet membership still has to arrive on `<prefix>/fleet/state` before a pose is kept. Arm and Disarm sit on each rover card. They publish the existing `{prefix}/{id}/hardware` body Terra already admits: `{"action":"arm"|"disarm","token","run_id","authority_revision"}`. Disarm uses authority revision 0. Hold Arm for about one second. A click publishes nothing. Arm stays disabled, and the card shows the reason, unless that rover is selected, the link is healthy, the pose is fresh, safety is clear, no stop is latched, and this window holds control. **Take control** is the local 30-second operator lease, renewed while the window is open. It is the same gate as the old browser tab claim and is not a new Zenoh topic. Armed and disarmed are read from `{prefix}/{id}/hardware/status`. The card shows `arming…` until that status echoes the request token. After 10 seconds without that echo it shows `Hardware outcome unconfirmed; not retried. Check live hardware status.` and the rover's `reason` when one is present. A `result` that starts with `rejected` is shown as published, including a refusal such as missing wheel feedback. Disarm is one click and stays available. Space and Stop still latch the safety stop. **Reset** publishes the existing `{prefix}/{id}/safety` action `reset` and does not arm. Navigation source changes still require a disarmed rover. Choosing a source or a level does not arm. Teleop and goals show **Arm to drive** until hardware status says the rover is armed.
 
 The built-in defaults are the hosted fleet: `tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`, user `terra`. Take the password from the operator secret store (`/etc/argos/fleet.password` on the deployed host) and put it only in `.env` or the environment. `tls/` uses the system trust store.
+
+Choose the connection for each dashboard launch:
+
+```sh
+cargo run -p argos-gpui -- --sim
+cargo run -p argos-gpui -- --real
+```
+
+Simulation forces the local Zorvane endpoint and prefix, with no fleet credentials.
+Start Zorvane separately first (`scripts/run-argos-local.sh` in its checkout).
+Real mode uses your saved environment/`.env` fleet settings and is the default
+when no argument is given. The window title identifies the selected mode.
+Neither mode automatically starts Zorvane or combines local and remote fleets.
+`--help` lists the options. The existing local launcher is a shortcut for sim mode.
+
+For a separate local simulation session, start `scripts/run-argos-local.sh` in
+an adjacent Zorvane checkout, then run `scripts/run-zorvane.sh` here. This leaves
+the hosted `.env` settings intact and connects only this dashboard process to
+the local simulator.
 
 Local Zorvane listens on `tcp/127.0.0.1:7447` with prefix `terra/rover` and no user. Comment out the hosted lines in `.env` and uncomment the Zorvane block from `.env.example`, including the empty user and password lines so the hosted user is not kept:
 
@@ -149,3 +168,26 @@ Live transport tests need permission to bind loopback sockets. `ARGOS_CHECK_TYPE
 Updated Terra and Zorvane publishers send full occupancy/cloud payloads when their content changes, with periodic recovery baselines for late subscribers. New live observations of unchanged content can instead send `map/occupancy/heartbeat` or `pointcloud/heartbeat`. These small messages identify the last full rover/run or frame/sequence; the Rust client renews only that matching cached visualization. Heartbeats never create missing data, authorize driving, or renew hardware/authority state. A stalled sensor emits neither fresh content nor heartbeats.
 
 ARGOS retains compatibility with full-payload publishers. Deploy updated clients alongside change-driven publishers: older receivers that do not understand these heartbeats will mark unchanged maps stale between recovery baselines. Zorvane currently publishes occupancy and depth/RGB, not a separate point-cloud stream.
+
+When updated Terra hardware reports `watchdog_paused`, the GPUI dashboard shows
+**Armed · motion paused** and blocks drive/goal dispatch. Hold **Resume motion**
+to request the existing safe-frame/ARM recovery handshake; the pending action
+is not acknowledged until fresh hardware status clears the pause. Outdoor
+mission Resume remains a separate explicit action. This requires the matching
+TerraPhone and Pi service updates; the local simulator does not emulate Pi
+command-timeout arming behavior.
+
+### Manual control and stop reasons
+
+For a single rover, select it, choose **Select manual control**, wait for L0 confirmation,
+then hold **Arm** or **Resume motion** if required and choose **Drive this rover**.
+Selecting manual control is permitted before hardware arm/resume; it never starts motion.
+L0 does not require camera pose updates. Fresh fleet membership, control authority,
+hardware status, command leases, and explicit emergency-stop recovery still apply.
+Assisted driving and autonomous navigation retain their pose requirements.
+
+The drive panel distinguishes missing/stale hardware status, arming, motion pause,
+and disarmed hardware. Terra publishes its retained first cause as `stop_diagnostic`
+on hardware status; ARGOS displays it for a stopped rover. Older phones fall back to
+the reported fault/stop reason or a command-stream pause message. Both the Terra
+phone runtime and ARGOS must be rebuilt for camera-independent fleet manual control.

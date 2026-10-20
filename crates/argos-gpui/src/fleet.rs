@@ -9,7 +9,7 @@ use argos_core::{
     OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
     admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_raw_gps, drive_block,
     encode_hardware, encode_source_request, fallback_degrade_reason, goal_blocked, local_map,
-    map_heading_degrees, reported_outdoor, reported_pose_quality, rover_geographic,
+    map_heading_degrees, reported_outdoor, reported_pose_quality,
     source_change_refusal,
 };
 use argos_zenoh::Client;
@@ -70,12 +70,16 @@ pub struct DashboardConfig {
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
+        Self::from_env_mode(crate::LaunchMode::Real)
+    }
+    pub fn from_env_mode(mode: crate::LaunchMode) -> Result<Self, String> {
         let mut process = BTreeMap::new();
         for key in SETTING_KEYS {
             if std::env::var_os(key).is_some() {
                 process.insert(key.to_string(), std::env::var(key).unwrap_or_default());
             }
         }
+        mode.apply(&mut process);
         let files: Vec<_> = dotenv_paths()
             .iter()
             .map(|path| read_dotenv(path))
@@ -360,6 +364,8 @@ pub struct RoverMark {
     pub id: u64,
     pub latitude: f64,
     pub longitude: f64,
+    /// Geographic transform only when alignment is actually supplied (or no phone report exists).
+    pub map_frame: Option<LocalFrame>,
     pub heading: f64,
     pub local_x: f64,
     pub local_y: f64,
@@ -381,7 +387,7 @@ pub struct RoverMark {
     pub reversing: bool,
     pub hold: Option<String>,
     pub command_origin: CommandOrigin,
-    /// Metres. Frozen from the reviewed outdoor report, otherwise the 5 m default.
+    /// Metres. Frozen from the reviewed outdoor report, otherwise the 10 m default.
     pub arrival_radius: f64,
     /// True when outdoor GPS is the acknowledged navigation source.
     pub outdoor_gps: bool,
@@ -397,6 +403,14 @@ pub struct RoverMark {
     pub mission_active: bool,
     pub goal_active: bool,
 }
+impl RoverMark {
+    /// L0 uses direct operator effort; a missing camera pose is only a map warning.
+    pub fn control_pose_ready(&self) -> bool {
+        self.status == "online" || (self.status == "pose stale"
+            && self.requested_level.as_deref() == Some("teleop"))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FleetPicture {
     pub link: String,
@@ -428,8 +442,17 @@ pub fn fleet_marks(
         .filter_map(|rover| {
             let pose = rover.pose.as_ref()?;
             let key = rover.id.to_string();
-            let (latitude, longitude) =
-                rover_geographic(pose, localizations.get(&key), origin).ok()?;
+            let localization = localizations.get(&key);
+            let raw_gps = decode_raw_gps(localization.unwrap_or(&Value::Null));
+            let map_frame = localization.map_or(Some(origin), LocalFrame::from_localization);
+            let (latitude, longitude) = if let Some(frame) = map_frame {
+                frame.geographic(pose.x, pose.y).ok()?
+            } else if let Some(gps) = raw_gps {
+                // Display the measured fix; it does not define an AR-to-geographic transform.
+                (gps.latitude, gps.longitude)
+            } else {
+                return None; // An unaligned phone must not appear at the default campus.
+            };
             let status = if rover.membership == "online"
                 && rover.pose_age.is_some_and(|age| age < POSE_FRESH_SECONDS)
             {
@@ -446,11 +469,12 @@ pub fn fleet_marks(
             let hardware = HardwareObservation::from_status(hardware_value);
             let authority = &operator[&key]["authority"];
             let grid = occupancy(rover.id);
-            let raw_gps = decode_raw_gps(localizations.get(&key).unwrap_or(&Value::Null));
+
             Some(RoverMark {
                 id: rover.id,
                 latitude,
                 longitude,
+                map_frame,
                 heading: map_heading_degrees(pose.yaw),
                 local_x: pose.x,
                 local_y: pose.y,
@@ -461,7 +485,7 @@ pub fn fleet_marks(
                     .as_ref()
                     .map(|(grid, age)| occupancy_summary(grid, *age))
                     .unwrap_or_else(|| "no occupancy".into()),
-                grid: grid.as_ref().map(|(grid, _)| local_map(grid, 28)),
+                grid: grid.as_ref().map(|(grid, _)| local_map(grid, 256)),
                 requested_level: report.as_ref().map(|report| report.requested.clone()),
                 effective_level: report.as_ref().and_then(|report| report.effective.clone()),
                 recommended_level: report
@@ -489,7 +513,7 @@ pub fn fleet_marks(
                 arrival_radius: outdoor
                     .as_ref()
                     .map(|report| report.arrival_radius_m)
-                    .unwrap_or(5.),
+                    .unwrap_or(10.),
                 outdoor_gps: outdoor
                     .as_ref()
                     .is_some_and(|report| report.acknowledged_outdoor()),
@@ -539,9 +563,11 @@ fn goal_mark(
             y: goal.y,
             yaw: 0.,
         };
-        match rover_geographic(&pose, localizations.get(rover.id.to_string()), origin) {
-            Ok((latitude, longitude)) => (Some(latitude), Some(longitude)),
-            Err(_) => (None, None),
+        let localization = localizations.get(rover.id.to_string());
+        match localization.map_or(Some(origin), LocalFrame::from_localization)
+            .and_then(|frame| frame.geographic(pose.x, pose.y).ok()) {
+            Some((latitude, longitude)) => (Some(latitude), Some(longitude)),
+            None => (None, None),
         }
     };
     let state = match goal.state {
@@ -599,6 +625,23 @@ pub fn framing_target(
     let latitude = marks.iter().map(|mark| mark.latitude).sum::<f64>() / count;
     let longitude = marks.iter().map(|mark| mark.longitude).sum::<f64>() / count;
     Some((ids, latitude, longitude))
+}
+
+/// Reframe after late geographic alignment or meaningful rover movement.
+/// Keep small pose/GPS fluctuations from restarting the camera animation.
+pub fn reframing_target(
+    previous: &BTreeSet<u64>,
+    center: Option<(f64, f64)>,
+    marks: &[RoverMark],
+) -> Option<(BTreeSet<u64>, f64, f64)> {
+    if let Some(target) = framing_target(previous, marks) { return Some(target); }
+    let live: Vec<_> = marks.iter().filter(|mark| mark.status == "online").collect();
+    if live.is_empty() { return None; }
+    let latitude = live.iter().map(|mark| mark.latitude).sum::<f64>() / live.len() as f64;
+    let longitude = live.iter().map(|mark| mark.longitude).sum::<f64>() / live.len() as f64;
+    if center.is_none_or(|(lat, lon)| argos_core::geodesic_metres(lat, lon, latitude, longitude) >= 20.) {
+        Some((marks.iter().map(|mark| mark.id).collect(), latitude, longitude))
+    } else { None }
 }
 
 /// Process-lifetime subscriber. Drop does not stop the thread.
@@ -710,6 +753,7 @@ impl FleetFeed {
         let picture = self.picture.clone();
         std::thread::spawn(move || {
             let message = (|| {
+                let mut review = None;
                 {
                     let current = picture.lock().unwrap();
                     if current.link != "healthy" {
@@ -744,6 +788,13 @@ impl FleetFeed {
                         })
                         .map_err(str::to_string)?;
                     }
+                    if matches!(goal, GoalRequest::Geographic { .. }) {
+                        review = Some((
+                            mark.run_id.clone(),
+                            mark.navigation_revision,
+                            arrival_radius_m.unwrap_or(mark.arrival_radius),
+                        ));
+                    }
                     if let Some(reason) = goal_blocked(mark.degraded) {
                         return Err(format!("{reason} ({})", mark.degrade_reason));
                     }
@@ -754,7 +805,7 @@ impl FleetFeed {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
                 client
-                    .send_goal(id, goal)
+                    .send_reviewed_goal(id, goal, review)
                     .map_err(|error| error.to_string())?;
                 Ok("Goal sent".to_string())
             })();
@@ -807,6 +858,28 @@ impl FleetFeed {
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
     }
+    pub fn resume_outdoor(&self, id: u64) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let current = picture.lock().unwrap();
+                let mark = current
+                    .marks
+                    .iter()
+                    .find(|m| m.id == id)
+                    .ok_or("Rover unavailable")?;
+                let payload=serde_json::json!({"schema_version":1,"token":format!("resume-{id}-{}",unix_millis()),"run_id":mark.run_id,"navigation_revision":mark.navigation_revision}).to_string();
+                drop(current);
+                let guard = client.lock().unwrap();
+                let c = guard.as_ref().ok_or("Not connected")?;
+                c.operator_command(id, "navigation/resume", &payload)
+                    .map_err(|e| e.to_string())?;
+                Ok::<_, String>("Outdoor resume requested".into())
+            })();
+            picture.lock().unwrap().command = result.unwrap_or_else(|e| e);
+        });
+    }
     pub fn cancel_goal(&self, id: u64) {
         let client = self.client.clone();
         let picture = self.picture.clone();
@@ -831,7 +904,7 @@ impl FleetFeed {
                 .iter()
                 .find(|mark| mark.id == id)
                 .ok_or("Rover is not in the fleet")?;
-            if mark.status != "online" {
+            if !mark.control_pose_ready() {
                 return Err("Pose is stale".into());
             }
             if let Some(reason) = drive_block(&mark.hardware) {
@@ -859,7 +932,7 @@ impl FleetFeed {
                 .iter()
                 .find(|mark| mark.id == id)
                 .ok_or("Rover is not in the fleet")?;
-            if mark.status != "online" {
+            if !mark.control_pose_ready() {
                 return Err("Pose is stale".into());
             }
             if let Some(reason) = drive_block(&mark.hardware) {
@@ -1270,6 +1343,29 @@ mod tests {
     }
 
     #[test]
+    fn local_grid_preserves_phone_resolution_and_narrow_free_gap() {
+        let snapshot = Snapshot {
+            link: "healthy".into(), fleet_age: Some(0.1), notice: None,
+            rovers: vec![rover(3, "online", Some(pose(0., 0., 0.)), Some(0.1))],
+        };
+        let mut cells = vec![-1; 200 * 200];
+        cells[100 * 200 + 99] = 100;
+        cells[100 * 200 + 100] = 0;
+        cells[100 * 200 + 101] = 100;
+        let grid = OccupancyGrid {
+            schema_version: 1, rover_id: 3, run_id: "run".into(), sequence: 1,
+            width: 200, height: 200, resolution: 0.1, origin_x: -10., origin_y: -10., occupancy: cells,
+        };
+        let marks = fleet_marks(&snapshot, &Value::Null, &Value::Null,
+            |_| Some((grid.clone(), 0.1)), LocalFrame::origin(0., 0.).unwrap());
+        let map = marks[0].grid.as_ref().unwrap();
+        assert_eq!((map.cols, map.rows), (200, 200));
+        assert_eq!(map.cells[100 * 200 + 100], argos_core::CellClass::Free);
+        assert_eq!(map.cells[100 * 200 + 99], argos_core::CellClass::Occupied);
+        assert_eq!(map.cells[100 * 200 + 101], argos_core::CellClass::Occupied);
+    }
+
+    #[test]
     fn hardware_status_is_copied_onto_the_rover() {
         let origin = LocalFrame::origin(0., 0.).unwrap();
         let snapshot = Snapshot {
@@ -1308,8 +1404,41 @@ mod tests {
         assert_eq!(marks[0].run_id, "run");
         assert_eq!(
             drive_block(&marks[0].hardware),
-            Some(argos_core::ARM_TO_DRIVE)
+            Some("Arming · wait for hardware confirmation")
         );
+    }
+
+    #[test]
+    fn local_phone_gps_places_rover_without_inventing_geographic_alignment() {
+        let origin = LocalFrame::origin(DEFAULT_START_LATITUDE, DEFAULT_START_LONGITUDE).unwrap();
+        let snapshot = Snapshot { link: "healthy".into(), fleet_age: Some(0.1), notice: None,
+            rovers: vec![rover(3, "online", Some(pose(2., 4., 0.)), Some(0.1))] };
+        let report = serde_json::json!({"3":{"version":1,"mode":"local",
+            "gpsLatitude":38.98205,"gpsLongitude":-77.52052,"gpsAccuracy":4.6,"gpsFixAge":0.2}});
+        let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin);
+        assert_eq!((marks[0].latitude, marks[0].longitude), (38.98205, -77.52052));
+        assert_eq!((marks[0].local_x, marks[0].local_y), (2., 4.));
+        assert!(marks[0].map_frame.is_none());
+    }
+
+    #[test]
+    fn camera_reframes_when_existing_rover_gets_its_geographic_location() {
+        let origin = LocalFrame::origin(0., 0.).unwrap();
+        let snapshot = Snapshot { link: "healthy".into(), fleet_age: Some(0.1), notice: None,
+            rovers: vec![rover(3, "online", Some(pose(0., 0., 0.)), Some(0.1))] };
+        let mut marks = fleet_marks(&snapshot, &Value::Null, &Value::Null, |_| None, origin);
+        let ids = BTreeSet::from([3]);
+        assert!(reframing_target(&ids, Some((0., 0.)), &marks).is_none());
+        marks[0].latitude = 38.98205;
+        marks[0].longitude = -77.52052;
+        let (_, lat, lon) = reframing_target(&ids, Some((0., 0.)), &marks).unwrap();
+        assert_eq!((lat, lon), (38.98205, -77.52052));
+        marks[0].latitude += 0.00001; // GPS jitter must not restart camera flights.
+        assert!(reframing_target(&ids, Some((lat, lon)), &marks).is_none());
+        marks[0].latitude += 0.001;
+        assert!(reframing_target(&ids, Some((lat, lon)), &marks).is_some());
+        marks[0].status = "pose stale".into();
+        assert!(reframing_target(&ids, Some((lat, lon)), &marks).is_none());
     }
 
     #[test]

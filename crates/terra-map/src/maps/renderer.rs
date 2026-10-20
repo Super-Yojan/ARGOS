@@ -34,6 +34,8 @@ pub struct Renderer {
     models: HashMap<PathBuf, Vec<GpuPrimitive>>,
     objects: HashMap<ObjectId, (PathBuf, Vec<GpuPrimitive>)>,
     target: Option<Target>,
+    surfaces: HashMap<usize, Arc<super::surface::Surface>>,
+    pub(super) surface: super::surface::SharedSurface,
     survey: bool,
     pub metrics: super::metrics::MapMetrics,
 }
@@ -119,12 +121,15 @@ impl Renderer {
             models: HashMap::new(),
             objects: HashMap::new(),
             target: None,
+            surfaces: HashMap::new(),
+            surface: Default::default(),
             survey: false,
             metrics: Default::default(),
         })
     }
     pub fn upload(&mut self, id: usize, content: &TileContent, world: DMat4) -> Result<()> {
         let output = self.prepare(content, world, self.survey)?;
+        self.surfaces.insert(id, Arc::new(super::surface::Surface::from_content(content, world)));
         self.tiles.insert(id, output);
         Ok(())
     }
@@ -355,6 +360,9 @@ impl Renderer {
     }
     pub fn remove(&mut self, id: usize) {
         self.tiles.remove(&id);
+        if let Some(removed) = self.surfaces.remove(&id) {
+            self.surface.lock().unwrap().retain(|surface| !Arc::ptr_eq(surface, &removed));
+        }
     }
     pub fn render(
         &mut self,
@@ -363,6 +371,7 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>> {
+        *self.surface.lock().unwrap() = draw.iter().filter_map(|id| self.surfaces.get(id).cloned()).collect();
         let started = Instant::now();
         ensure!(
             width > 0 && height > 0 && width <= 4096 && height <= 4096,
@@ -636,4 +645,8 @@ mod object_tests {
                 .all(|p| p == &[255, 255, 255, 255])
         );
     }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) { self.surface.lock().unwrap().clear(); }
 }

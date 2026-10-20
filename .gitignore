@@ -18,3 +18,12 @@ xcuserdata/
 .env
 .env.fleet
 /argos-local-root.crt
+
+# Leftover generated artifacts from the former Apple and web app builds.
+/apps/apple/Generated/
+/apps/apple/build/
+/apps/apple/build-ios/
+/apps/web/node_modules/
+/apps/web/dist/
+/apps/web/test-results/
+/apps/web/tsconfig.tsbuildinfo

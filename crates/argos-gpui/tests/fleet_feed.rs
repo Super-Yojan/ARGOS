@@ -179,6 +179,8 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
         .unwrap();
     let level = Arc::new(Mutex::new("teleop".to_string()));
     let publish_level = level.clone();
+    let camera_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let publish_camera = camera_running.clone();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let publish_stop = stop.clone();
     let publisher = router.clone();
@@ -194,7 +196,9 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
                 .wait();
             let pose =
                 format!(r#"{{"x":1.0,"y":0.5,"yaw":0.1,"sequence":{sequence},"tracked":true}}"#);
-            let _ = publisher.put("terra/rover/3/pose", pose).wait();
+            if publish_camera.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = publisher.put("terra/rover/3/pose", pose).wait();
+            }
             let _ = publisher
                 .put(
                     "terra/rover/3/map/occupancy",
@@ -323,6 +327,54 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             key.ends_with("/autonomy") && body.contains("\"level\":\"waypoint\"")
         })
     });
+    let local_token = wire
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(key, body)| {
+            let v: serde_json::Value = serde_json::from_str(body).ok()?;
+            if key.ends_with("/goal") && v["frame"] == "local" {
+                v["token"].as_str().map(String::from)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    router.put("terra/rover/3/goal/status",serde_json::json!({"state":"active","goal_id":1,"token":local_token,"x":1.25,"y":-0.5,"distance":2.}).to_string()).wait().unwrap();
+    *level.lock().unwrap() = "waypoint".into();
+    router.put("terra/rover/3/navigation/outdoor",serde_json::json!({
+        "schema_version":1,"capability":"outdoor_gps","supported":true,"acknowledged":true,
+        "source":"outdoor_gps","run_id":"run","navigation_revision":4,"ready":true,
+        "phase":"idle","arrival_radius_m":5.,"gps_age_s":0.1,"gps_accuracy_m":1.,
+        "heading_age_s":0.1,"heading_accuracy_deg":3.,"gps":{"latitude":38.83,"longitude":-77.3}
+    }).to_string()).wait().unwrap();
+    wait_for(|| {
+        feed.picture()
+            .marks
+            .first()
+            .is_some_and(|m| m.outdoor_gps && m.effective_level.as_deref() == Some("waypoint"))
+    });
+    feed.publish_goal(
+        3,
+        GoalRequest::Geographic {
+            latitude: 38.8301,
+            longitude: -77.3,
+            yaw: None,
+        },
+        Some(2.),
+    );
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(feed.picture().command, "Goal sent");
+    wait_for(|| {
+        wire.lock().unwrap().iter().any(|(key, body)| {
+            let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+            key.ends_with("/goal")
+                && value["frame"] == "wgs84"
+                && value["run_id"] == "run"
+                && value["navigation_revision"] == 4
+                && value["arrival_radius_m"] == 2.
+        })
+    });
     *level.lock().unwrap() = "teleop".into();
     let _ = router
         .put(
@@ -348,6 +400,22 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
         None,
     );
     wait_for(|| feed.picture().command.contains("degraded"));
+    camera_running.store(false, std::sync::atomic::Ordering::Relaxed);
+    wait_for(|| feed.picture().marks.first().is_some_and(|mark|
+        mark.status == "pose stale" && mark.requested_level.as_deref() == Some("teleop")));
+    wire.lock().unwrap().clear();
+    feed.begin_drive(3).unwrap();
+    feed.drive_key(3, "w", true).unwrap();
+    wait_for(|| wire.lock().unwrap().iter().any(|(key, body)| {
+        let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+        key.ends_with("/teleop") && value["linear"].as_f64().is_some_and(|v| v > 0.)
+    }));
+    feed.drive_key(3, "w", false).unwrap();
+    feed.end_drive();
+    *level.lock().unwrap() = "assisted_teleop".into();
+    wait_for(|| feed.picture().marks.first().is_some_and(|mark|
+        mark.requested_level.as_deref() == Some("assisted_teleop")));
+    assert_eq!(feed.begin_drive(3).unwrap_err(), "Pose is stale");
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     pump.join().unwrap();
 }

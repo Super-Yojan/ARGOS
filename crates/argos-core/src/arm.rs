@@ -112,6 +112,7 @@ pub struct HardwareObservation {
     pub armed: bool,
     pub arming: bool,
     pub reason: String,
+    pub stop_detail: String,
     pub token: String,
     pub result: String,
     pub age: f64,
@@ -124,6 +125,7 @@ impl Default for HardwareObservation {
             armed: false,
             arming: false,
             reason: String::new(),
+            stop_detail: String::new(),
             token: String::new(),
             result: String::new(),
             age: f64::INFINITY,
@@ -132,6 +134,8 @@ impl Default for HardwareObservation {
 }
 
 impl HardwareObservation {
+    pub fn motion_paused(&self) -> bool { self.reason == "watchdog_paused" }
+
     pub fn from_status(value: &Value) -> Self {
         if !value.is_object() {
             return Self::default();
@@ -140,7 +144,17 @@ impl HardwareObservation {
             present: true,
             armed: value["armed"] == true,
             arming: value["arming"] == true,
-            reason: value["reason"].as_str().unwrap_or("").to_string(),
+            reason: if value["motion_paused"] == true || value["stop_reason"] == "watchdog_paused" {
+                "watchdog_paused".into()
+            } else { value["reason"].as_str().unwrap_or("").to_string() },
+            stop_detail: ["stop_diagnostic", "fault", "stop_reason", "reason"]
+                .into_iter()
+                .filter_map(|key| value[key].as_str())
+                .find(|reason| !reason.trim().is_empty() && !matches!(*reason,
+                    "watchdog_paused" | "requested" | "boot" | "connected" | "status_subscribed"
+                    | "armed" | "Armed" | "disarmed" | "Disarmed" | "arming"
+                    | "Arming at safe output" | "Armed · motion paused · Resume required"))
+                .unwrap_or("").to_string(),
             token: value["token"].as_str().unwrap_or("").to_string(),
             result: value["result"].as_str().unwrap_or("").to_string(),
             age: value["age"].as_f64().unwrap_or(f64::INFINITY),
@@ -148,14 +162,19 @@ impl HardwareObservation {
     }
 }
 
-/// Teleop and goals need a fresh armed status. Anything else asks the operator to arm.
-pub fn drive_block(status: &HardwareObservation) -> Option<&'static str> {
-    let fresh = status.age.is_finite() && (0.0..0.5).contains(&status.age);
-    if status.present && status.armed && !status.arming && fresh {
-        None
-    } else {
-        Some(ARM_TO_DRIVE)
+/// Preserve the blocking state; unavailable telemetry must never be labelled disarmed.
+pub fn drive_block(status: &HardwareObservation) -> Option<&str> {
+    if !status.present { return Some("Hardware status unavailable"); }
+    if !status.age.is_finite() || !(0.0..0.5).contains(&status.age) {
+        return Some("Hardware status is stale · waiting for an update");
     }
+    if status.arming { return Some("Arming · wait for hardware confirmation"); }
+    if status.motion_paused() || !status.armed {
+        if !status.stop_detail.is_empty() { return Some(&status.stop_detail); }
+        if status.motion_paused() { return Some("Motion paused · command stream interrupted · Resume required"); }
+        return Some(ARM_TO_DRIVE);
+    }
+    None
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -347,6 +366,7 @@ impl ArmControl {
             return "arming…".into();
         }
         if status.present && status.armed {
+            if status.motion_paused() { return "Armed · motion paused".into(); }
             return "Armed".into();
         }
         if status.present {
@@ -391,7 +411,7 @@ impl ArmControl {
             return;
         }
         let confirmed = match pending.kind {
-            PendingKind::Arm => token_matches && status.armed && !status.arming,
+            PendingKind::Arm => token_matches && status.armed && !status.arming && !status.motion_paused(),
             PendingKind::Disarm => {
                 fresh
                     && !status.armed

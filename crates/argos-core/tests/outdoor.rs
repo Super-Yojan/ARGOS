@@ -92,7 +92,7 @@ fn readiness_fails_closed_and_hold_reasons_stay_distinct() {
         "GPS uncertainty exceeds 10 m"
     );
     report = ready();
-    report.heading_accuracy_deg = Some(31.);
+    report.heading_accuracy_deg = Some(35.1);
     assert_eq!(
         admit_outdoor_goal(gate(Some(&report))).unwrap_err(),
         "Heading uncertain"
@@ -130,6 +130,7 @@ fn readiness_fails_closed_and_hold_reasons_stay_distinct() {
         ("obstacle_map_stale", "Obstacle map stale"),
         ("route_blocked", "Route blocked"),
         ("wheel_feedback_unavailable", "Wheel feedback unavailable"),
+        ("hardware_unavailable", "Hardware unavailable"),
         ("paused", "Paused"),
     ] {
         assert_eq!(hold_label(token), Some(label));
@@ -141,7 +142,7 @@ fn readiness_fails_closed_and_hold_reasons_stay_distinct() {
 #[test]
 fn arrival_radius_stays_in_the_reviewed_range() {
     assert_eq!(
-        freeze_arrival_radius(None, 5.).unwrap(),
+        freeze_arrival_radius(None, ARRIVAL_RADIUS_DEFAULT_M).unwrap(),
         ARRIVAL_RADIUS_DEFAULT_M
     );
     assert!(freeze_arrival_radius(Some(1.), 5.).is_err());
@@ -191,4 +192,31 @@ fn source_changes_stay_disarmed_and_raw_gps_survives_a_hold() {
     assert_eq!(gps.latitude, 38.8297);
     assert!((gps.age_s.unwrap() - 5.).abs() < 1e-9);
     assert!(geodesic_metres(0., 0., 0., 0.) < 1e-6);
+}
+#[test]
+fn resume_is_explicit_and_requires_current_paused_mission() {
+    let mut report = ready();
+    assert!(argos_core::outdoor_resume_refusal(&report, "run", 4).is_some());
+    report.phase = "paused".into();
+    report.ready = false;
+    report.hold_reason = Some("gps_stale".into());
+    assert!(argos_core::outdoor_resume_refusal(&report, "run", 4).is_none());
+    report.gps_age_s = Some(4.);
+    assert!(argos_core::outdoor_resume_refusal(&report, "run", 4).is_some());
+}
+
+#[test]
+fn outdoor_source_requests_ten_metre_radius() {
+    let payload = encode_source_request("outdoor_gps", "source-test", "run", 1).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(value["arrival_radius_m"], 10.);
+}
+
+#[test]
+fn temporary_heading_limit_accepts_35_degrees_but_keeps_freshness() {
+    let mut report = ready();
+    report.heading_accuracy_deg = Some(35.);
+    assert!(admit_outdoor_goal(gate(Some(&report))).is_ok());
+    report.heading_age_s = Some(2.1);
+    assert_eq!(admit_outdoor_goal(gate(Some(&report))).unwrap_err(), "Heading uncertain");
 }

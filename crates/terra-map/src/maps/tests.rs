@@ -655,3 +655,90 @@ fn two_d_drag_tracks_pointer_at_different_window_heights() {
         );
     }
 }
+
+#[test]
+fn elevated_model_hit_bounds_follow_render_transform() {
+    use super::api::{GeoPosition, Map};
+    let map = Map::new(Default::default()).unwrap();
+    let id = map.add_3d_obj(GeoPosition::new(38., -77., 80.), "robot.glb").unwrap();
+    map.set_object_scale(id, 12.).unwrap();
+    for heading in [0., 90., 180.] {
+        map.set_object_heading(id, heading).unwrap();
+        let object = map.snapshot().objects[0].clone();
+        let camera = Camera::new(38., -77., 0., 400., 0., 45.);
+        let transform = super::objects::transform(&object);
+        let (lo, hi) = camera.project_box(800, 600, transform,
+            DVec3::new(-1.225, -1.25, 0.), DVec3::new(1.225, 1.25, 2.25)).unwrap();
+        let ground = camera.project_ground(800, 600, 38., -77.).unwrap();
+        assert!(hi.1 < ground.1, "The model hit target must be above the ground marker");
+        assert!(hi.0 > lo.0 && hi.1 > lo.1);
+        let view = camera.view(800, 600);
+        let center = transform.transform_point3(DVec3::new(0., 0., 1.125));
+        let clip = view.view_projection * (center - view.origin).extend(1.);
+        let pixel = ((clip.x / clip.w + 1.) * 400., (1. - clip.y / clip.w) * 300.);
+        assert!((lo.0..=hi.0).contains(&pixel.0) && (lo.1..=hi.1).contains(&pixel.1));
+    }
+}
+
+#[test]
+fn measured_rover_has_35_inch_square_footprint_at_every_zoom() {
+    use super::api::{GeoPosition, Map};
+    let map = Map::new(Default::default()).unwrap();
+    let id = map.add_3d_obj(GeoPosition::new(38., -77., 40.), "robot.glb").unwrap();
+    map.set_object_axis_scale(id, [0.889 / 2.45, 0.889 / 2.5, 0.889 / 2.5]).unwrap();
+    let transform = super::objects::transform(&map.snapshot().objects[0]);
+    assert!((transform.transform_vector3(DVec3::X * 2.45).length() - 0.889).abs() < 1e-9);
+    assert!((transform.transform_vector3(DVec3::Y * 2.5).length() - 0.889).abs() < 1e-9);
+    assert!((transform.transform_point3(DVec3::ZERO) - ecef(38., -77., 40.)).length() < 1e-9);
+    let bounds = |distance| Camera::new(38., -77., 40., distance, 0., 60.)
+        .project_box(800, 600, transform, DVec3::new(-1.225,-1.25,0.), DVec3::new(1.225,1.25,2.25)).unwrap();
+    let near = bounds(20.); let far = bounds(200.);
+    assert!(near.1.0 - near.0.0 > 9. * (far.1.0 - far.0.0));
+}
+
+#[test]
+fn polygon_vertices_outside_viewport_can_still_be_projected() {
+    let mut camera = Camera::new(38., -77., 40., 20., 0., 90.);
+    camera.set_mode(MapMode::TwoD);
+    for longitude in [-77.001, -76.999] {
+        assert!(camera.project_ground(800, 600, 38., longitude).is_none());
+        let (x, y) = camera.project_ground_unclipped(800, 600, 38., longitude).unwrap();
+        assert!(x < 0. || x > 800.);
+        assert!(y.is_finite());
+    }
+    assert_eq!(camera.project_ground(800, 600, 38., -77.),
+        camera.project_ground_unclipped(800, 600, 38., -77.));
+    assert!(camera.project_ground_unclipped(0, 600, 38., -77.).is_none());
+}
+
+#[test]
+fn raised_surface_projection_and_pointer_share_the_same_height() {
+    let camera = Camera::new(38., -77., 40., 400., 0., 60.);
+    let mut surface_camera = camera.clone();
+    surface_camera.altitude = 140.;
+    let (x, y) = surface_camera.project_ground_unclipped(800, 600, 38., -77.).unwrap();
+    let coordinate = camera.unproject_ground_at_altitude(800, 600, x, y, 140.).unwrap();
+    assert!((coordinate.0 - 38.).abs() < 1e-6);
+    assert!((coordinate.1 + 77.).abs() < 1e-6);
+}
+
+#[test]
+#[ignore = "Requires a native GPU; run explicitly with --ignored"]
+fn rendered_tile_surface_height_tracks_transform_and_eviction() {
+    let source = Url::parse("https://tile.googleapis.com/quad.glb").unwrap();
+    let mut content = super::content::decode(
+        include_bytes!("fixtures/textured-quad.glb"), &source, |_| unreachable!()).unwrap();
+    content.primitives[0].transform = DMat4::IDENTITY;
+    let base = ecef(0., 0., 160.);
+    let world = DMat4::from_cols(DVec3::Y.extend(0.), DVec3::Z.extend(0.),
+        DVec3::X.extend(0.), base.extend(1.));
+    let map = super::api::Map::new(super::MapConfig::default()).unwrap();
+    let mut renderer = super::renderer::Renderer::new().unwrap();
+    renderer.surface = map.surface.clone();
+    renderer.upload(0, &content, world).unwrap();
+    let camera = Camera::new(0., 0., 160., 20., 0., 90.);
+    renderer.render(&camera.view(64, 64), &[0], 64, 64).unwrap();
+    assert!((map.surface_altitude(0., 0.).unwrap() - 160.).abs() < 1e-5);
+    renderer.remove(0);
+    assert!(map.surface_altitude(0., 0.).is_none());
+}
