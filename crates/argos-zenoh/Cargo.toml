@@ -10,5 +10,13 @@ serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [[test]]
+name = "auth"
+path = "../../tests/argos-zenoh/auth.rs"
+
+[[test]]
+name = "loopback"
+path = "../../tests/argos-zenoh/loopback.rs"
+
+[[test]]
 name = "observability"
 path = "../../tests/argos-zenoh/observability.rs"

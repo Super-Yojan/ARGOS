@@ -61,7 +61,7 @@ Markers are the `robot.glb` model at 12× scale and 80 m ellipsoid height so the
 
 Select a rover. On the local navigation source, drag its marker on the map or in the local grid. A ghost follows the pointer, with the distance from the rover. Release publishes `{prefix}/{id}/goal` as `{"frame":"local","x","y","token"}` in metres, +x north and +y west. Local drags stay on L2 `waypoint_direct` or L3 `waypoint`, with a healthy link and a fresh pose that is not degraded.
 
-Outdoor GPS is a separate navigation source. The sidebar toggle sends `{prefix}/{id}/navigation/source` and can change only while that rover is disarmed and has no active mission. Selecting a source does not arm the rover. After the vehicle has acknowledged `outdoor_gps`, drag its map marker. The ghost shows the arrival radius (5 m, or the radius in the outdoor report) and the GPS distance. Release publishes `{"frame":"wgs84","latitude","longitude","token"}` with those coordinates unchanged, and only from L3 `waypoint`. The radius is frozen at release; `run_id`, `navigation_revision`, and `arrival_radius_m` travel with the geographic goal so Terra validates the exact review. Esc, or dropping the ghost back on the rover, sends nothing. That release is the explicit operator action; it replaces the outdoor spec's separate confirm step. The drag stays disabled, with the admission reason, until the capability is acknowledged, the level is L3, and GPS, heading, and status are fresh. The server still rechecks that readiness immediately before publication and keeps the run, navigation revision, control claim, and audit. Cancel goal still publishes `{"cancel":true}`. A rover with no version-1 outdoor capability shows **App update required**. The card keeps the raw GPS fix visible during a hold and names `GPS stale`, `Heading uncertain`, `Tracking lost`, `Obstacle map stale`, `Route blocked`, `Wheel feedback unavailable`, and `Paused` separately, along with the mission phase and remaining distance. The version-1 fields match Terra's outdoor controller. A paused mission exposes **Resume outdoor mission**; recovered sensors alone never resume motion. Source acceptance advances the navigation revision. The same local occupancy grid can be drawn on the map around each rover. **Map grid** toggles that overlay. It uses the localization origin and does not claim those cells are geographic obstacles.
+Outdoor GPS is a separate navigation source. The sidebar toggle sends `{prefix}/{id}/navigation/source` and can change only while that rover is disarmed and has no active mission. Selecting a source does not arm the rover. After the vehicle has acknowledged `outdoor_gps`, drag its map marker. The ghost shows the arrival radius (5 m, or the radius in the outdoor report) and the GPS distance. Release publishes `{"frame":"wgs84","latitude","longitude","token"}` with those coordinates unchanged, and only from L3 `waypoint`. The radius is frozen at release; `run_id`, `navigation_revision`, and `arrival_radius_m` travel with the geographic goal so Terra validates the exact review. Esc, or dropping the ghost back on the rover, sends nothing. That release is the explicit operator action; it replaces the outdoor spec's separate confirm step. The drag stays disabled, with the admission reason, until the capability is acknowledged, the level is L3, and GPS, heading, and status are fresh. The desktop checks admission before publication and Terra validates the request against its current runtime state. Cancel goal still publishes `{"cancel":true}`. A rover with no version-1 outdoor capability shows **App update required**. The card keeps the raw GPS fix visible during a hold and names `GPS stale`, `Heading uncertain`, `Tracking lost`, `Obstacle map stale`, `Route blocked`, `Wheel feedback unavailable`, and `Paused` separately, along with the mission phase and remaining distance. The version-1 fields match Terra's outdoor controller. A paused mission exposes **Resume outdoor mission**; recovered sensors alone never resume motion. Source acceptance advances the navigation revision. The same local occupancy grid can be drawn on the map around each rover. **Map grid** toggles that overlay. It uses the localization origin and does not claim those cells are geographic obstacles.
 
 Autonomy buttons publish Terra's existing levels on `{prefix}/{id}/autonomy` as `{"level","token"}`: L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct`, L3 `waypoint`, plus `supervised` and `target_search`. `explore` is not offered. The sidebar shows requested and effective levels. `assigned_level` is the recommendation when a status includes it. `heading_requires_spin_or_replan` is shown on the rover card and the goal marker. Reverse path segments are drawn dashed in amber when a route sample carries a negative velocity, `reverse`, or `direction`. A pair with no direction is marked provisional. `Reversing` appears when the reported forward speed is negative. S / Down already drives in reverse and uses the same turn-radius cap.
 
@@ -99,7 +99,7 @@ ARGOS_ZENOH_USER=
 ARGOS_ZENOH_PASSWORD=
 ```
 
-A TerraPhone or the ARGOS server's loopback router is often `tcp/127.0.0.1:7448`.
+A standalone local development router is often `tcp/127.0.0.1:7448`.
 
 `pi@terra1.local` runs the `terra-rover` BLE and motor service. That process does not publish Zenoh poses. Poses come from TerraPhone or from a Zenoh router on the LAN. If that host is running the router:
 
@@ -109,30 +109,24 @@ ARGOS_ZENOH_PREFIX=terra/rover \
 cargo run -p argos-gpui
 ```
 
-## Service and fleet transport
+## Fleet transport and hosting
 
-`crates/argos-server` and `crates/argos-zenoh` stay. The server still authenticates operators and publishes validated commands; it no longer ships a browser bundle. Static files are served from `ARGOS_WEB_DIR` when that directory exists (default `web/dist`).
+The GPUI app connects directly through `argos-zenoh`. GCP runs only the
+`argos-router` binary and Caddy for its public TLS certificate lifecycle.
+See [GCP router setup and migration](packaging/gcp/README.md).
+There is no HTTP application server, OAuth login, browser API or server-side audit service.
 
-Local simulated service, loopback only:
-
-```sh
-cargo run -p argos-server -- --demo --dev
-```
-
-Docker builds that service without a frontend. From the repository root, with Docker running:
+For a local development router:
 
 ```sh
 docker compose up -d --build
 ```
 
-`http://127.0.0.1:8080/healthz` checks the process. There is no browser dashboard at that origin. Stop with `docker compose down`. Sessions and audit history persist in a Docker volume; `docker compose down -v` deletes that local data.
+This exposes unauthenticated TCP only on host loopback port 7448. Point local
+clients to `tcp/127.0.0.1:7448` with no username or password. It does not join
+GCP automatically. Stop it with `docker compose down`. For GCP, use the hosted
+TLS endpoint and fleet credentials in `.env.example`.
 
-To connect the service to a real Zenoh fleet, use [compose.fleet.yaml](compose.fleet.yaml) and [authenticated hosting notes](docs/browser-dashboard.md#connect-a-real-fleet-from-local-docker). The GPUI app joins the same bus directly. It does not sign into the HTTP service.
-
-- [Getting started](docs/getting-started.md)
-- [Architecture and control boundary](docs/DESIGN.md)
-- [Current status and remaining work](docs/roadmap.md)
-- [Published documentation](https://super-yojan.dev/ARGOS/)
 
 ## Verify changes
 
@@ -149,7 +143,7 @@ GPU tests in `terra-map` stay ignored. Run them only where a native GPU is avail
 cargo test -p terra-map gpu_ -- --ignored
 ```
 
-Live transport tests need permission to bind loopback sockets. `ARGOS_CHECK_TYPES=1` checks the committed TypeScript contract snapshot at `crates/argos-server/tests/generated.ts` without rewriting it. The Unity spike is unchanged and is not part of the dashboard.
+Live transport tests need permission to bind loopback sockets. The Unity spike is unchanged and is not part of the dashboard.
 
 ## Workspace
 
@@ -157,7 +151,6 @@ Live transport tests need permission to bind loopback sockets. `ARGOS_CHECK_TYPE
 | --- | --- |
 | `crates/argos-gpui` | Dashboard. Mounts `MapView`, subscribes to Zenoh, and publishes goals, autonomy, and teleop for the selected rover. |
 | `crates/terra-map` | Map library (`terra_map`) and the `learn-gpui` explorer. |
-| `crates/argos-server` | HTTP sessions, command validation, audit, fleet worker. |
 | `crates/argos-zenoh` | Zenoh client, router binary, session log. |
 | `crates/argos-core` | Shared contracts and operator state. |
 | `crates/argos-ffi` | UniFFI facade. The Swift dashboard that called it is gone. |
@@ -191,3 +184,5 @@ and disarmed hardware. Terra publishes its retained first cause as `stop_diagnos
 on hardware status; ARGOS displays it for a stopped rover. Older phones fall back to
 the reported fault/stop reason or a command-stream pause message. Both the Terra
 phone runtime and ARGOS must be rebuilt for camera-independent fleet manual control.
+
+Rust tests live under [`tests/`](tests/README.md), grouped by crate. Cargo test targets and private unit-module paths preserve their execution scopes.

@@ -19,10 +19,10 @@ use local_map::local_grid;
 use map_overlay::map_paint;
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, ArmControl, ArmGate, ControlClaim, DragAnchor, DragGate,
-    DragSpace, GoalDrag, HEADING_HOLD, HEADING_HOLD_LABEL, HardwareCommand, OPERATOR_LEVELS,
-    PlanarPoint, Travel, arm_disabled_reason, drag_disabled_reason, drive_block, level_label,
-    phase_label, pose_warning_text,
+    APP_UPDATE_REQUIRED, ArmControl, ArmGate, ControlClaim, DragAnchor, DragGate, DragSpace,
+    GoalDrag, HEADING_HOLD, HEADING_HOLD_LABEL, HardwareCommand, OPERATOR_LEVELS, PlanarPoint,
+    Travel, arm_disabled_reason, drag_disabled_reason, drive_block, level_label, phase_label,
+    pose_warning_text,
 };
 use argos_gpui::{DashboardConfig, FleetFeed, RoverMark, model_position, reframing_target};
 use gpui_kit::{prelude::*, *};
@@ -163,7 +163,8 @@ impl Dashboard {
             self.feed.refresh_drive(id);
         }
         if self.driving {
-            let reason = self.selected
+            let reason = self
+                .selected
                 .and_then(|id| self.marks.iter().find(|mark| mark.id == id))
                 .and_then(|mark| drive_block(&mark.hardware))
                 .map(str::to_owned);
@@ -548,7 +549,10 @@ impl Dashboard {
         self.drag = None;
         // Mode selection does not move or arm the rover. Permit the operator to
         // leave a held navigation mode before asking for arm/resume readiness.
-        if self.selected_mark().is_some_and(|mark| mark.requested_level.as_deref() != Some("teleop")) {
+        if self
+            .selected_mark()
+            .is_some_and(|mark| mark.requested_level.as_deref() != Some("teleop"))
+        {
             self.feed.publish_level(id, "teleop");
             self.note = "Selecting manual control · wait for L0 confirmation, then arm or resume if required".into();
             return;
@@ -1242,15 +1246,22 @@ fn rover_panel(
                     }),
             ),
         )
-        .when(mark.requested_level.as_deref() == Some("teleop") && mark.status == "pose stale", |panel| {
-            panel.child(div().text_size(px(12.)).child(
-                "Camera pose unavailable · manual control does not need tracking",
-            ))
-        })
+        .when(
+            mark.requested_level.as_deref() == Some("teleop") && mark.status == "pose stale",
+            |panel| {
+                panel.child(
+                    div()
+                        .text_size(px(12.))
+                        .child("Camera pose unavailable · manual control does not need tracking"),
+                )
+            },
+        )
         .child(turning_row(limits, cx))
-        .child(div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-            "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
-        ))
+        .child(
+            div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
+                "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
+            ),
+        )
         .child(drive_pad(driving, cx))
         .child(
             div()
@@ -1464,8 +1475,10 @@ fn arm_face(control: Option<&ArmControl>, mark: &RoverMark, gate: ArmGate<'_>) -
         reason.unwrap_or("").to_string()
     } else if arm_enabled {
         if mark.hardware.motion_paused() {
-            format!("{} · Hold Resume motion; previous input is cleared",
-                drive_block(&mark.hardware).unwrap_or("Motion paused"))
+            format!(
+                "{} · Hold Resume motion; previous input is cleared",
+                drive_block(&mark.hardware).unwrap_or("Motion paused")
+            )
         } else {
             "Hold to arm".into()
         }

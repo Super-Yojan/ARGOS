@@ -1,7 +1,7 @@
 #!/bin/bash
 # Optional observability release; run only after local acceptance and deployment review.
 set -euo pipefail
-cd /tmp/argos-release
+cd "${ARGOS_RELEASE_DIR:-/tmp/argos-release}"
 [[ -f bin/terra-observability-collector && -f observability/credentials.json && -f replay/uv.lock ]] || {
     echo 'Missing collector, scoped credential hashes, or pinned replay source bundle' >&2
     exit 1

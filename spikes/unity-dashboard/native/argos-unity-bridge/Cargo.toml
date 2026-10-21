@@ -17,3 +17,7 @@ argos-core = { path = "../../../../crates/argos-core" }
 argos-zenoh = { path = "../../../../crates/argos-zenoh" }
 serde_json.workspace = true
 zenoh.workspace = true
+
+[[test]]
+name = "c_api_roundtrip"
+path = "../../../../tests/argos-unity-bridge/c_api_roundtrip.rs"

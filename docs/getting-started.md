@@ -16,23 +16,15 @@ The window is the map plus the rover list. Empty-space drag orbits in 3D, Shift-
 
 `cargo run -p argos-gpui` uses the hosted fleet (`tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`, user `terra`). Copy `.env.example` to `.env` and set `ARGOS_ZENOH_PASSWORD` there. The password has no default and is not in git. Without it the window still opens and the sidebar names that variable. `MAPS_DEMO=1` keeps working. Local Zorvane is the commented block in `.env.example` (`tcp/127.0.0.1:7447`, prefix `terra/rover`, no user). The window publishes a goal, an autonomy level, or teleop only for the selected rover. Model loading is described in `crates/terra-map/src/MAPS.md`. The repository README lists every variable and the local-metre origin.
 
-## Service
+## Router
 
-The Rust service is separate from the window. A loopback simulated fleet:
+The app uses Zenoh directly. For the existing hosted TLS endpoint and migration
+instructions, see the [GCP router guide](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md).
+There is no HTTP application service or OAuth setup.
 
-```sh
-cargo run -p argos-server -- --demo --dev
-```
-
-`--dev` is restricted to loopback simulated fleets. A live deployment requires GitHub OAuth, an HTTPS origin, and explicit viewer/operator numeric account IDs. The service no longer serves a React bundle. `ARGOS_WEB_DIR` (default `web/dist`) is only used when you place static files there yourself.
-
-Docker builds the same service:
-
-```sh
-docker compose up -d --build
-```
-
-Check `http://127.0.0.1:8080/healthz`. That URL is the API, not a dashboard. Real fleets use `compose.fleet.yaml` and the [hosting notes](browser-dashboard.md#connect-a-real-fleet-from-local-docker).
+`docker compose up -d --build` starts an optional local router on
+`tcp/127.0.0.1:7448`, without authentication. Configure both simulator and dashboard
+to use the same endpoint and prefix. `docker compose down` stops it.
 
 Start Zorvane using its [current run guide](https://super-yojan.dev/Zorvane/running/). For physical hardware, install a compatible TerraPhone runtime and verify its reported hardware and authority state. Connection never arms hardware automatically. The GPUI window arms only after Take control and a one-second hold, and it waits for the rover's hardware status before showing armed.
 
@@ -45,7 +37,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test -p terra-map
 ```
 
-GPU tests stay ignored unless you pass `--ignored` on a machine with a GPU. Transport tests bind loopback sockets. Set `ARGOS_CHECK_TYPES=1` to compare `crates/argos-server/tests/generated.ts` with the Rust contract instead of rewriting it.
+GPU tests stay ignored unless you pass `--ignored` on a machine with a GPU. Transport tests bind loopback sockets. Tests live in the repository-level `tests/` directory, grouped by crate.
 
 ## Documentation site
 

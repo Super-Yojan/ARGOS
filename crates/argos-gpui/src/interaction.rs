@@ -3,8 +3,8 @@
 use super::local_map::point_to_local;
 use super::{ActiveDrag, Dashboard};
 use argos_core::{
-    DragAnchor, DragEnd, DragGate, DragSpace, GoalDrag, OutdoorAdmission,
-    PlanarPoint, drag_disabled_reason, drive_block,
+    DragAnchor, DragEnd, DragGate, DragSpace, GoalDrag, OutdoorAdmission, PlanarPoint,
+    drag_disabled_reason, drive_block,
 };
 use argos_gpui::{RoverMark, model_position};
 use gpui_kit::{prelude::*, *};
@@ -180,27 +180,27 @@ impl Dashboard {
         };
         active.goal.move_to(next);
         self.note = drag_note(&active.goal);
-        if active.from_map && active.goal.anchor == DragAnchor::Rover {
-            if let Some(mark) = self.marks.iter().find(|mark| mark.id == active.goal.id)
-                && let Some(object) = self.objects.get(&mark.id)
-            {
-                let (latitude, longitude) = model_position(
-                    mark.id,
-                    (mark.latitude, mark.longitude),
-                    mark.map_frame,
-                    Some(&active.goal),
-                );
-                let altitude = self
-                    .map
-                    .surface_altitude(latitude, longitude)
-                    .unwrap_or_else(|| self.view.read(cx).ground_altitude());
-                let _ = self
-                    .map
-                    .set_object_position(*object, GeoPosition::new(latitude, longitude, altitude));
-                let _ = self
-                    .map
-                    .illuminate_3d_object(*object, Color::rgb(255, 160, 50));
-            }
+        if active.from_map
+            && active.goal.anchor == DragAnchor::Rover
+            && let Some(mark) = self.marks.iter().find(|mark| mark.id == active.goal.id)
+            && let Some(object) = self.objects.get(&mark.id)
+        {
+            let (latitude, longitude) = model_position(
+                mark.id,
+                (mark.latitude, mark.longitude),
+                mark.map_frame,
+                Some(&active.goal),
+            );
+            let altitude = self
+                .map
+                .surface_altitude(latitude, longitude)
+                .unwrap_or_else(|| self.view.read(cx).ground_altitude());
+            let _ = self
+                .map
+                .set_object_position(*object, GeoPosition::new(latitude, longitude, altitude));
+            let _ = self
+                .map
+                .illuminate_3d_object(*object, Color::rgb(255, 160, 50));
         }
     }
     pub(super) fn release_drag(&mut self) {

@@ -12,11 +12,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|a| a == "--status") {
         std::thread::sleep(std::time::Duration::from_secs(3));
         let snapshot = client.snapshot();
-        println!("Fleet link: {}; discovered rovers: {}; notice: {:?}",
-            snapshot.link, snapshot.rovers.len(), snapshot.notice);
+        println!(
+            "Fleet link: {}; discovered rovers: {}; notice: {:?}",
+            snapshot.link,
+            snapshot.rovers.len(),
+            snapshot.notice
+        );
         for rover in &snapshot.rovers {
-            println!("Rover {}: membership={}, pose_present={}, pose_age={:?}",
-                rover.id, rover.membership, rover.pose.is_some(), rover.pose_age);
+            println!(
+                "Rover {}: membership={}, pose_present={}, pose_age={:?}",
+                rover.id,
+                rover.membership,
+                rover.pose.is_some(),
+                rover.pose_age
+            );
         }
         let state: serde_json::Value = serde_json::from_str(&client.operator_snapshot())?;
         if let Some(rovers) = state.as_object() {

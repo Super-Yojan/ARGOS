@@ -265,117 +265,13 @@ impl Drop for Objects {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::{MapConfig, api::GeoPosition};
-    use super::*;
-    #[test]
-    fn static_local_model_and_enu_placement() {
-        let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/maps/fixtures/textured-quad.glb");
-        let content = load(&path, 8 * 1024 * 1024).unwrap();
-        assert!(!content.primitives.is_empty());
-        assert!(load(&path, 1).is_err());
-        let map = Map::new(MapConfig::default()).unwrap();
-        let id = map
-            .add_3d_obj(GeoPosition::new(0., 0., 100.), path)
-            .unwrap();
-        let snapshot = map.snapshot();
-        let world = transform(&snapshot.objects[0]);
-        assert_eq!(world.w_axis.truncate(), ecef(0., 0., 100.));
-        assert!(world.transform_vector3(DVec3::X).distance(DVec3::Y) < 1e-9);
-        map.set_object_heading(id, 90.).unwrap();
-        let world = transform(&map.snapshot().objects[0]);
-        assert!(world.transform_vector3(DVec3::X).distance(-DVec3::Z) < 1e-9);
-    }
-    #[test]
-    fn gltf_external_resources_resolve_locally() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/maps/fixtures/rgb-quad.gltf");
-        assert!(load(&path, 8 * 1024 * 1024).is_ok());
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_objects_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod lifecycle_tests {
-    use super::super::{
-        MapConfig,
-        api::{Color, GeoPosition},
-    };
-    use super::*;
-    #[test]
-    #[ignore = "Requires a native GPU"]
-    fn gpu_async_models_report_failures_and_do_not_resurrect_removed_ids() {
-        let map = Map::new(MapConfig::default()).unwrap();
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assets/robot.glb");
-        let position = GeoPosition::new(37.7749, -122.4194, 80.);
-        let removed = map.add_3d_obj(position, &path).unwrap();
-        let ready = map.add_3d_obj(position, &path).unwrap();
-        let alias = map
-            .add_3d_obj(position, path.parent().unwrap().join("../assets/robot.glb"))
-            .unwrap();
-        let failed = map
-            .add_3d_obj(position, "/private/tmp/terra-map-missing-model.glb")
-            .unwrap();
-        map.illuminate_3d_object(ready, Color::rgb(255, 100, 0))
-            .unwrap();
-        let mut objects = Objects::new(Some(map.clone()), 1024 * 1024);
-        let mut renderer = Renderer::new().unwrap();
-        objects.poll(&mut renderer).unwrap();
-        map.remove_object(removed).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while std::time::Instant::now() < deadline {
-            objects.poll(&mut renderer).unwrap();
-            if map.object_status(ready).unwrap() == ObjectStatus::Ready
-                && map.object_status(alias).unwrap() == ObjectStatus::Ready
-                && matches!(map.object_status(failed).unwrap(), ObjectStatus::Failed(_))
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(map.object_status(ready).unwrap(), ObjectStatus::Ready);
-        assert!(matches!(
-            map.object_status(failed).unwrap(),
-            ObjectStatus::Failed(_)
-        ));
-        assert!(map.object_status(removed).is_err());
-        assert_eq!(map.object_status(alias).unwrap(), ObjectStatus::Ready);
-        assert_eq!(objects.models.len(), 1);
-        assert!(renderer.has_objects());
-        map.remove_object(ready).unwrap();
-        map.remove_object(alias).unwrap();
-        objects.poll(&mut renderer).unwrap();
-        assert!(objects.models.is_empty());
-        assert!(!renderer.has_objects());
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_objects_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
-mod budget_tests {
-    use super::*;
-    #[test]
-    fn compressed_texture_is_rejected_before_large_image_allocation() {
-        use base64::Engine;
-        let mut png = Cursor::new(Vec::new());
-        image::RgbaImage::from_pixel(64, 64, image::Rgba([40, 80, 120, 255]))
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
-        let doc = serde_json::json!({
-            "asset": {"version":"2.0"},
-            "images": [{"uri": format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png.into_inner()))}],
-            "scenes": [{"nodes":[]}], "scene":0
-        });
-        let error = content::decode_with_limit(
-            &serde_json::to_vec(&doc).unwrap(),
-            &Url::parse("file:///test.gltf").unwrap(),
-            |_| unreachable!(),
-            1024,
-        )
-        .err()
-        .unwrap();
-        assert!(
-            error.to_string().contains("image allocation limit"),
-            "{error}"
-        );
-    }
-    use std::io::Cursor;
-}
+#[path = "../../../../tests/terra-map/unit/maps_objects_budget_tests.rs"]
+mod budget_tests;

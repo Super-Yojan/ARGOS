@@ -239,7 +239,9 @@ impl MapView {
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                if let Some(last) = previous_map_drag(&mut this.drag, event.position, event.dragging()) {
+                if let Some(last) =
+                    previous_map_drag(&mut this.drag, event.position, event.dragging())
+                {
                     let x = f32::from(event.position.x - last.x) as f64;
                     let y = f32::from(event.position.y - last.y) as f64;
                     if event.modifiers.shift || this.camera.mode == MapMode::TwoD {
@@ -647,33 +649,20 @@ impl MapView {
 }
 
 // Movement may continue a map press, but must never acquire another element's drag.
-fn previous_map_drag(last: &mut Option<Point<Pixels>>, next: Point<Pixels>, pressed: bool) -> Option<Point<Pixels>> {
-    if !pressed { *last = None; return None; }
+fn previous_map_drag(
+    last: &mut Option<Point<Pixels>>,
+    next: Point<Pixels>,
+    pressed: bool,
+) -> Option<Point<Pixels>> {
+    if !pressed {
+        *last = None;
+        return None;
+    }
     let previous = (*last)?;
     *last = Some(next);
     Some(previous)
 }
 
 #[cfg(test)]
-mod drag_tests {
-    use super::previous_map_drag;
-    use gpui_kit::{point, px};
-    #[test]
-    fn rover_press_intercepted_before_map_never_starts_camera_drag() {
-        let mut last = None;
-        for step in 0..4 {
-            assert!(previous_map_drag(&mut last, point(px(step as f32), px(2.)), true).is_none());
-        }
-        assert!(last.is_none());
-    }
-    #[test]
-    fn map_press_can_move_until_release_without_reacquiring() {
-        let start = point(px(10.), px(20.));
-        let next = point(px(15.), px(30.));
-        let mut last = Some(start);
-        assert_eq!(previous_map_drag(&mut last, next, true), Some(start));
-        assert_eq!(last, Some(next));
-        assert_eq!(previous_map_drag(&mut last, next, false), None);
-        assert_eq!(previous_map_drag(&mut last, start, true), None);
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_hud_drag_tests.rs"]
+mod drag_tests;

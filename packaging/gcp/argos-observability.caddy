@@ -1,7 +1,7 @@
 # Imported inside the existing certificate host's route block.
 handle_path /observability/* {
     request_body {
-        max_size 32MB
+        max_size 33554432
     }
     reverse_proxy 127.0.0.1:7450
 }

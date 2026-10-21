@@ -1,6 +1,6 @@
 //! Hold-to-arm for `{prefix}/{id}/hardware`.
 //!
-//! The payload matches the command Terra admits and `argos-server` already
+//! The payload matches the command Terra admits and the operator client
 //! publishes: `{"action":"arm"|"disarm","token","run_id","authority_revision"}`.
 //! Disarm uses authority revision 0. A click never reaches that publish.
 //! Armed and disarmed come from `{prefix}/{id}/hardware/status`. Reset is the
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 /// How long the operator holds before an arm command is published.
 pub const ARM_HOLD_SECONDS: f64 = 1.0;
-/// Same window `argos-server` uses before an arm or disarm is unconfirmed.
+/// Window before an arm or disarm request is considered unconfirmed.
 pub const ARM_ACK_TIMEOUT_SECONDS: f64 = 10.0;
 pub const ARM_ACK_TIMEOUT: &str =
     "Hardware outcome unconfirmed; not retried. Check live hardware status.";
@@ -134,7 +134,9 @@ impl Default for HardwareObservation {
 }
 
 impl HardwareObservation {
-    pub fn motion_paused(&self) -> bool { self.reason == "watchdog_paused" }
+    pub fn motion_paused(&self) -> bool {
+        self.reason == "watchdog_paused"
+    }
 
     pub fn from_status(value: &Value) -> Self {
         if !value.is_object() {
@@ -146,15 +148,32 @@ impl HardwareObservation {
             arming: value["arming"] == true,
             reason: if value["motion_paused"] == true || value["stop_reason"] == "watchdog_paused" {
                 "watchdog_paused".into()
-            } else { value["reason"].as_str().unwrap_or("").to_string() },
+            } else {
+                value["reason"].as_str().unwrap_or("").to_string()
+            },
             stop_detail: ["stop_diagnostic", "fault", "stop_reason", "reason"]
                 .into_iter()
                 .filter_map(|key| value[key].as_str())
-                .find(|reason| !reason.trim().is_empty() && !matches!(*reason,
-                    "watchdog_paused" | "requested" | "boot" | "connected" | "status_subscribed"
-                    | "armed" | "Armed" | "disarmed" | "Disarmed" | "arming"
-                    | "Arming at safe output" | "Armed · motion paused · Resume required"))
-                .unwrap_or("").to_string(),
+                .find(|reason| {
+                    !reason.trim().is_empty()
+                        && !matches!(
+                            *reason,
+                            "watchdog_paused"
+                                | "requested"
+                                | "boot"
+                                | "connected"
+                                | "status_subscribed"
+                                | "armed"
+                                | "Armed"
+                                | "disarmed"
+                                | "Disarmed"
+                                | "arming"
+                                | "Arming at safe output"
+                                | "Armed · motion paused · Resume required"
+                        )
+                })
+                .unwrap_or("")
+                .to_string(),
             token: value["token"].as_str().unwrap_or("").to_string(),
             result: value["result"].as_str().unwrap_or("").to_string(),
             age: value["age"].as_f64().unwrap_or(f64::INFINITY),
@@ -164,14 +183,22 @@ impl HardwareObservation {
 
 /// Preserve the blocking state; unavailable telemetry must never be labelled disarmed.
 pub fn drive_block(status: &HardwareObservation) -> Option<&str> {
-    if !status.present { return Some("Hardware status unavailable"); }
+    if !status.present {
+        return Some("Hardware status unavailable");
+    }
     if !status.age.is_finite() || !(0.0..0.5).contains(&status.age) {
         return Some("Hardware status is stale · waiting for an update");
     }
-    if status.arming { return Some("Arming · wait for hardware confirmation"); }
+    if status.arming {
+        return Some("Arming · wait for hardware confirmation");
+    }
     if status.motion_paused() || !status.armed {
-        if !status.stop_detail.is_empty() { return Some(&status.stop_detail); }
-        if status.motion_paused() { return Some("Motion paused · command stream interrupted · Resume required"); }
+        if !status.stop_detail.is_empty() {
+            return Some(&status.stop_detail);
+        }
+        if status.motion_paused() {
+            return Some("Motion paused · command stream interrupted · Resume required");
+        }
         return Some(ARM_TO_DRIVE);
     }
     None
@@ -366,7 +393,9 @@ impl ArmControl {
             return "arming…".into();
         }
         if status.present && status.armed {
-            if status.motion_paused() { return "Armed · motion paused".into(); }
+            if status.motion_paused() {
+                return "Armed · motion paused".into();
+            }
             return "Armed".into();
         }
         if status.present {
@@ -411,7 +440,9 @@ impl ArmControl {
             return;
         }
         let confirmed = match pending.kind {
-            PendingKind::Arm => token_matches && status.armed && !status.arming && !status.motion_paused(),
+            PendingKind::Arm => {
+                token_matches && status.armed && !status.arming && !status.motion_paused()
+            }
             PendingKind::Disarm => {
                 fresh
                     && !status.armed

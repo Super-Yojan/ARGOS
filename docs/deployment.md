@@ -1,34 +1,48 @@
 # Deployment
 
-The service deployment is **HTTPS ARGOS service → Zenoh fleet router → Terra/Zorvane**. The operator window is the native GPUI binary and is not inside the service image. The Rust service authenticates invited GitHub accounts, exposes the HTTP API, and keeps command/audit state in SQLite. `ARGOS_WEB_DIR` is empty unless you add static files yourself.
+The active path is **ARGOS desktop app → authenticated Zenoh TLS router → Terra/Zorvane**.
+The desktop app runs locally. GCP hosts the router and Caddy's certificate lifecycle.
+There is no HTTP application server, browser dashboard, OAuth login or centralized
+SQLite command audit service.
 
 ```mermaid
 flowchart LR
-  client[HTTPS client] -->|HTTPS 443| caddy[Caddy]
-  caddy --> server[ARGOS Axum service]
-  server --> db[(SQLite)]
-  server -->|private TCP or authenticated TLS| router[Zenoh router]
-  router --> terra[TerraPhone / Zorvane]
+  app[ARGOS GPUI] -->|Zenoh TLS 7448| router[GCP Zenoh router]
+  router <--> vehicles[Terra / Zorvane]
+  caddy[Caddy on 80/443] --> cert[TLS certificate renewal timer]
+  cert --> router
 ```
 
 ## Supported packaging
 
-- [Docker Compose hosting](browser-dashboard.md#public-hosting-for-one-team): Linux host, Caddy HTTPS, SQLite volume, and private fleet connectivity through Tailscale.
-- [GCP system-service packaging](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md): installer, TLS router configuration, and service units. These are deployment instructions, not proof of a currently healthy hosted service.
-- [Legacy Mac-hosted router](deployment-router.md): historical native fallback and LAN/Tailscale notes. The Swift app is no longer in the tree.
-
-Do not enable demo development identity for a real fleet. Hosted configuration requires an HTTPS origin, GitHub OAuth credentials, and numeric viewer/operator account allowlists. Only operators can claim command control; mutations check origin and CSRF tokens.
+- [GCP router setup and migration](https://github.com/Super-Yojan/ARGOS/blob/main/packaging/gcp/README.md): authenticated router, service units, Caddy and certificate renewal.
+- Root `compose.yaml`: unauthenticated development router exposed only on host loopback port 7448. Start with `docker compose up -d --build` and stop with `docker compose down`.
+- [Legacy Mac-hosted router](deployment-router.md): historical LAN/Tailscale notes.
 
 ## Fleet connection
 
-Set `ARGOS_ZENOH_ENDPOINT` and `ARGOS_ZENOH_PREFIX` to the actual fleet/router. Defaults are `tcp/127.0.0.1:7448` and `terra/rover`. The Rust client supports `tcp/` and `tls/`; `ARGOS_ZENOH_USER` and `ARGOS_ZENOH_PASSWORD` supply paired bus credentials when configured. An unprotected TCP listener is not an authenticated deployment: keep it private. TLS certificate and router credential provisioning are described in the GCP packaging guide.
+The desktop defaults to `tls/argos.34.135.204.210.sslip.io:7448`, prefix
+`terra/phone`, user `terra`. Supply `ARGOS_ZENOH_PASSWORD` privately through
+`.env` or the environment. Use the same endpoint and prefix on the vehicles.
+A remote device cannot reach another machine through its own loopback address.
 
-The browser never receives bus credentials. A remote phone uses a reachable router address, not the server's loopback address. Geographic projection requires valid frame/reference telemetry; a map tile configuration alone does not establish localization.
+Public TLS uses the hostname certificate managed by Caddy. Keep ports 80/443
+available for issuance and renewal, and port 7448 available for fleet clients.
+Port 7449 remains bound to loopback on the GCP host. The renewal timer copies
+certificates into `/var/lib/argos/tls` and restarts the router when they change.
 
-## Operation and recovery
+## Operation and migration
 
-Run one service instance. Browser control claims are in memory and are not a distributed lock. Native clients remain outside those claims, so coordinate operators across interfaces. Closing the browser does not cancel a waypoint already latched by Terra. Unpublished intent is discarded, and interrupted operations are not replayed after restart.
+The GCP installer stops/disables the retired HTTP service, preserves its stored
+data for recovery, and preserves fleet credentials and custom router accounts.
+It replaces the HTTP reverse proxy with a status page while retaining automatic
+HTTPS. Follow the GCP guide for the deploy command and health checks.
 
-`/healthz` checks the HTTP process; `/readyz` checks fleet-link health. Neither certifies armed hardware or safe motion. Follow the [browser guide](browser-dashboard.md) for audit history, SQLite backup/restore, and rollback. Hardware/runtime validation remains a separate step from a successful service build.
+`/healthz` now reports only Caddy availability. Confirm the router through systemd
+and verify authenticated, fresh telemetry in the desktop app. There is no fleet
+readiness HTTP endpoint. A successful build is not proof of a healthy live host.
 
-An AWS tunnel was an earlier proposal, not the current deployment requirement. The browser architecture does not require a particular cloud provider.
+Fleet authentication establishes membership, not individual operator permissions.
+Desktop control claims do not fence other clients on the bus. Coordinate operators
+and use the vehicle's observed authority, safety and hardware state. A waypoint
+already accepted by a vehicle can outlive the desktop connection.

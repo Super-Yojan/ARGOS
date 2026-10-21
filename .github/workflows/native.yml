@@ -3,12 +3,11 @@ on: [push, pull_request]
 jobs:
   rust:
     runs-on: ubuntu-latest
-    env:
-      ARGOS_CHECK_TYPES: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Shared observability source
         run: bash .github/scripts/checkout-observability.sh
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -21,6 +20,7 @@ jobs:
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libasound2-dev \
             libfontconfig-dev
+      - run: python3 -m unittest discover -s tests/deployment -v
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings

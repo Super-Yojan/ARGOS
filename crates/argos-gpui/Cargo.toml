@@ -22,3 +22,7 @@ gpui-kit = "=0.8.0"
 
 [dev-dependencies]
 zenoh.workspace = true
+
+[[test]]
+name = "fleet_feed"
+path = "../../tests/argos-gpui/fleet_feed.rs"

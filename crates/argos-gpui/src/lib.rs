@@ -9,7 +9,7 @@ mod fleet;
 pub use fleet::*;
 
 mod launch;
-pub use launch::{LaunchMode, LAUNCH_HELP};
+pub use launch::{LAUNCH_HELP, LaunchMode};
 
 mod occupancy;
 pub use occupancy::occupancy_runs;

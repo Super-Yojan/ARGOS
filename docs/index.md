@@ -10,18 +10,18 @@ flowchart LR
   bus --> motors[Vehicle hardware]
 ```
 
-Terra owns sensing, onboard planning, motor output, and watchdogs. The service displays observed state and submits operator intent once a client calls it. The GPUI window subscribes to the fleet bus, draws positions, and publishes goal, autonomy, and teleop for the selected rover. The service never gives the map a vehicle command by itself.
+Terra owns sensing, onboard planning, motor output, and watchdogs. The service displays observed state and submits operator intent once a client calls it. The GPUI window subscribes to the fleet bus, draws positions, and publishes goal, autonomy, and teleop for the selected rover. Vehicle runtime checks remain the final command boundary.
 
 ## Run and operate
 
-Start with [getting started](getting-started.md). The [removed browser dashboard](browser-dashboard.md) records the React interface and the service behavior that is still in `argos-server`. Use the simulator before hardware validation.
+Start with [getting started](getting-started.md). The [removed browser dashboard](browser-dashboard.md) records the retirement of the React interface and HTTP service. Use the simulator before hardware validation.
 
 | Guide | Purpose |
 | --- | --- |
 | [Current status](roadmap.md) | Implemented behavior and what the GPUI window does not do yet |
-| [Architecture](DESIGN.md) | Crates, service, and vehicle responsibility |
+| [Architecture](DESIGN.md) | Crates, router, and vehicle responsibility |
 | [Command model](vision.md) | Waypoints, manual authority, future intent planning |
-| [Deployment](deployment.md) | HTTPS hosting and private fleet connectivity for the service |
+| [Deployment](deployment.md) | Zenoh TLS hosting and certificate renewal |
 | [Zenoh interfaces](zenoh.md) | Fleet wire contract and observation semantics |
 | `crates/terra-map/src/MAPS.md` | Google tiles, models, and the dashboard binary |
 | [Legacy mission controls](autonomy/README.md) | Historical native capabilities and evidence |

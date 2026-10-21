@@ -10,7 +10,7 @@ xcuserdata/
 /spikes/unity-dashboard/Logs/
 /spikes/unity-dashboard/UserSettings/
 
-# Service runtime and optional static files served by argos-server.
+# Legacy service data and local credentials (preserved during migration).
 /web/dist/
 *.db
 *.db-shm
@@ -27,3 +27,6 @@ xcuserdata/
 /apps/web/dist/
 /apps/web/test-results/
 /apps/web/tsconfig.tsbuildinfo
+
+# Python deployment test caches.
+__pycache__/

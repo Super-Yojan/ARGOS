@@ -331,7 +331,9 @@ fn run(
         return Ok(());
     }
     let mut renderer = Renderer::new()?;
-    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
+    if let Some(map) = &map {
+        renderer.surface = map.surface.clone();
+    }
     let pool = Pool::new(http.clone(), stop.clone());
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut resident: HashMap<usize, Resident> = HashMap::new();
@@ -421,8 +423,12 @@ fn run(
                 }
                 Ok(Payload::Mesh(content, ttl)) => {
                     // Include the CPU surface acceleration data in the resident budget.
-                    let bytes = content.bytes() + content.primitives.iter()
-                        .map(|p| p.indices.len() / 3 * 128).sum::<usize>();
+                    let bytes = content.bytes()
+                        + content
+                            .primitives
+                            .iter()
+                            .map(|p| p.indices.len() / 3 * 128)
+                            .sum::<usize>();
                     while total_bytes.saturating_add(bytes) > config.cache_bytes
                         || resident.len() >= config.max_resident_tiles
                     {
@@ -593,7 +599,9 @@ fn objects_only(
     message: String,
 ) -> Result<()> {
     let mut renderer = Renderer::new()?;
-    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
+    if let Some(map) = &map {
+        renderer.surface = map.surface.clone();
+    }
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut dirty = true;
     while !stop.load(Ordering::Relaxed) {
@@ -669,7 +677,9 @@ fn demo(
     );
     content.primitives[0].transform = DMat4::IDENTITY;
     let mut renderer = Renderer::new()?;
-    if let Some(map) = &map { renderer.surface = map.surface.clone(); }
+    if let Some(map) = &map {
+        renderer.surface = map.surface.clone();
+    }
     renderer.upload(0, &content, world)?;
     let mut objects = super::objects::Objects::new(map, config.max_model_bytes);
     let mut dirty = true;
@@ -728,149 +738,13 @@ pub fn should_render(dirty: bool, changed: bool, has_draw: bool, pending: usize)
 }
 
 #[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-    fn frame(generation: u64, pixels: Option<Vec<u8>>) -> Frame {
-        Frame {
-            generation,
-            epoch: 0,
-            width: 1,
-            height: 1,
-            pixels,
-            credits: "source".into(),
-            status: String::new(),
-            tiles: 1,
-            metrics: Default::default(),
-            completed_at: Instant::now(),
-        }
-    }
-    #[test]
-    fn mailbox_preserves_pending_pixels_when_status_arrives() {
-        let mailbox = Mutex::new(Mailbox::default());
-        publish(&mailbox, frame(1, Some(vec![1, 2, 3, 255])));
-        let mut status_frame = frame(1, None);
-        status_frame.status = "Refining".into();
-        publish(&mailbox, status_frame);
-        let mailbox = mailbox.lock().unwrap();
-        let frame = mailbox.frame.as_ref().unwrap();
-        assert!(frame.pixels.is_some());
-        assert_eq!(frame.status, "Refining");
-    }
-    #[test]
-    fn mailbox_delivers_completed_frame_while_camera_keeps_moving() {
-        let worker = MapWorker {
-            mailbox: Arc::new(Mutex::new(Mailbox {
-                generation: 2,
-                frame: Some(frame(1, Some(vec![0; 4]))),
-                ..Default::default()
-            })),
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        assert_eq!(worker.take_frame().map(|f| f.generation), Some(1));
-    }
-    #[test]
-    fn error_notice_only_uses_current_failed_requests() {
-        let now = Instant::now();
-        let failed = HashMap::from([(
-            1,
-            (
-                "temporary error".into(),
-                Some(now + Duration::from_secs(30)),
-            ),
-        )]);
-        assert!(request_notice(&[2], &failed, now).is_none());
-        assert_eq!(
-            request_notice(&[1], &failed, now),
-            Some("temporary error".into())
-        );
-        assert!(request_notice(&[1], &failed, now + Duration::from_secs(31)).is_none());
-        assert!(request_notice(&[1], &HashMap::new(), now).is_none());
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_worker_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
-mod frame_order_tests {
-    use super::*;
-    fn worker_with(frame_epoch: u64, generation: u64, delivered: u64) -> MapWorker {
-        MapWorker {
-            mailbox: Arc::new(Mutex::new(Mailbox {
-                epoch: 2,
-                generation: 10,
-                delivered_generation: delivered,
-                frame: Some(Frame {
-                    epoch: frame_epoch,
-                    generation,
-                    width: 1,
-                    height: 1,
-                    pixels: Some(vec![0; 4]),
-                    credits: String::new(),
-                    status: String::new(),
-                    tiles: 1,
-                    metrics: Default::default(),
-                    completed_at: Instant::now(),
-                }),
-                ..Default::default()
-            })),
-            stop: Arc::new(AtomicBool::new(false)),
-        }
-    }
-    #[test]
-    fn resize_or_mode_change_rejects_old_epoch() {
-        assert!(worker_with(1, 9, 0).take_frame().is_none());
-    }
-    #[test]
-    fn completed_frames_never_regress() {
-        assert!(worker_with(2, 8, 9).take_frame().is_none());
-    }
-    #[test]
-    fn camera_updates_do_not_starve_completed_frames() {
-        assert_eq!(worker_with(2, 9, 8).take_frame().unwrap().generation, 9);
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_worker_frame_order_tests.rs"]
+mod frame_order_tests;
 
 #[cfg(test)]
-mod object_fallback_tests {
-    use super::*;
-    #[test]
-    #[ignore = "Requires a native GPU"]
-    fn gpu_objects_load_and_update_without_google_credentials() {
-        use super::super::api::{GeoPosition, Map, ObjectStatus};
-        let config = MapConfig {
-            api_key: None,
-            demo: false,
-            ..Default::default()
-        };
-        let map = Map::new(config.clone()).unwrap();
-        let worker = MapWorker::start_with_map(config.clone(), Some(map.clone()));
-        worker.update(Update {
-            camera: config.camera(),
-            width: 320,
-            height: 240,
-            generation: 1,
-            epoch: 0,
-            survey: true,
-        });
-        // Add after the worker has entered its missing-key fallback.
-        thread::sleep(Duration::from_millis(50));
-        let id = map
-            .add_3d_obj(
-                GeoPosition::new(config.latitude, config.longitude, 80.),
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assets/robot.glb"),
-            )
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut rendered = false;
-        while Instant::now() < deadline {
-            if let Some(frame) = worker.take_frame() {
-                assert!(frame.status.contains("Map tiles unavailable"));
-                rendered |= frame.pixels.is_some();
-            }
-            if rendered && map.object_status(id).unwrap() == ObjectStatus::Ready {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(rendered);
-        assert_eq!(map.object_status(id).unwrap(), ObjectStatus::Ready);
-    }
-}
+#[path = "../../../../tests/terra-map/unit/maps_worker_object_fallback_tests.rs"]
+mod object_fallback_tests;
