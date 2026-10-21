@@ -1,0 +1,29 @@
+[Unit]
+Description=Terra durable observability collector and Rerun exports
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=terra-observability
+Group=terra-observability
+SupplementaryGroups=systemd-journal
+UMask=0077
+WorkingDirectory=/var/lib/terra-observability
+Environment=TERRA_OBSERVABILITY_BIND=127.0.0.1:7450
+Environment=TERRA_OBSERVABILITY_DB=/var/lib/terra-observability/observations.db
+Environment=TERRA_OBSERVABILITY_CREDENTIALS=/etc/terra-observability/credentials.json
+Environment=TERRA_OBSERVABILITY_EXPORTER_PYTHON=/opt/terra-observability/.venv/bin/python
+Environment=TERRA_OBSERVABILITY_FOLLOW_JOURNAL=1
+ExecStart=/opt/argos/bin/terra-observability-collector
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/terra-observability
+ReadOnlyPaths=/etc/terra-observability /opt/terra-observability
+MemoryMax=2G
+CPUQuota=100%
+TasksMax=128
+[Install]
+WantedBy=multi-user.target

@@ -6,5 +6,8 @@ argos.34.135.204.210.sslip.io {
         X-Content-Type-Options nosniff
         Referrer-Policy same-origin
     }
-    reverse_proxy 127.0.0.1:8080
+    route {
+        import /etc/caddy/argos-observability*.caddy
+        reverse_proxy 127.0.0.1:8080
+    }
 }

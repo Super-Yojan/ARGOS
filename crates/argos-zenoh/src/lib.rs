@@ -7,6 +7,7 @@
 //! the session and stops its worker rather than replaying input on reconnect.
 
 mod content_heartbeat;
+pub mod observability;
 pub mod router;
 mod session_log;
 use argos_core::*;
@@ -60,6 +61,7 @@ impl Client {
         prefix: &str,
         credentials: Option<(&str, &str)>,
     ) -> Result<Self> {
+        terra_observability::initialize_runtime("argos");
         let topics = Topics::new(prefix)?;
         if endpoint.len() > 512
             || !(endpoint.starts_with("tcp/") || endpoint.starts_with("tls/"))
@@ -1329,6 +1331,12 @@ impl Client {
         result
     }
     pub fn disconnect(&self) {
+        terra_observability::record_runtime(
+            "_producer",
+            "router",
+            "connection.disconnect",
+            serde_json::json!({}),
+        );
         let _action = self.actions.lock().unwrap();
         self.clear_input();
         self.shutdown

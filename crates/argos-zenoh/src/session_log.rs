@@ -92,6 +92,7 @@ impl RunRecorder {
         })
     }
     pub fn record(&self, event: Value) -> io::Result<()> {
+        crate::observability::record_value(event.clone());
         if self.failed() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return Err(io::Error::other("recording incomplete"));

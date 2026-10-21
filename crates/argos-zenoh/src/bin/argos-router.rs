@@ -1,5 +1,7 @@
 use argos_zenoh::router::Router;
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    zenoh::init_log_from_env_or("info");
+    terra_observability::initialize_runtime("router");
     let mut port = 7448;
     let mut address = String::new();
     let mut config_file = None;
