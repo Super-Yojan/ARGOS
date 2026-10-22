@@ -24,7 +24,11 @@ use argos_core::{
     Travel, arm_disabled_reason, drag_disabled_reason, drive_block, level_label, phase_label,
     pose_warning_text,
 };
-use argos_gpui::{DashboardConfig, FleetFeed, RoverMark, model_position, reframing_target};
+use argos_gpui::{
+    DashboardConfig, FleetFeed, RoverMark, RoverPresence, model_position, position_label,
+    reframing_target,
+};
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -52,6 +56,7 @@ struct Dashboard {
     framed: BTreeSet<u64>,
     framed_center: Option<(f64, f64)>,
     marks: Vec<RoverMark>,
+    presence: Vec<RoverPresence>,
     selected: Option<u64>,
     drag: Option<ActiveDrag>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -117,6 +122,7 @@ impl Dashboard {
             framed: BTreeSet::new(),
             framed_center: None,
             marks: Vec::new(),
+            presence: Vec::new(),
             selected: None,
             drag: None,
             grid_frame: Arc::new(Mutex::new(None)),
@@ -148,6 +154,7 @@ impl Dashboard {
             self.command.clone_from(&picture.command);
         }
         self.marks = picture.marks;
+        self.presence = picture.presence;
         if self
             .selected
             .is_some_and(|id| !self.marks.iter().any(|mark| mark.id == id))
@@ -794,6 +801,15 @@ impl Render for Dashboard {
                             cx.notify();
                         }),
                     ))
+                    .children(self.presence.iter().filter(|row| !self.marks.iter().any(|mark| mark.id == row.id())).map(|row| {
+                        div().id(("unlocated-rover", row.id())).p_2().border_1()
+                            .border_color(cx.theme().border).rounded_md().text_size(px(12.))
+                            .text_color(cx.theme().foreground)
+                            .child(format!("Rover {} · {}", row.id(), row.membership()))
+                            .child(div().text_color(cx.theme().muted_foreground).child(row.position_reason().to_owned()))
+                            .child(div().text_color(cx.theme().muted_foreground).child(
+                                row.observation_age().map(|age| format!("Last observation {age:.1} s ago")).unwrap_or_else(|| "Waiting for telemetry".into())))
+                    }))
                     .children(self.marks.iter().map(|mark| {
                         let id = mark.id;
                         let attention = mark.status != "online";
@@ -822,6 +838,7 @@ impl Render for Dashboard {
                                 "Rover {id} · {} · {}",
                                 mark.status, mark.occupancy
                             ))
+                            .child(div().text_color(cx.theme().muted_foreground).child(position_label(mark)))
                             .child(div().text_color(rgb(0x98aeb9)).child(level_line(mark)))
                             .child(
                                 div()
@@ -852,7 +869,7 @@ impl Render for Dashboard {
                     .when(self.marks.is_empty(), |this| {
                         this.child(
                             div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
-                                "No rover position yet. The map stays at the start location.",
+                                "No geographic position yet. Rover connection status is listed above.",
                             ),
                         )
                     })
@@ -1068,7 +1085,8 @@ fn rover_panel(
         })
         .when_some(mark.raw_gps, |panel, gps| {
             panel.child(div().text_size(px(12.)).child(format!(
-                    "GPS {:.5}, {:.5}{}{}",
+                    "{} · {:.5}, {:.5}{}{}",
+                    position_label(&mark),
                     gps.latitude,
                     gps.longitude,
                     gps.accuracy_m

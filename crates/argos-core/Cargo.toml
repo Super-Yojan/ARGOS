@@ -6,6 +6,7 @@ edition.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+terra-types = { path = "../../../Terra/crates/terra-types" }
 
 [[test]]
 name = "arm"

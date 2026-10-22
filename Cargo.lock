@@ -220,6 +220,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "terra-types",
  "thiserror 2.0.21",
 ]
 
@@ -7477,6 +7478,13 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "uuid",
+]
+
+[[package]]
+name = "terra-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

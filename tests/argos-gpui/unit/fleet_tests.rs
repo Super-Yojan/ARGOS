@@ -433,3 +433,45 @@ fn camera_fits_when_the_rover_set_changes() {
     assert!((latitude - mean).abs() < 1e-9);
     assert!(framing_target(&BTreeSet::new(), &[]).is_none());
 }
+
+#[test]
+fn membership_without_geographic_position_remains_visible() {
+    let snapshot = Snapshot {
+        link: "healthy".into(),
+        fleet_age: Some(0.1),
+        notice: None,
+        rovers: vec![
+            rover(0, "online", Some(pose(0., 0., 0.)), Some(0.1)),
+            rover(1, "online", None, None),
+        ],
+    };
+    let localizations = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a"}});
+    let marks = fleet_marks(
+        &snapshot,
+        &localizations,
+        &Value::Null,
+        |_| None,
+        LocalFrame::origin(38., -77.).unwrap(),
+    );
+    let rows = fleet_presence(&snapshot, &marks);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].position_reason(), "Position unavailable");
+    assert_eq!(describe(&snapshot, &marks), "2 rovers");
+    assert!(marks.is_empty());
+}
+
+#[test]
+fn retained_fix_ages_and_cannot_cross_frame_or_retirement() {
+    let mut history = LocalizationHistory::default();
+    let initial = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a","gpsLatitude":38.,"gpsLongitude":-77.,"gpsFixAge":8.2,"age":0.}});
+    history.update(&initial, 10.);
+    let missing = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a","reason":"permission denied","age":0.}});
+    let retained = history.update(&missing, 20.);
+    assert!((decode_raw_gps(&retained["0"]).unwrap().age_s.unwrap() - 18.2).abs() < 1e-6);
+    let offline = history.update(&Value::Null, 130.);
+    assert!((decode_raw_gps(&offline["0"]).unwrap().age_s.unwrap() - 128.2).abs() < 1e-6);
+    let fresh_frame = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"b","age":0.}});
+    assert!(decode_raw_gps(&history.update(&fresh_frame, 131.)["0"]).is_none());
+    history.retain(&BTreeSet::new());
+    assert_eq!(history.update(&Value::Null, 132.), serde_json::json!({}));
+}

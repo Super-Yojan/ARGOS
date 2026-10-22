@@ -33,3 +33,5 @@ pub use search::*;
 
 mod arm;
 pub use arm::*;
+
+pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};

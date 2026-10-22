@@ -983,9 +983,8 @@ impl Client {
             .iter()
             .filter_map(|(id, (value, received))| {
                 let age = received.elapsed().as_secs_f64();
-                if age >= SUPERVISION_STALE_SECONDS {
-                    return None;
-                }
+                // Keep coordinate-frame identity and the original observation age.
+                // Expiry here previously made old local AR data look geographically aligned.
                 let mut value = value.clone();
                 value["age"] = serde_json::json!(age);
                 Some((id.to_string(), value))
