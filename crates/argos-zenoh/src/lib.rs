@@ -687,6 +687,45 @@ impl Client {
         }
         result.to_string()
     }
+    /// Bind new remote work to the observed vehicle authority generation. No
+    /// command is persisted/retried; link loss retires this generation onboard.
+    fn bound_payload(&self, id: u64, kind: &str, payload: &[u8]) -> Result<Vec<u8>> {
+        let mut v: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| invalid("invalid command JSON"))?;
+        let neutral = (kind == "goal" && v["cancel"] == true)
+            || (kind == "safety" && v["action"] == "stop")
+            || (kind == "hardware" && v["action"] == "disarm")
+            || (kind == "search/action"
+                && matches!(v["action"].as_str(), Some("pause" | "cancel")))
+            || kind == "search/report/ack"
+            || kind == "mission/report"
+            || (kind == "teleop"
+                && v["linear"].as_f64() == Some(0.)
+                && v["angular"].as_f64() == Some(0.));
+        if !neutral {
+            let states = self.operator_states.lock().unwrap();
+            let (authority, at) = states.get(&(id, "authority".into())).ok_or_else(|| {
+                invalid("Current vehicle authority required; update or reconnect the vehicle")
+            })?;
+            if at.elapsed().as_secs_f64() >= SUPERVISION_STALE_SECONDS
+                || !authority["run_id"].is_string()
+                || authority["revision"].as_u64().is_none()
+            {
+                return Err(invalid("Current vehicle authority required"));
+            }
+            if (v.get("run_id").is_some() && v["run_id"] != authority["run_id"])
+                || (v.get("authority_revision").is_some()
+                    && v["authority_revision"] != authority["revision"])
+            {
+                return Err(invalid(
+                    "Vehicle authority changed; review the command again",
+                ));
+            }
+            v["run_id"] = authority["run_id"].clone();
+            v["authority_revision"] = authority["revision"].clone();
+        }
+        serde_json::to_vec(&v).map_err(|_| invalid("invalid command JSON"))
+    }
     pub fn operator_command(&self, id: u64, kind: &str, payload: &str) -> Result<()> {
         let _action = self.actions.lock().unwrap();
         if !matches!(
@@ -952,6 +991,7 @@ impl Client {
                 return Err(invalid("unsupported vehicle autonomy request"));
             }
         }
+        let payload = self.bound_payload(id, kind, payload.as_bytes())?;
         let result = self
             .session
             .lock()
@@ -1038,6 +1078,7 @@ impl Client {
     pub fn action(&self, id: u64, kind: &str, value: serde_json::Value) -> Result<String> {
         let token = uuid::Uuid::new_v4().to_string();
         let payload = operator_payload(kind, value, &token)?;
+        let payload = self.bound_payload(id, kind, &payload)?;
         if kind == "autonomy" || kind == "safety" {
             self.clear_input();
         }
@@ -1292,6 +1333,14 @@ impl Client {
             value["arrival_radius_m"] = serde_json::json!(radius);
             payload = serde_json::to_vec(&value).map_err(|_| invalid("Invalid goal"))?;
         }
+        payload = self
+            .bound_payload(id, "goal", &payload)
+            .inspect_err(|error| {
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .publish_failed(id, error.to_string());
+            })?;
         self.publish(id, payload.clone())?;
         let _ = self.recorder.record(serde_json::json!({
             "kind": "goal_sent",

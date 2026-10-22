@@ -836,9 +836,9 @@ impl Render for Dashboard {
                             }))
                             .child(format!(
                                 "Rover {id} · {} · {}",
-                                mark.status, mark.occupancy
+                                self.presence.iter().find(|row| row.id() == id).map(|row| row.membership()).unwrap_or(mark.status.as_str()), mark.occupancy
                             ))
-                            .child(div().text_color(cx.theme().muted_foreground).child(position_label(mark)))
+                            .child(div().text_color(cx.theme().muted_foreground).child(self.presence.iter().find(|row| row.id() == mark.id).map(|row| row.position_reason().to_owned()).unwrap_or_else(|| position_label(mark))))
                             .child(div().text_color(rgb(0x98aeb9)).child(level_line(mark)))
                             .child(
                                 div()

@@ -426,11 +426,14 @@ fn camera_fits_when_the_rover_set_changes() {
         ..snapshot
     };
     let both_marks = fleet_marks(&both, &Value::Null, &Value::Null, |_| None, origin);
-    assert_eq!(both_marks[0].status, "offline");
+    assert_eq!(
+        both_marks.len(),
+        1,
+        "explicit retirement removes the old marker, keeping its presence row"
+    );
     let (ids, latitude, _) = framing_target(&ids, &both_marks).unwrap();
-    assert_eq!(ids, BTreeSet::from([1, 2]));
-    let mean = (both_marks[0].latitude + both_marks[1].latitude) / 2.;
-    assert!((latitude - mean).abs() < 1e-9);
+    assert_eq!(ids, BTreeSet::from([2]));
+    assert!((latitude - both_marks[0].latitude).abs() < 1e-9);
     assert!(framing_target(&BTreeSet::new(), &[]).is_none());
 }
 
@@ -474,4 +477,117 @@ fn retained_fix_ages_and_cannot_cross_frame_or_retirement() {
     assert!(decode_raw_gps(&history.update(&fresh_frame, 131.)["0"]).is_none());
     history.retain(&BTreeSet::new());
     assert_eq!(history.update(&Value::Null, 132.), serde_json::json!({}));
+}
+
+#[test]
+fn source_run_mismatch_cannot_reuse_a_geographic_placement() {
+    let report = serde_json::json!({"version":1,"mode":"geographic","frameID":"a","run_id":"old","originLatitude":38.,"originLongitude":-77.,"gpsLatitude":38.,"gpsLongitude":-77.});
+    let value = scope_localization(report, Some("new"));
+    assert!(decode_raw_gps(&value).is_none());
+    assert!(LocalFrame::from_localization(&value).is_none());
+    assert_eq!(value["run_id"], "new");
+    assert!(value["reason"].as_str().unwrap().contains("run"));
+}
+
+#[test]
+fn disconnected_picture_keeps_identity_and_ages_without_renewing_observations() {
+    let snapshot = Snapshot {
+        link: "healthy".into(),
+        fleet_age: Some(0.1),
+        notice: None,
+        rovers: vec![
+            rover(0, "online", Some(pose(0., 0., 0.)), Some(0.1)),
+            rover(0, "online", None, None),
+        ],
+    };
+    let rows = fleet_presence(&snapshot, &[]);
+    assert_eq!(rows.len(), 1);
+    let picture = Mutex::new(FleetPicture {
+        presence: rows,
+        ..Default::default()
+    });
+    mark_disconnected(&picture);
+    let current = picture.lock().unwrap();
+    assert_eq!(current.presence[0].id(), 0);
+    assert_eq!(current.presence[0].membership(), "offline");
+    assert_eq!(current.presence[0].observation_age(), Some(0.1));
+}
+
+#[test]
+fn retained_marker_survives_replacement_membership_without_pose() {
+    let mut previous = FleetPicture::default();
+    let initial = Snapshot {
+        link: "healthy".into(),
+        fleet_age: Some(0.),
+        notice: None,
+        rovers: vec![rover(0, "online", Some(pose(0., 0., 0.)), Some(0.))],
+    };
+    let report = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a","gpsLatitude":38.,"gpsLongitude":-77.,"gpsFixAge":8.2}});
+    previous.marks = fleet_marks(
+        &initial,
+        &report,
+        &Value::Null,
+        |_| None,
+        LocalFrame::origin(0., 0.).unwrap(),
+    );
+    let next = Snapshot {
+        rovers: vec![rover(0, "online", None, None)],
+        ..initial
+    };
+    let mut marks = fleet_marks(
+        &next,
+        &report,
+        &Value::Null,
+        |_| None,
+        LocalFrame::origin(0., 0.).unwrap(),
+    );
+    retain_geographic_markers(&next, &report, &previous, &mut marks);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].raw_gps.unwrap().age_s, Some(8.2));
+    assert!(!marks[0].control_pose_ready());
+    assert!(marks[0].map_frame.is_none());
+}
+#[test]
+fn retirement_rejects_cached_report_on_reused_id_and_display_override_applies() {
+    let mut history = LocalizationHistory::default();
+    let report = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a","age":0.,"gpsLatitude":38.,"gpsLongitude":-77.,"gpsFixAge":0.}});
+    history.observe_membership(&[(0, "online")], 1.);
+    history.update(&report, 1.);
+    history.observe_membership(&[(0, "absent")], 2.);
+    let old = serde_json::json!({"0":{"version":1,"mode":"local","frameID":"a","age":2.,"gpsLatitude":38.,"gpsLongitude":-77.,"gpsFixAge":0.}});
+    assert!(decode_raw_gps(&history.update(&old, 3.)["0"]).is_none());
+    history.retain(&BTreeSet::new()); // polling prunes absent observation payloads
+    history.observe_membership(&[(0, "online")], 4.);
+    assert_eq!(
+        history.update(&Value::Null, 4.)["0"]["mode"],
+        "local",
+        "missing localization after retirement must not invoke the default origin"
+    );
+    assert!(decode_raw_gps(&history.update(&old, 4.)["0"]).is_none());
+    let snapshot = Snapshot {
+        link: "stale".into(),
+        fleet_age: Some(100.),
+        notice: None,
+        rovers: vec![rover(0, "online", Some(pose(0., 0., 0.)), Some(0.))],
+    };
+    let report = serde_json::json!({"0":{"version":1,"mode":"local","gpsLatitude":38.,"gpsLongitude":-77.,"gpsFixAge":8.2,"gpsFresh":true,"connectivity_policy":{"gps_display_freshness_seconds":10.,"fleet_display_stale_seconds":120.}}});
+    let marks = fleet_marks(
+        &snapshot,
+        &report,
+        &Value::Null,
+        |_| None,
+        LocalFrame::origin(0., 0.).unwrap(),
+    );
+    assert!(position_label(&marks[0]).starts_with("GPS observation"));
+    assert_eq!(display_link(&snapshot, &report, &Value::Null), "healthy");
+    let mut revoked = report.clone();
+    revoked["0"]["gpsFresh"] = Value::Bool(false);
+    let marks = fleet_marks(
+        &snapshot,
+        &revoked,
+        &Value::Null,
+        |_| None,
+        LocalFrame::origin(0., 0.).unwrap(),
+    );
+    assert!(position_label(&marks[0]).starts_with("Last known GPS"));
 }
