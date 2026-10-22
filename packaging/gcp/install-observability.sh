@@ -23,7 +23,7 @@ install -o root -g root -m 755 bin/terra-observability-collector /opt/argos/bin/
 install -o root -g terra-observability -m 640 observability/credentials.json /etc/terra-observability/credentials.json
 cp -R replay/. /opt/terra-observability/
 uv sync --project /opt/terra-observability --frozen --no-dev
-install -o root -g root -m 644 gcp/terra-observability.service /etc/systemd/system/
+install -o root -g root -m 644 gcp/terra-observability.service gcp/terra-rerun-viewer.service /etc/systemd/system/
 # Keep the previous proxy configuration recoverable even when validation fails.
 rollback_dir=$(mktemp -d /etc/terra-observability/proxy-backup.XXXXXX)
 chmod 700 "$rollback_dir"
@@ -47,6 +47,8 @@ caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl daemon-reload
 systemctl enable --now terra-observability
 systemctl restart terra-observability
+systemctl enable --now terra-rerun-viewer
+systemctl restart terra-rerun-viewer
 systemctl reload caddy
 trap - ERR
 printf 'Previous proxy configuration: %s\n' "$rollback_dir"

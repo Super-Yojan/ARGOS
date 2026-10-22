@@ -16,7 +16,7 @@ cargo zigbuild --release --locked --target x86_64-unknown-linux-gnu.2.36 -p terr
 release_dir=$(mktemp -d /tmp/argos-observability-release.XXXXXX)
 mkdir -p "$release_dir"/{bin,gcp,replay,observability,docs}
 cp target/x86_64-unknown-linux-gnu/release/terra-observability-collector "$release_dir/bin/"
-for name in Caddyfile terra-observability.service argos-observability.caddy install-observability.sh; do
+for name in Caddyfile terra-observability.service terra-rerun-viewer.service argos-observability.caddy install-observability.sh; do
     cp "$argos_root/packaging/gcp/$name" "$release_dir/gcp/"
 done
 cp tools/observability/{pyproject.toml,uv.lock,README.md} "$release_dir/replay/"
