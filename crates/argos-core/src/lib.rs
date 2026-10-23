@@ -31,7 +31,7 @@ pub use outdoor::*;
 mod search;
 pub use search::*;
 
-mod arm;
-pub use arm::*;
+mod hardware;
+pub use hardware::*;
 
 pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};

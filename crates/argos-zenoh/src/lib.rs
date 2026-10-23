@@ -481,6 +481,7 @@ impl Client {
             let session = session.clone();
             let held = held.clone();
             let authority_cache = operator.clone();
+            let hardware_cache = operator_states.clone();
             let fleet_cache = cache.clone();
             let stop = shutdown.clone();
             let prefix = topics.prefix.clone();
@@ -501,7 +502,14 @@ impl Client {
                                     authority.matches_authority(*id, run, *revision)
                                 });
                         drop(authority);
-                        permitted && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
+                        let hardware_ready = hardware_cache
+                            .lock()
+                            .unwrap()
+                            .get(&(*id, "hardware".into()))
+                            .is_some_and(|(value, at)| require_relay(value, at, false).is_ok());
+                        permitted
+                            && hardware_ready
+                            && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
                     });
                     if active.is_none() {
                         input.rover_id = None;
@@ -694,7 +702,6 @@ impl Client {
             serde_json::from_slice(payload).map_err(|_| invalid("invalid command JSON"))?;
         let neutral = (kind == "goal" && v["cancel"] == true)
             || (kind == "safety" && v["action"] == "stop")
-            || (kind == "hardware" && v["action"] == "disarm")
             || (kind == "search/action"
                 && matches!(v["action"].as_str(), Some("pause" | "cancel")))
             || kind == "search/report/ack"
@@ -732,7 +739,6 @@ impl Client {
             kind,
             "autonomy"
                 | "teleop"
-                | "hardware"
                 | "navigation/settings"
                 | "navigation/source"
                 | "navigation/resume"
@@ -780,14 +786,6 @@ impl Client {
             {
                 return Err(invalid("drive exceeds dashboard limits"));
             }
-        } else if kind == "hardware" {
-            if !matches!(value["action"].as_str(), Some("arm" | "disarm"))
-                || value["token"]
-                    .as_str()
-                    .is_none_or(|s| s.is_empty() || s.len() > 64)
-            {
-                return Err(invalid("invalid hardware request"));
-            }
         } else if !matches!(
             value["level"].as_str(),
             Some(
@@ -805,7 +803,6 @@ impl Client {
         let neutral = kind == "search/report/ack"
             || (kind == "search/action"
                 && matches!(value["action"].as_str(), Some("cancel" | "pause")))
-            || (kind == "hardware" && value["action"] == "disarm")
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
@@ -816,19 +813,20 @@ impl Client {
             ) {
             SUPERVISION_STALE_SECONDS
         } else {
-            0.5
+            STALE_SECONDS
         };
         // L0 selection and confirmed L0 control do not consume camera pose.
         // Fresh membership, authority, run/revision and hardware checks below remain.
         let manual_without_pose = (kind == "autonomy" && value["level"] == "teleop")
-            || (matches!(kind, "hardware" | "teleop")
+            || (kind == "teleop"
                 && self
                     .operator_states
                     .lock()
                     .unwrap()
                     .get(&(id, "authority".into()))
                     .is_some_and(|(authority, at)| {
-                        at.elapsed().as_secs_f64() < 0.5 && authority["requested_level"] == "teleop"
+                        at.elapsed().as_secs_f64() < STALE_SECONDS
+                            && authority["requested_level"] == "teleop"
                     }));
         if !neutral {
             let snapshot = self.snapshot();
@@ -862,19 +860,14 @@ impl Client {
                 let (hardware, at) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("hardware status unavailable"))?;
+                require_relay(hardware, at, true)?;
                 if value["run_id"] != authority["run_id"]
                     || value["authority_revision"] != authority["revision"]
                     || value["settings_revision"] != authority["navigation"]["revision"]
                     || authority["navigation"]["schema_version"] != 1
                     || !matches!(authority["safety"].as_str(), Some("clear" | "hold"))
-                    || at.elapsed().as_secs_f64() >= 0.5
-                    || hardware["ready"] != true
-                    || hardware["armed"] != false
-                    || hardware["arming"] != false
                 {
-                    return Err(invalid(
-                        "settings require current authority and ready disarmed hardware",
-                    ));
+                    return Err(invalid("Settings require current vehicle authority"));
                 }
             } else if kind == "navigation/resume" {
                 let (raw, at) = states
@@ -892,12 +885,11 @@ impl Client {
                 let (hardware, at) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("Hardware unavailable"))?;
-                if at.elapsed().as_secs_f64() >= 0.5
-                    || hardware["armed"] != true
-                    || authority["requested_level"] != "waypoint"
+                require_relay(hardware, at, false)?;
+                if authority["requested_level"] != "waypoint"
                     || authority["safety"] == "emergency_stop"
                 {
-                    return Err(invalid("Arm in L3 before resuming"));
+                    return Err(invalid("Select L3 with ready hardware before resuming"));
                 }
             } else if kind == "navigation/source" {
                 let source = value["source"].as_str();
@@ -914,15 +906,7 @@ impl Client {
                 let (hardware, at) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("hardware status unavailable"))?;
-                if at.elapsed().as_secs_f64() >= 0.5
-                    || hardware["ready"] != true
-                    || hardware["armed"] != false
-                    || hardware["arming"] == true
-                {
-                    return Err(invalid(
-                        "Navigation source changes while the rover is disarmed",
-                    ));
-                }
+                require_relay(hardware, at, true)?;
                 if value["run_id"] != authority["run_id"] {
                     return Err(invalid("navigation run changed"));
                 }
@@ -952,20 +936,11 @@ impl Client {
                         return Err(invalid("App update required"));
                     }
                 }
-            } else if kind == "hardware" {
-                if value["run_id"] != authority["run_id"]
-                    || value["authority_revision"] != authority["revision"]
-                    || authority["safety"] != "clear"
-                {
-                    return Err(invalid("arm authority changed"));
-                }
             } else if kind == "teleop" {
                 let (hardware, received) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("hardware status unavailable"))?;
-                if received.elapsed().as_secs_f64() >= 0.5 || hardware["armed"] != true {
-                    return Err(invalid("motors are not confirmed armed"));
-                }
+                require_relay(hardware, received, false)?;
                 if value["run_id"] != authority["run_id"]
                     || value["authority_revision"] != authority["revision"]
                     || value["operator_session_id"]
@@ -1176,6 +1151,13 @@ impl Client {
     ) -> Result<()> {
         let now = self.start.elapsed().as_secs_f64();
         let mut held = self.held.lock().unwrap();
+        if down {
+            let states = self.operator_states.lock().unwrap();
+            let (hardware, at) = states
+                .get(&(id, "hardware".into()))
+                .ok_or_else(|| invalid("Hardware status unavailable"))?;
+            require_relay(hardware, at, false)?;
+        }
         let accepted_generation = {
             let authority = self.operator.lock().unwrap();
             if generation
@@ -1295,7 +1277,7 @@ impl Client {
             let (authority, at) = states
                 .get(&(id, "authority".into()))
                 .ok_or_else(|| invalid("Authority unavailable"))?;
-            if at.elapsed().as_secs_f64() >= 0.5
+            if at.elapsed().as_secs_f64() >= SUPERVISION_STALE_SECONDS
                 || authority["run_id"] != *run
                 || authority["safety"] != "clear"
             {
@@ -1314,9 +1296,7 @@ impl Client {
             let (hardware, at) = states
                 .get(&(id, "hardware".into()))
                 .ok_or_else(|| invalid("Hardware unavailable"))?;
-            if at.elapsed().as_secs_f64() >= 0.5 || hardware["armed"] != true {
-                return Err(invalid("Motors are not armed"));
-            }
+            require_relay(hardware, at, false)?;
         }
         let token = uuid::Uuid::new_v4().to_string();
         let mut payload = self.cache.lock().unwrap().prepare_goal(
@@ -1413,6 +1393,18 @@ impl Drop for Client {
     fn drop(&mut self) {
         self.disconnect();
     }
+}
+
+fn require_relay(value: &serde_json::Value, at: &Instant, neutral: bool) -> Result<()> {
+    let mut status = HardwareObservation::from_status(value);
+    status.age = at.elapsed().as_secs_f64();
+    if let Some(reason) = drive_block(&status) {
+        return Err(invalid(reason));
+    }
+    if neutral && status.output_active {
+        return Err(invalid("Navigation changes require neutral motor output"));
+    }
+    Ok(())
 }
 
 fn utc() -> f64 {

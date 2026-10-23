@@ -5,11 +5,11 @@
 
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
-    HardwareCommand, HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission,
-    OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
-    admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_raw_gps, drive_block,
-    encode_hardware, encode_source_request, fallback_degrade_reason, goal_blocked, local_map,
-    map_heading_degrees, reported_outdoor, reported_pose_quality, source_change_refusal,
+    HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport,
+    Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal,
+    classify_cell, decode_autonomy_value, decode_raw_gps, drive_block, encode_source_request,
+    fallback_degrade_reason, goal_blocked, local_map, map_heading_degrees, reported_outdoor,
+    reported_pose_quality, source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -390,7 +390,6 @@ pub struct RoverMark {
     pub arrival_radius: f64,
     /// True when outdoor GPS is the acknowledged navigation source.
     pub outdoor_gps: bool,
-    pub disarmed: bool,
     pub hardware: HardwareObservation,
     pub authority_revision: u64,
     pub safety: String,
@@ -707,7 +706,6 @@ pub fn fleet_marks(
                 outdoor_gps: outdoor
                     .as_ref()
                     .is_some_and(|report| report.acknowledged_outdoor()),
-                disarmed: hardware.present && !hardware.armed && !hardware.arming,
                 hardware,
                 authority_revision: authority["revision"].as_u64().unwrap_or(0),
                 safety: authority["safety"].as_str().unwrap_or("").to_string(),
@@ -1134,7 +1132,7 @@ impl FleetFeed {
         let source = source.to_string();
         std::thread::spawn(move || {
             let message = (|| {
-                let (run_id, revision, disarmed, goal_active, mission_active, outdoor) = {
+                let (run_id, revision, ready_and_neutral, goal_active, mission_active, outdoor) = {
                     let current = picture.lock().unwrap();
                     let mark = current
                         .marks
@@ -1144,14 +1142,14 @@ impl FleetFeed {
                     (
                         mark.run_id.clone(),
                         mark.navigation_revision,
-                        mark.disarmed,
+                        mark.hardware.ready_and_neutral(),
                         mark.goal_active,
                         mark.mission_active,
                         mark.outdoor.clone(),
                     )
                 };
                 if let Some(reason) = source_change_refusal(
-                    disarmed,
+                    ready_and_neutral,
                     goal_active,
                     mission_active,
                     &source,
@@ -1264,28 +1262,6 @@ impl FleetFeed {
         if let Ok(client) = self.connected() {
             client.refresh_drive(id);
         }
-    }
-    pub fn publish_hardware(&self, id: u64, command: HardwareCommand) {
-        let client = self.client.clone();
-        let picture = self.picture.clone();
-        std::thread::spawn(move || {
-            let message = (|| {
-                let bytes = encode_hardware(&command).map_err(|error| error.to_string())?;
-                let payload =
-                    String::from_utf8(bytes).map_err(|_| "hardware payload".to_string())?;
-                let guard = client.lock().unwrap();
-                let client = guard.as_ref().ok_or("Not connected")?;
-                client
-                    .operator_command(id, "hardware", &payload)
-                    .map_err(|error| error.to_string())?;
-                Ok::<_, String>(match command {
-                    HardwareCommand::Arm { .. } => format!("Arm request sent to rover {id}"),
-                    HardwareCommand::Disarm { .. } => format!("Disarm sent to rover {id}"),
-                    HardwareCommand::Reset => "Reset is a safety action".into(),
-                })
-            })();
-            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
-        });
     }
     pub fn safety_reset(&self, id: u64) -> Result<(), String> {
         let client = self.connected()?;
