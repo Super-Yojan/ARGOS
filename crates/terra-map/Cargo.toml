@@ -1,0 +1,38 @@
+[package]
+name = "terra-map"
+version = "0.1.0"
+edition = "2024"
+
+description = "Native Google 3D Tiles and georeferenced model instances for GPUI"
+readme = "src/MAPS.md"
+exclude = [".env", ".env.*", "target", "src/docs/superpowers"]
+
+[lib]
+name = "terra_map"
+path = "src/lib.rs"
+
+[[bin]]
+name = "learn-gpui"
+path = "src/main.rs"
+
+[[example]]
+name = "fleet"
+path = "src/examples/fleet.rs"
+
+[dependencies]
+
+anyhow = "1"
+base64 = "0.22"
+bytemuck = { version = "1", features = ["derive"] }
+crossbeam-channel = "0.5"
+draco-core = { version = "2.3.2", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
+glam = { version = "0.30", features = ["bytemuck"] }
+gltf = { version = "1.4", features = ["extensions", "utils", "KHR_materials_unlit"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+pollster = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+wgpu = "27"
+gpui-kit = "=0.8.0"

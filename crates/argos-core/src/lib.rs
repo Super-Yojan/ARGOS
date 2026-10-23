@@ -16,5 +16,22 @@ pub use operator::*;
 mod occupancy;
 pub use occupancy::*;
 
+mod autonomy;
+pub use autonomy::*;
+
+mod drive;
+pub use drive::*;
+
+mod drag;
+pub use drag::*;
+
+mod outdoor;
+pub use outdoor::*;
+
 mod search;
 pub use search::*;
+
+mod hardware;
+pub use hardware::*;
+
+pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};

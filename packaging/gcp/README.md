@@ -1,51 +1,104 @@
-# Public ARGOS host
+# GCP Zenoh router
 
-Deployed 2026-10-15 in GCP project `glid-app`:
+ARGOS GPUI, Terra and Zorvane connect directly to this authenticated Zenoh router.
+The HTTP application server has been removed. There are no OAuth logins, HTTP
+command endpoints or server-side operator roles in the router deployment. An
+independent, scoped observability collector stores diagnostic history and Rerun exports.
 
-- VM `argos-host`, zone `us-central1-a`, `e2-small` (2 GB RAM), Debian 12, 20 GB standard persistent disk.
-- Static address `argos-public-ip`: `34.135.204.210`.
-- Dashboard: https://argos.34.135.204.210.sslip.io
-- Fleet: `tls/argos.34.135.204.210.sslip.io:7448`, prefix `terra/phone`.
-- Public ports: 80/443 for Caddy HTTPS, 7448 for authenticated Zenoh TLS. No VPN required.
-- Backend binds `127.0.0.1:8080`; internal fleet listener binds `127.0.0.1:7449`.
-- HTTPS uses the IP-derived sslip.io hostname and Caddy-managed public certificates. Keep the static IP reserved; a custom DNS name can replace this later.
+## Existing host
 
-## Terra
+- Project: `glid-app`; VM: `argos-host`; zone: `us-central1-a`.
+- Static address: `34.135.204.210` (`argos-public-ip`).
+- Public fleet endpoint: `tls/argos.34.135.204.210.sslip.io:7448`.
+- Topic prefix: `terra/phone`; fleet account: `terra`.
+- Internal listener: `tcp/127.0.0.1:7449`; never expose this port publicly.
+- Public ports: 80/443 for Caddy certificate issuance/renewal; 7448 for Zenoh TLS.
 
-The sibling Terra app defaults to this TLS router, preserving a custom saved endpoint. In **Settings → Fleet connection**, use account `terra` and enter `ARGOS_ZENOH_PASSWORD` from the ignored local `packaging/gcp/.env` file. On the VM it is in root-only `/etc/argos/fleet.password`. The iPhone stores it in Keychain. Prefix is `terra/phone`; give each simultaneously connected rover a distinct numeric rover ID.
+Keep the static IP reserved and those firewall rules intact. Caddy still obtains
+and renews the public certificate for the hostname. `argos-router-tls.timer`
+runs every five minutes, copies changed certificates into `/var/lib/argos/tls`
+and restarts the router when needed. The router reads its key and certificate
+there as the `argos` service user. Do not remove Caddy or its certificate storage.
+The HTTPS `/healthz` response proves only that Caddy is available, not that the
+router is connected or that a rover is publishing telemetry.
 
-Do not embed the fleet password in an app binary, source control or a public frontend. Connecting the fleet transport does not arm hardware. Rebuild/reinstall Terra to pick up the changed defaults and Rust bindings.
+## Connect the desktop app
 
-## Authentication and data
-
-GitHub OAuth uses public profile identity only; GitHub numeric ID `33645913` is the initial operator. Add collaborators' numeric IDs to `ARGOS_VIEWERS` or `ARGOS_OPERATORS` in `/etc/argos/server.env` and restart `argos-server`. Client ID and secret live in that root-only environment file. Callback: `https://argos.34.135.204.210.sslip.io/auth/callback`.
-
-Fleet credentials are a shared fleet membership secret, separate from browser roles. All authenticated fleet clients can exchange fleet topics. Issue distinct router dictionary entries if individual membership revocation is needed. Keep credentials confidential.
-
-SQLite state/audit data lives in `/var/lib/argos/argos.db`. All services restart after failure/reboot. Caddy renews certificates; the TLS timer copies renewed certificates for the router and restarts it when changed. This interrupts transport temporarily, requiring fresh observations before commands.
-
-## Operate
+Copy `.env.example` to `.env` in the repository root. Use:
 
 ```sh
-gcloud compute ssh argos-host --project=glid-app --zone=us-central1-a
-sudo systemctl status caddy argos-router argos-server
-sudo journalctl -u argos-server -u argos-router --since '10 minutes ago'
+ARGOS_ZENOH_ENDPOINT=tls/argos.34.135.204.210.sslip.io:7448
+ARGOS_ZENOH_PREFIX=terra/phone
+ARGOS_ZENOH_USER=terra
+ARGOS_ZENOH_PASSWORD=<fleet-membership-password>
 ```
 
-Live `/api/v1/events` responses bypass compression to prevent proxy buffering. The browser reopens stalled streams after three seconds and clears unsubmitted drafts; it never replays a vehicle command.
+Then run `cargo run -p argos-gpui -- --real`. Enter the same endpoint, prefix and
+credentials in TerraPhone's fleet settings. Give simultaneous vehicles distinct
+numeric rover IDs. For Zorvane use its `TERRA_ZENOH_CONNECT`,
+`TERRA_ZENOH_PREFIX`, `TERRA_ZENOH_USER` and `TERRA_ZENOH_PASSWORD` variables.
 
-`/healthz` checks HTTP availability. `/readyz` requires fresh fleet telemetry; **503 is expected with no active phones**, even when the router connection is established.
+An authorized administrator can obtain the password from root-only
+`/etc/argos/fleet.password`. Do not commit credentials. Fleet membership permits
+publishing/subscribing to fleet topics; it does not provide per-operator roles.
+Desktop control claims are local UI state, not an exclusive router-wide lock.
+Coordinate operators; vehicle runtime checks remain the final command boundary.
 
-## Deploy another release
+## Build and deploy
 
-Build the web bundle with `npm ci --prefix apps/web && npm run build --prefix apps/web`. Build Linux binaries with:
+Build the router for the Debian x86_64 host (requires cargo-zigbuild and Zig):
 
 ```sh
 rustup target add x86_64-unknown-linux-gnu
-cargo zigbuild --release --target x86_64-unknown-linux-gnu \
-  -p argos-server -p argos-zenoh --bin argos-server --bin argos-router
+cargo zigbuild --release --locked --target x86_64-unknown-linux-gnu \
+  -p argos-zenoh --bin argos-router
 ```
 
-Create `/tmp/argos-release/{bin,web,gcp}` containing the two binaries, web `dist` contents and these GCP packaging files. Transfer it to the VM, then run `sudo bash /tmp/argos-release/gcp/install.sh`. The installer preserves existing credentials. On first install, supply `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `/etc/argos/server.env` before starting `argos-server`. After Caddy obtains its certificate, run `sudo systemctl start argos-router-tls.service` to initialize fleet TLS immediately; otherwise the timer retries within five minutes.
+Prepare `/tmp/argos-release/bin/argos-router` from that build and copy the contents
+of `packaging/gcp/` into `/tmp/argos-release/gcp/`. Transfer the bundle to the VM.
+The VM needs Caddy, Python 3 and systemd installed. No web bundle or OAuth
+credentials are required. Run on the VM:
 
-VM, disk, reserved public IP and network usage incur GCP charges. Stopping the VM does not release the disk or reserved IP.
+```sh
+sudo bash /tmp/argos-release/gcp/install.sh
+sudo systemctl status caddy argos-router argos-router-tls.timer
+sudo journalctl -u argos-router -u argos-router-tls --since '10 minutes ago'
+```
+
+The installer creates the service user/directories when needed, preserves existing
+fleet credentials and custom user dictionary entries, installs the router, and
+replaces Caddy's old reverse proxy with a status response. It disables/stops the
+legacy `argos-server.service` when present and removes its installed unit file.
+It leaves old server binaries, `/etc/argos/server.env`, SQLite data and web files
+untouched for recovery; none are used by the router-only deployment.
+
+The first certificate may not be available yet. The installer attempts TLS
+initialization immediately and the timer retries after a failure. After a pending
+certificate is issued, run `sudo systemctl start argos-router-tls.service` and
+confirm the router is active. An unchanged certificate does not trigger a renewal
+restart; installing a new router release does restart the active router to load it.
+Expect a brief disconnect during deployment or certificate rotation.
+
+## Verify and operate
+
+```sh
+gcloud compute ssh argos-host --project=glid-app --zone=us-central1-a
+sudo systemctl status caddy argos-router argos-router-tls.timer
+sudo ss -ltnp
+sudo journalctl -u argos-router --since '10 minutes ago'
+```
+
+From a client, `nc -vz argos.34.135.204.210.sslip.io 7448` checks TCP reachability
+only. Confirm TLS authentication and fresh rover telemetry in the desktop app.
+A failed login needs a credential check; a TLS failure needs certificate/hostname
+and clock checks. Do not disable TLS validation. Keep 7449 bound to loopback.
+Stopping the VM does not release its disk or reserved IP, which can incur charges.
+
+## Operational logging
+
+The independent collector uses HTTPS `/observability/` and loopback port7450;
+see `../Terra/docs/observability/operations.md` for writer/reader provisioning,
+source setup, retention, replay and rollback. The logging installer preserves the
+active router and TLS material. During deployment retain the host's current
+Caddy routes and add the optional observability import rather than replacing an
+active dashboard route. Set `ARGOS_RELEASE_DIR` for an isolated release directory.

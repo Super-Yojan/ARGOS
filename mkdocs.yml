@@ -62,7 +62,7 @@ nav:
       - 2D design draft: design/operator-dashboard/README.md
       - Wireframes: design/operator-dashboard/wireframes/index.md
   - Zenoh interfaces: zenoh.md
-  - Browser dashboard: browser-dashboard.md
+  - Removed browser dashboard: browser-dashboard.md
   - Getting started: getting-started.md
   - Deployment: deployment.md
   - Roadmap: roadmap.md

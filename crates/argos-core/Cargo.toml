@@ -6,3 +6,48 @@ edition.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+terra-types = { path = "../../../Terra/crates/terra-types" }
+
+[[test]]
+name = "arm"
+path = "../../tests/argos-core/arm.rs"
+
+[[test]]
+name = "contract"
+path = "../../tests/argos-core/contract.rs"
+
+[[test]]
+name = "drag"
+path = "../../tests/argos-core/drag.rs"
+
+[[test]]
+name = "drive"
+path = "../../tests/argos-core/drive.rs"
+
+[[test]]
+name = "occupancy"
+path = "../../tests/argos-core/occupancy.rs"
+
+[[test]]
+name = "operator"
+path = "../../tests/argos-core/operator.rs"
+
+[[test]]
+name = "outdoor"
+path = "../../tests/argos-core/outdoor.rs"
+
+[[test]]
+name = "phone_pose"
+path = "../../tests/argos-core/phone_pose.rs"
+
+[[test]]
+name = "pose_report"
+path = "../../tests/argos-core/pose_report.rs"
+
+[[test]]
+name = "search"
+path = "../../tests/argos-core/search.rs"
+
+[[test]]
+name = "state"
+path = "../../tests/argos-core/state.rs"

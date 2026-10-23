@@ -1,0 +1,21 @@
+[Unit]
+Description=Argos pinned Rerun web viewer assets
+After=network.target
+[Service]
+User=terra-observability
+Group=terra-observability
+Environment=RERUN_ANALYTICS_ENABLED=false
+Environment=HOME=/var/lib/terra-observability
+ExecStart=/opt/terra-observability/.venv/bin/rerun --serve-web --bind 127.0.0.1 --web-viewer-port 9090 --port 9877 --server-memory-limit 32MB
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/terra-observability
+MemoryMax=384M
+CPUQuota=50%
+TasksMax=64
+[Install]
+WantedBy=multi-user.target

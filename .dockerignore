@@ -3,7 +3,6 @@
 target
 **/node_modules
 **/dist
-apps/apple
 spikes/**
 !spikes/unity-dashboard/
 !spikes/unity-dashboard/native/

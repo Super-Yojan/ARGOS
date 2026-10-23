@@ -1,0 +1,20 @@
+# Imported inside the existing certificate host's route block.
+handle_path /observability/* {
+    request_body {
+        max_size 33554432
+    }
+    reverse_proxy 127.0.0.1:7450
+}
+
+# Static reader UI is public; session data and recordings require reader Bearer auth.
+handle /rerun {
+    redir /rerun/ 308
+}
+handle_path /rerun/viewer/* {
+    header Cache-Control "public, max-age=3600"
+    reverse_proxy 127.0.0.1:9090
+}
+handle_path /rerun/* {
+    rewrite * /viewer{path}
+    reverse_proxy 127.0.0.1:7450
+}

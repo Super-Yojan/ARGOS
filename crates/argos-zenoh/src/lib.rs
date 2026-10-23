@@ -7,6 +7,7 @@
 //! the session and stops its worker rather than replaying input on reconnect.
 
 mod content_heartbeat;
+pub mod observability;
 pub mod router;
 mod session_log;
 use argos_core::*;
@@ -22,6 +23,11 @@ struct InputState {
     rover_id: Option<u64>,
     keys: HeldInput,
     authority_generation: Option<(String, u64)>,
+    /// Set by the dashboard. Absent keeps the legacy unit twist.
+    guard: Option<TeleopGuard>,
+    deadman: bool,
+    lease_until: f64,
+    last_step: f64,
 }
 /// One native session; subscriptions retain only latest parsed telemetry.
 pub struct Client {
@@ -43,7 +49,9 @@ pub struct Client {
     session_id: String,
     ui_sequence: Mutex<InputOrder>,
     teleop_sequence: Arc<std::sync::atomic::AtomicU64>,
+    tracking: SharedTracking,
 }
+type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
 impl Client {
     pub fn connect(endpoint: &str, prefix: &str) -> Result<Self> {
         Self::connect_authenticated(endpoint, prefix, None)
@@ -53,6 +61,7 @@ impl Client {
         prefix: &str,
         credentials: Option<(&str, &str)>,
     ) -> Result<Self> {
+        terra_observability::initialize_runtime("argos");
         let topics = Topics::new(prefix)?;
         if endpoint.len() > 512
             || !(endpoint.starts_with("tcp/") || endpoint.starts_with("tls/"))
@@ -125,8 +134,10 @@ impl Client {
             })
             .wait()
             .map_err(|e| Error(e.to_string()))?;
+        let tracking: SharedTracking = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let fleet_cache = cache.clone();
         let subscribed_topics = topics.clone();
+        let depth_tracking = tracking.clone();
         let depth = session
             .declare_subscriber(topics.depth())
             .callback(move |sample| {
@@ -136,9 +147,16 @@ impl Client {
                     return;
                 };
                 let payload = sample.payload().to_bytes();
+                let flag = serde_json::from_slice::<serde_json::Value>(&payload)
+                    .ok()
+                    .as_ref()
+                    .and_then(pose_tracking_flag);
                 let mut cache = fleet_cache.lock().unwrap();
                 match decode_pose(&payload) {
-                    Ok(Some(p)) => cache.pose(id, p, start.elapsed().as_secs_f64()),
+                    Ok(Some(p)) => {
+                        depth_tracking.lock().unwrap().insert(id, flag);
+                        cache.pose(id, p, start.elapsed().as_secs_f64());
+                    }
                     Ok(None) => {}
                     Err(e) => cache.notice(e.to_string()),
                 }
@@ -147,12 +165,19 @@ impl Client {
             .map_err(|e| Error(e.to_string()))?;
         let direct_cache = cache.clone();
         let direct_topics = topics.clone();
+        let pose_tracking = tracking.clone();
         let direct_pose = session
             .declare_subscriber(format!("{}/*/pose", topics.prefix))
             .callback(move |sample| {
+                let bytes = sample.payload().to_bytes();
                 if let Some(id) = direct_topics.rover_from_key(sample.key_expr().as_str(), "/pose")
-                    && let Ok(pose) = decode_body_pose(&sample.payload().to_bytes())
+                    && let Ok(pose) = decode_topic_pose(&bytes, Some(id))
                 {
+                    let flag = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .ok()
+                        .as_ref()
+                        .and_then(pose_tracking_flag);
+                    pose_tracking.lock().unwrap().insert(id, flag);
                     direct_cache
                         .lock()
                         .unwrap()
@@ -340,6 +365,10 @@ impl Client {
                     "/pointcloud"
                 } else if key.ends_with("/autonomy/status") {
                     "/autonomy/status"
+                } else if key.ends_with("/pose/quality") {
+                    "/pose/quality"
+                } else if key.ends_with("/navigation/outdoor") {
+                    "/navigation/outdoor"
                 } else if key.ends_with("/search/report") {
                     "/search/report"
                 } else if key.ends_with("/search/status") {
@@ -420,6 +449,10 @@ impl Client {
                     "cloud"
                 } else if suffix == "/map/occupancy" {
                     "occupancy"
+                } else if suffix == "/pose/quality" {
+                    "pose_quality"
+                } else if suffix == "/navigation/outdoor" {
+                    "outdoor"
                 } else {
                     "authority"
                 };
@@ -448,6 +481,7 @@ impl Client {
             let session = session.clone();
             let held = held.clone();
             let authority_cache = operator.clone();
+            let hardware_cache = operator_states.clone();
             let fleet_cache = cache.clone();
             let stop = shutdown.clone();
             let prefix = topics.prefix.clone();
@@ -468,13 +502,38 @@ impl Client {
                                     authority.matches_authority(*id, run, *revision)
                                 });
                         drop(authority);
-                        permitted && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
+                        let hardware_ready = hardware_cache
+                            .lock()
+                            .unwrap()
+                            .get(&(*id, "hardware".into()))
+                            .is_some_and(|(value, at)| require_relay(value, at, false).is_ok());
+                        permitted
+                            && hardware_ready
+                            && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
                     });
                     if active.is_none() {
                         input.rover_id = None;
                         input.keys.clear();
+                        if let Some(guard) = input.guard.as_mut() {
+                            guard.reset();
+                        }
                     }
-                    let sample = input.keys.sample();
+                    if input.deadman && input.lease_until > 0. && now >= input.lease_until {
+                        input.keys.clear();
+                    }
+                    let dt = if input.last_step > 0. {
+                        now - input.last_step
+                    } else {
+                        0.05
+                    };
+                    input.last_step = now;
+                    let (unit_linear, unit_angular) = input.keys.sample();
+                    // Defense in depth; Terra enforces the real limits.
+                    let sample = if let Some(guard) = input.guard.as_mut() {
+                        guard.step(unit_linear, unit_angular, dt)
+                    } else {
+                        (unit_linear, unit_angular)
+                    };
                     if let Some(id) = active {
                         if sample != (0., 0.) || last.is_some() {
                             let sequence = packet_sequence
@@ -551,6 +610,7 @@ impl Client {
             session_id,
             ui_sequence: Mutex::new(InputOrder::default()),
             teleop_sequence,
+            tracking,
         })
     }
     pub fn operator_state_snapshot(&self) -> String {
@@ -559,6 +619,8 @@ impl Client {
             let age = received.elapsed().as_secs_f64();
             let max_age = if kind == "authority" || kind == "hardware" {
                 SUPERVISION_STALE_SECONDS
+            } else if kind == "outdoor" {
+                3.0
             } else {
                 2.5
             };
@@ -581,6 +643,37 @@ impl Client {
         }
         result.to_string()
     }
+    pub fn pose_tracking(&self, id: u64) -> Option<bool> {
+        self.tracking.lock().unwrap().get(&id).copied().flatten()
+    }
+    /// Replace the dashboard twist shaper. Legacy callers leave it unset.
+    ///
+    /// Defense in depth; Terra enforces the real limits.
+    pub fn set_teleop_guard(&self, limits: TeleopLimits) {
+        let mut held = self.held.lock().unwrap();
+        if let Some(guard) = held.guard.as_mut() {
+            guard.limits = limits;
+        } else {
+            held.guard = Some(TeleopGuard::new(limits));
+        }
+        held.deadman = true;
+    }
+    pub fn clear_teleop_guard(&self) {
+        let mut held = self.held.lock().unwrap();
+        if let Some(guard) = held.guard.as_mut() {
+            guard.reset();
+        }
+        held.guard = None;
+        held.deadman = false;
+        held.lease_until = 0.;
+    }
+    pub fn refresh_drive(&self, id: u64) {
+        let now = self.start.elapsed().as_secs_f64();
+        let mut held = self.held.lock().unwrap();
+        if held.deadman && held.rover_id == Some(id) && held.keys.is_held() {
+            held.lease_until = now + DRIVE_DEADMAN_SECONDS;
+        }
+    }
     pub fn occupancy_grid(&self, id: u64) -> Option<(OccupancyGrid, f64, Option<String>)> {
         self.maps.lock().unwrap().get(&id).map(|(grid, at, frame)| {
             (
@@ -602,14 +695,53 @@ impl Client {
         }
         result.to_string()
     }
+    /// Bind new remote work to the observed vehicle authority generation. No
+    /// command is persisted/retried; link loss retires this generation onboard.
+    fn bound_payload(&self, id: u64, kind: &str, payload: &[u8]) -> Result<Vec<u8>> {
+        let mut v: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| invalid("invalid command JSON"))?;
+        let neutral = (kind == "goal" && v["cancel"] == true)
+            || (kind == "safety" && v["action"] == "stop")
+            || (kind == "search/action"
+                && matches!(v["action"].as_str(), Some("pause" | "cancel")))
+            || kind == "search/report/ack"
+            || kind == "mission/report"
+            || (kind == "teleop"
+                && v["linear"].as_f64() == Some(0.)
+                && v["angular"].as_f64() == Some(0.));
+        if !neutral {
+            let states = self.operator_states.lock().unwrap();
+            let (authority, at) = states.get(&(id, "authority".into())).ok_or_else(|| {
+                invalid("Current vehicle authority required; update or reconnect the vehicle")
+            })?;
+            if at.elapsed().as_secs_f64() >= SUPERVISION_STALE_SECONDS
+                || !authority["run_id"].is_string()
+                || authority["revision"].as_u64().is_none()
+            {
+                return Err(invalid("Current vehicle authority required"));
+            }
+            if (v.get("run_id").is_some() && v["run_id"] != authority["run_id"])
+                || (v.get("authority_revision").is_some()
+                    && v["authority_revision"] != authority["revision"])
+            {
+                return Err(invalid(
+                    "Vehicle authority changed; review the command again",
+                ));
+            }
+            v["run_id"] = authority["run_id"].clone();
+            v["authority_revision"] = authority["revision"].clone();
+        }
+        serde_json::to_vec(&v).map_err(|_| invalid("invalid command JSON"))
+    }
     pub fn operator_command(&self, id: u64, kind: &str, payload: &str) -> Result<()> {
         let _action = self.actions.lock().unwrap();
         if !matches!(
             kind,
             "autonomy"
                 | "teleop"
-                | "hardware"
                 | "navigation/settings"
+                | "navigation/source"
+                | "navigation/resume"
                 | "search"
                 | "search/action"
                 | "search/report/ack"
@@ -630,6 +762,14 @@ impl Client {
             {
                 return Err(invalid("invalid navigation settings request"));
             }
+        } else if matches!(kind, "navigation/source" | "navigation/resume") {
+            if value["schema_version"] != 1
+                || value["token"].as_str().is_none_or(|t| !valid_token(t))
+                || !value["run_id"].is_string()
+                || value["navigation_revision"].as_u64().is_none()
+            {
+                return Err(invalid("invalid navigation request"));
+            }
         } else if kind.starts_with("search") {
             validate_search_command(kind, payload)?;
         } else if kind == "teleop" {
@@ -645,14 +785,6 @@ impl Client {
                 || angular.abs() > 1.
             {
                 return Err(invalid("drive exceeds dashboard limits"));
-            }
-        } else if kind == "hardware" {
-            if !matches!(value["action"].as_str(), Some("arm" | "disarm"))
-                || value["token"]
-                    .as_str()
-                    .is_none_or(|s| s.is_empty() || s.len() > 64)
-            {
-                return Err(invalid("invalid hardware request"));
             }
         } else if !matches!(
             value["level"].as_str(),
@@ -671,7 +803,6 @@ impl Client {
         let neutral = kind == "search/report/ack"
             || (kind == "search/action"
                 && matches!(value["action"].as_str(), Some("cancel" | "pause")))
-            || (kind == "hardware" && value["action"] == "disarm")
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
@@ -682,15 +813,29 @@ impl Client {
             ) {
             SUPERVISION_STALE_SECONDS
         } else {
-            0.5
+            STALE_SECONDS
         };
+        // L0 selection and confirmed L0 control do not consume camera pose.
+        // Fresh membership, authority, run/revision and hardware checks below remain.
+        let manual_without_pose = (kind == "autonomy" && value["level"] == "teleop")
+            || (kind == "teleop"
+                && self
+                    .operator_states
+                    .lock()
+                    .unwrap()
+                    .get(&(id, "authority".into()))
+                    .is_some_and(|(authority, at)| {
+                        at.elapsed().as_secs_f64() < STALE_SECONDS
+                            && authority["requested_level"] == "teleop"
+                    }));
         if !neutral {
             let snapshot = self.snapshot();
             if snapshot.link != "healthy"
                 || !snapshot.rovers.iter().any(|r| {
                     r.id == id
                         && r.membership == "online"
-                        && (kind == "navigation/settings"
+                        && (manual_without_pose
+                            || kind == "navigation/settings"
                             || r.pose_age.is_some_and(|a| a < freshness))
                 })
             {
@@ -715,34 +860,87 @@ impl Client {
                 let (hardware, at) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("hardware status unavailable"))?;
+                require_relay(hardware, at, true)?;
                 if value["run_id"] != authority["run_id"]
                     || value["authority_revision"] != authority["revision"]
                     || value["settings_revision"] != authority["navigation"]["revision"]
                     || authority["navigation"]["schema_version"] != 1
                     || !matches!(authority["safety"].as_str(), Some("clear" | "hold"))
-                    || at.elapsed().as_secs_f64() >= 0.5
-                    || hardware["ready"] != true
-                    || hardware["armed"] != false
-                    || hardware["arming"] != false
                 {
+                    return Err(invalid("Settings require current vehicle authority"));
+                }
+            } else if kind == "navigation/resume" {
+                let (raw, at) = states
+                    .get(&(id, "outdoor".into()))
+                    .ok_or_else(|| invalid("Outdoor status unavailable"))?;
+                let mut report = argos_core::OutdoorReport::decode(raw)?;
+                report.age_s = Some(at.elapsed().as_secs_f64());
+                if let Some(reason) = argos_core::outdoor_resume_refusal(
+                    &report,
+                    value["run_id"].as_str().unwrap(),
+                    value["navigation_revision"].as_u64().unwrap(),
+                ) {
+                    return Err(invalid(reason));
+                }
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("Hardware unavailable"))?;
+                require_relay(hardware, at, false)?;
+                if authority["requested_level"] != "waypoint"
+                    || authority["safety"] == "emergency_stop"
+                {
+                    return Err(invalid("Select L3 with ready hardware before resuming"));
+                }
+            } else if kind == "navigation/source" {
+                let source = value["source"].as_str();
+                if value["schema_version"] != 1
+                    || !matches!(source, Some("local" | "outdoor_gps"))
+                    || value["token"]
+                        .as_str()
+                        .is_none_or(|token| !valid_token(token))
+                    || !value["run_id"].is_string()
+                    || value["navigation_revision"].as_u64().is_none()
+                {
+                    return Err(invalid("invalid navigation source request"));
+                }
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("hardware status unavailable"))?;
+                require_relay(hardware, at, true)?;
+                if value["run_id"] != authority["run_id"] {
+                    return Err(invalid("navigation run changed"));
+                }
+                if self.snapshot().rovers.iter().any(|rover| {
+                    rover.id == id
+                        && rover
+                            .goal
+                            .as_ref()
+                            .is_some_and(|goal| goal.state == GoalState::Active)
+                }) {
                     return Err(invalid(
-                        "settings require current authority and ready disarmed hardware",
+                        "Navigation source changes require no active mission",
                     ));
                 }
-            } else if kind == "hardware" {
-                if value["run_id"] != authority["run_id"]
-                    || value["authority_revision"] != authority["revision"]
-                    || authority["safety"] != "clear"
-                {
-                    return Err(invalid("arm authority changed"));
+                if source == Some("outdoor_gps") {
+                    let (outdoor, outdoor_at) = states
+                        .get(&(id, "outdoor".into()))
+                        .ok_or_else(|| invalid("App update required"))?;
+                    if outdoor_at.elapsed().as_secs_f64() >= 3.
+                        || argos_core::OutdoorReport::decode(outdoor).is_err()
+                        || argos_core::app_update_required(
+                            argos_core::OutdoorReport::decode(outdoor).ok().as_ref(),
+                        )
+                        || outdoor["navigation_revision"] != value["navigation_revision"]
+                        || outdoor["run_id"] != value["run_id"]
+                    {
+                        return Err(invalid("App update required"));
+                    }
                 }
             } else if kind == "teleop" {
                 let (hardware, received) = states
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("hardware status unavailable"))?;
-                if received.elapsed().as_secs_f64() >= 0.5 || hardware["armed"] != true {
-                    return Err(invalid("motors are not confirmed armed"));
-                }
+                require_relay(hardware, received, false)?;
                 if value["run_id"] != authority["run_id"]
                     || value["authority_revision"] != authority["revision"]
                     || value["operator_session_id"]
@@ -768,6 +966,7 @@ impl Client {
                 return Err(invalid("unsupported vehicle autonomy request"));
             }
         }
+        let payload = self.bound_payload(id, kind, payload.as_bytes())?;
         let result = self
             .session
             .lock()
@@ -799,9 +998,8 @@ impl Client {
             .iter()
             .filter_map(|(id, (value, received))| {
                 let age = received.elapsed().as_secs_f64();
-                if age >= SUPERVISION_STALE_SECONDS {
-                    return None;
-                }
+                // Keep coordinate-frame identity and the original observation age.
+                // Expiry here previously made old local AR data look geographically aligned.
                 let mut value = value.clone();
                 value["age"] = serde_json::json!(age);
                 Some((id.to_string(), value))
@@ -855,6 +1053,7 @@ impl Client {
     pub fn action(&self, id: u64, kind: &str, value: serde_json::Value) -> Result<String> {
         let token = uuid::Uuid::new_v4().to_string();
         let payload = operator_payload(kind, value, &token)?;
+        let payload = self.bound_payload(id, kind, &payload)?;
         if kind == "autonomy" || kind == "safety" {
             self.clear_input();
         }
@@ -952,6 +1151,13 @@ impl Client {
     ) -> Result<()> {
         let now = self.start.elapsed().as_secs_f64();
         let mut held = self.held.lock().unwrap();
+        if down {
+            let states = self.operator_states.lock().unwrap();
+            let (hardware, at) = states
+                .get(&(id, "hardware".into()))
+                .ok_or_else(|| invalid("Hardware status unavailable"))?;
+            require_relay(hardware, at, false)?;
+        }
         let accepted_generation = {
             let authority = self.operator.lock().unwrap();
             if generation
@@ -985,6 +1191,9 @@ impl Client {
         held.authority_generation = accepted_generation;
         if down {
             held.keys.press(key);
+            if held.deadman {
+                held.lease_until = now + DRIVE_DEADMAN_SECONDS;
+            }
         } else {
             held.keys.release(key);
         }
@@ -1040,14 +1249,78 @@ impl Client {
             .snapshot(self.start.elapsed().as_secs_f64())
     }
     pub fn send_goal(&self, id: u64, goal: GoalRequest) -> Result<String> {
+        self.send_reviewed_goal(id, goal, None)
+    }
+    /// Preserve the geographic review envelope and recheck it immediately before publication.
+    pub fn send_reviewed_goal(
+        &self,
+        id: u64,
+        goal: GoalRequest,
+        review: Option<(String, u64, f64)>,
+    ) -> Result<String> {
         let _action = self.actions.lock().unwrap();
+        if let GoalRequest::Geographic {
+            latitude,
+            longitude,
+            ..
+        } = goal
+        {
+            let (run, revision, radius) = review
+                .as_ref()
+                .ok_or_else(|| invalid("Geographic review required"))?;
+            let states = self.operator_states.lock().unwrap();
+            let (raw, at) = states
+                .get(&(id, "outdoor".into()))
+                .ok_or_else(|| invalid("Outdoor status unavailable"))?;
+            let mut report = argos_core::OutdoorReport::decode(raw)?;
+            report.age_s = Some(at.elapsed().as_secs_f64());
+            let (authority, at) = states
+                .get(&(id, "authority".into()))
+                .ok_or_else(|| invalid("Authority unavailable"))?;
+            if at.elapsed().as_secs_f64() >= SUPERVISION_STALE_SECONDS
+                || authority["run_id"] != *run
+                || authority["safety"] != "clear"
+            {
+                return Err(invalid("Authority changed"));
+            }
+            argos_core::admit_outdoor_goal(argos_core::OutdoorAdmission {
+                report: Some(&report),
+                latitude,
+                longitude,
+                arrival_radius_m: *radius,
+                level: authority["requested_level"].as_str(),
+                run_id: run,
+                navigation_revision: *revision,
+            })
+            .map_err(invalid)?;
+            let (hardware, at) = states
+                .get(&(id, "hardware".into()))
+                .ok_or_else(|| invalid("Hardware unavailable"))?;
+            require_relay(hardware, at, false)?;
+        }
         let token = uuid::Uuid::new_v4().to_string();
-        let payload = self.cache.lock().unwrap().prepare_goal(
+        let mut payload = self.cache.lock().unwrap().prepare_goal(
             id,
             &goal,
             &token,
             self.start.elapsed().as_secs_f64(),
         )?;
+        if let Some((run, revision, radius)) = review {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&payload).map_err(|_| invalid("Invalid goal"))?;
+            value["run_id"] = serde_json::json!(run);
+            value["navigation_revision"] = serde_json::json!(revision);
+            value["arrival_radius_m"] = serde_json::json!(radius);
+            payload = serde_json::to_vec(&value).map_err(|_| invalid("Invalid goal"))?;
+        }
+        payload = self
+            .bound_payload(id, "goal", &payload)
+            .inspect_err(|error| {
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .publish_failed(id, error.to_string());
+            })?;
         self.publish(id, payload.clone())?;
         let _ = self.recorder.record(serde_json::json!({
             "kind": "goal_sent",
@@ -1091,6 +1364,12 @@ impl Client {
         result
     }
     pub fn disconnect(&self) {
+        terra_observability::record_runtime(
+            "_producer",
+            "router",
+            "connection.disconnect",
+            serde_json::json!({}),
+        );
         let _action = self.actions.lock().unwrap();
         self.clear_input();
         self.shutdown
@@ -1104,6 +1383,7 @@ impl Client {
             let _ = session.close().wait();
         }
         self.cache.lock().unwrap().disconnected();
+        self.tracking.lock().unwrap().clear();
         self.localizations.lock().unwrap().clear();
         self.operator_states.lock().unwrap().clear();
         self.maps.lock().unwrap().clear();
@@ -1113,6 +1393,18 @@ impl Drop for Client {
     fn drop(&mut self) {
         self.disconnect();
     }
+}
+
+fn require_relay(value: &serde_json::Value, at: &Instant, neutral: bool) -> Result<()> {
+    let mut status = HardwareObservation::from_status(value);
+    status.age = at.elapsed().as_secs_f64();
+    if let Some(reason) = drive_block(&status) {
+        return Err(invalid(reason));
+    }
+    if neutral && status.output_active {
+        return Err(invalid("Navigation changes require neutral motor output"));
+    }
+    Ok(())
 }
 
 fn utc() -> f64 {
@@ -1139,169 +1431,5 @@ fn zero_payload(
 }
 
 #[cfg(test)]
-mod forest_tests {
-    use super::*;
-    use std::time::Duration;
-    #[test]
-    fn snapshots_preserve_large_grids_membership_and_freshness() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        let router = router::Router::default();
-        router.start(port, "").unwrap();
-        let mut client =
-            Client::connect(&format!("tcp/127.0.0.1:{port}"), "snapshot-test").unwrap();
-        client.start = Instant::now() - Duration::from_secs(120);
-        client
-            .operator
-            .lock()
-            .unwrap()
-            .pending(8, "token".into(), 0.);
-        {
-            let mut cache = client.cache.lock().unwrap();
-            cache.fleet(
-                decode_fleet(br#"{"count":2,"max_count":32,"ids":[8,9]}"#).unwrap(),
-                0.,
-            );
-            cache.fleet(
-                decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(),
-                0.,
-            );
-        }
-        let grid = OccupancyGrid {
-            schema_version: 1,
-            rover_id: 8,
-            run_id: "snapshot-run".into(),
-            sequence: 42,
-            width: 500,
-            height: 500,
-            resolution: 0.05,
-            origin_x: -12.5,
-            origin_y: 3.,
-            occupancy: (0..250_000).map(|i| (i % 102) as i8 - 1).collect(),
-        };
-        let expected = serde_json::to_value(&grid).unwrap();
-        {
-            let mut maps = client.maps.lock().unwrap();
-            maps.insert(8, (grid.clone(), 10_000., None));
-            maps.insert(9, (grid.clone(), 0., None));
-            maps.insert(10, (grid, 0., None));
-        }
-        let now = Instant::now();
-        {
-            let mut states = client.operator_states.lock().unwrap();
-            states.insert(
-                (8, "hardware".into()),
-                (
-                    serde_json::json!({"ok": true}),
-                    now - Duration::from_secs(3),
-                ),
-            );
-            states.insert(
-                (8, "search_report:first".into()),
-                (serde_json::json!({"sequence": 7}), now),
-            );
-            states.insert(
-                (8, "search_report:expired".into()),
-                (
-                    serde_json::json!({"sequence": 6}),
-                    now - Duration::from_secs(3),
-                ),
-            );
-            states.insert(
-                (8, "authority".into()),
-                (
-                    serde_json::json!({"revision": 1}),
-                    now - Duration::from_secs_f64(SUPERVISION_STALE_SECONDS + 1.),
-                ),
-            );
-        }
-        let occupancy: serde_json::Value =
-            serde_json::from_str(&client.occupancy_snapshot()).unwrap();
-        assert_eq!(
-            occupancy,
-            serde_json::json!({"8": {"grid": expected, "age": 0.}})
-        );
-        let operator: serde_json::Value =
-            serde_json::from_str(&client.operator_snapshot()).unwrap();
-        let mut embedded = expected.clone();
-        embedded["age"] = serde_json::json!(0.);
-        assert_eq!(operator["8"]["occupancy"], embedded);
-        assert!(operator.get("9").is_none());
-        assert!(operator.get("10").is_none());
-        assert_eq!(operator["8"]["hardware"]["ok"], true);
-        assert!(operator["8"]["hardware"]["age"].as_f64().unwrap() >= 0.);
-        assert_eq!(operator["8"]["reports"].as_array().unwrap().len(), 1);
-        assert_eq!(operator["8"]["reports"][0]["sequence"], 7);
-        assert_eq!(
-            operator["8"]["authority"],
-            client.legacy_operator_snapshot_value()["8"]["authority"]
-        );
-        assert_eq!(operator["8"]["recording"], "active");
-        client.disconnect();
-        router.stop().unwrap();
-    }
-
-    #[test]
-    fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        let router = router::Router::default();
-        router.start(port, "").unwrap();
-        let mut client = Client::connect(&format!("tcp/127.0.0.1:{port}"), "forest-test").unwrap();
-        client.start = Instant::now() - Duration::from_secs(60);
-        {
-            let mut cache = client.cache.lock().unwrap();
-            cache.fleet(
-                decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(),
-                0.,
-            );
-            cache.pose(
-                8,
-                Pose {
-                    rover_id: 8,
-                    sequence: 1,
-                    x: 0.,
-                    y: 0.,
-                    yaw: 0.,
-                },
-                0.,
-            );
-        }
-        client.operator_states.lock().unwrap().insert(
-            (8, "authority".into()),
-            (
-                serde_json::json!({
-                    "run_id": "run",
-                    "revision": 1,
-                    "requested_level": "teleop",
-                    "supported_levels": ["teleop","waypoint","waypoint_direct"],
-                    "safety": "clear",
-                }),
-                Instant::now() - Duration::from_secs(60),
-            ),
-        );
-        assert!(
-            client
-                .operator_command(8, "autonomy", r#"{"level":"waypoint","token":"delayed"}"#)
-                .is_ok()
-        );
-        assert!(
-            client
-                .operator_command(
-                    8,
-                    "autonomy",
-                    r#"{"level":"waypoint_direct","token":"delayed-direct"}"#
-                )
-                .is_ok()
-        );
-        assert!(
-            client
-                .operator_command(8, "autonomy", r#"{"level":"teleop","token":"manual"}"#)
-                .is_err()
-        );
-        client.disconnect();
-        router.stop().unwrap();
-    }
-}
+#[path = "../../../tests/argos-zenoh/unit/lib_forest_tests.rs"]
+mod forest_tests;

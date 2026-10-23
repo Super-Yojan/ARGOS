@@ -1,10 +1,14 @@
 argos.34.135.204.210.sslip.io {
-    @compressible not path /api/v1/events
-    encode @compressible zstd gzip
     header {
         Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options nosniff
         Referrer-Policy same-origin
     }
-    reverse_proxy 127.0.0.1:8080
+    # Keep automatic HTTPS and its certificate storage for the Zenoh TLS timer.
+    # This reports HTTPS availability, not router or fleet readiness.
+    route {
+        import /etc/caddy/argos-observability*.caddy
+        respond /healthz "ARGOS certificate host is online" 200
+        respond "ARGOS uses the native desktop app. Zenoh TLS listens on port 7448." 200
+    }
 }

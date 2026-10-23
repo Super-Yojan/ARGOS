@@ -1,6 +1,6 @@
 # Spatial dashboard and hybrid router implementation
 
-> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The primary ARGOS interface is now the React web dashboard and Rust service. Read the [current browser guide](../browser-dashboard.md) for supported browser behavior. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
+> **Status — October 17, 2026:** This is a historical design, implementation record, or legacy workflow. The React dashboard and SwiftUI apps were removed on October 19, 2026. The operator surface is the GPUI app in `crates/argos-gpui`, which mounts the `terra-map` Map View. The HTTP service was removed on October 21, 2026; the desktop app uses Zenoh directly. Read the [removed browser dashboard](../browser-dashboard.md) for the retirement notice. Unity C3 proposals are superseded; recorded evidence remains specific to its original platform and date.
 
 Implemented on the existing native Apple dashboard branch. The approved Mac/iPad-first plan retains SceneKit, existing Terra contracts and command safety paths. User amendment: an explicit all-interface LAN bind and Bonjour discovery coexist with loopback and Tailscale modes; no paid hosting is provisioned.
 

@@ -16,3 +16,7 @@ bindgen = ["uniffi/cli"]
 name = "argos-bindgen"
 path = "src/bin/bindgen.rs"
 required-features = ["bindgen"]
+
+[[test]]
+name = "api"
+path = "../../tests/argos-ffi/api.rs"

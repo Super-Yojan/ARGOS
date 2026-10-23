@@ -1,5 +1,0 @@
-Portable source: this skill directory.
-
-Optional external source: set `YG_DESIGN_SOURCE` to an absolute design-system directory when a fuller local copy is available.
-
-This skill contains the rules, tokens, and core primitives required for portable use. Read an external copy only when it exists and provides a component, plate, or template that the current task needs.

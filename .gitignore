@@ -1,7 +1,5 @@
 /target/
 /site/
-/apps/apple/Generated/
-/apps/apple/build*/
 /.worktrees/
 .DS_Store
 *.xcuserstate
@@ -12,15 +10,23 @@ xcuserdata/
 /spikes/unity-dashboard/Logs/
 /spikes/unity-dashboard/UserSettings/
 
-# Browser dashboard and service runtime.
-/apps/web/node_modules/
-/apps/web/dist/
-/apps/web/test-results/
-/apps/web/playwright-report/
-/apps/web/*.tsbuildinfo
+# Legacy service data and local credentials (preserved during migration).
+/web/dist/
 *.db
 *.db-shm
 *.db-wal
 .env
 .env.fleet
 /argos-local-root.crt
+
+# Leftover generated artifacts from the former Apple and web app builds.
+/apps/apple/Generated/
+/apps/apple/build/
+/apps/apple/build-ios/
+/apps/web/node_modules/
+/apps/web/dist/
+/apps/web/test-results/
+/apps/web/tsconfig.tsbuildinfo
+
+# Python deployment test caches.
+__pycache__/

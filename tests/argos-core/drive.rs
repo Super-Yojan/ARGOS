@@ -1,0 +1,189 @@
+use argos_core::*;
+
+#[test]
+fn level_and_teleop_payloads_round_trip() {
+    let level = encode_level_request("supervised", "mode-1").unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&level).unwrap(),
+        serde_json::json!({"level": "supervised", "token": "mode-1"})
+    );
+    assert!(encode_level_request("explore", "mode-1").is_err());
+    assert!(encode_level_request("teleop", "").is_err());
+    let status = br#"{"requested_level":"waypoint","effective_level":"waypoint","assigned_level":"supervised","supported_levels":["teleop","waypoint"],"global_route":[[0.0,0.0],[1.5,0.25]],"revision":4,"token":"mode-1","result":"accepted"}"#;
+    let report = decode_autonomy_status(status).unwrap();
+    assert_eq!(report.requested, "waypoint");
+    assert_eq!(report.effective.as_deref(), Some("waypoint"));
+    assert_eq!(report.recommended.as_deref(), Some("supervised"));
+    assert_eq!(
+        report.route,
+        vec![
+            RouteSample {
+                x: 0.,
+                y: 0.,
+                travel: Travel::Unspecified,
+            },
+            RouteSample {
+                x: 1.5,
+                y: 0.25,
+                travel: Travel::Unspecified,
+            },
+        ]
+    );
+    assert!(report.commanded_linear.is_none());
+    assert!(report.hold.is_none());
+    let twist = encode_teleop(0.2, -0.1, "session-1", 3, Some("run"), Some(4)).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&twist).unwrap();
+    assert_eq!(value["linear"], 0.2);
+    assert_eq!(value["angular"], -0.1);
+    assert_eq!(value["sequence"], 3);
+    assert!(encode_teleop(0.6, 0., "session-1", 1, None, None).is_err());
+}
+
+#[test]
+fn yaw_rate_is_clamped_and_slews_without_integrating_a_heading() {
+    let mut guard = TeleopGuard::new(TeleopLimits {
+        allow_spin: true,
+        ..TeleopLimits::default()
+    });
+    let (_, first) = guard.step(1., 1., 0.05);
+    let step = DEFAULT_DRIVE_YAW_ACCEL * 0.05;
+    assert!((first - step).abs() < 1e-9);
+    let (_, second) = guard.step(1., 1., 0.05);
+    assert!((second - 2. * step).abs() < 1e-9);
+    assert!(second < DEFAULT_DRIVE_YAW_RATE);
+    let mut capped = second;
+    for _ in 0..40 {
+        capped = guard.step(1., 1., 0.05).1;
+    }
+    assert!((capped - DEFAULT_DRIVE_YAW_RATE).abs() < 1e-9);
+    let (_, easing) = guard.step(1., 0., 0.05);
+    assert!((capped - easing - DEFAULT_DRIVE_YAW_DECEL * 0.05).abs() < 1e-9);
+    assert!(easing > 0.);
+    let (_, jumped) = guard.step(1., 1., 10.);
+    assert!((jumped - easing).abs() <= DEFAULT_DRIVE_YAW_ACCEL * 0.5 + 1e-9);
+}
+
+#[test]
+fn in_place_spin_is_off_unless_requested_and_release_returns_to_zero() {
+    let mut guard = TeleopGuard::new(TeleopLimits::default());
+    assert!(!guard.limits.allow_spin);
+    let (linear, angular) = guard.step(0., 1., 0.05);
+    assert_eq!((linear, angular), (0., 0.));
+    let (linear, angular) = guard.step(1., 1., 0.05);
+    assert!((linear - DEFAULT_DRIVE_LINEAR).abs() < 1e-9);
+    assert!(angular > 0.);
+    guard.limits.allow_spin = true;
+    let mut angular = 0.;
+    for _ in 0..30 {
+        angular = guard.step(0., 1., 0.05).1;
+    }
+    assert!(angular > 0.2);
+    for _ in 0..40 {
+        angular = guard.step(0., 0., 0.05).1;
+    }
+    assert_eq!(angular, 0.);
+}
+
+#[test]
+fn deadman_expires_and_a_degraded_pose_blocks_a_new_goal() {
+    let mut lease = DriveLease::default();
+    assert!(!lease.alive(0.));
+    lease.hold(1.);
+    assert!(lease.alive(1.2));
+    assert!(!lease.alive(1. + DRIVE_DEADMAN_SECONDS));
+    lease.release();
+    assert!(!lease.alive(1.1));
+
+    let limits = DegradeLimits::default();
+    let mut watch = PoseWatch::default();
+    let (degraded, _) = watch.observe(0., 1, 0., None, limits);
+    assert!(!degraded);
+    assert!(goal_blocked(false).is_none());
+    let (degraded, reason) = watch.observe(0.2, 2, 0.2, None, limits);
+    assert!(degraded, "{reason}");
+    assert_eq!(reason, "yaw rate is high");
+    let (degraded, reason) = watch.observe(0.2, 3, 0.4, None, limits);
+    assert!(degraded);
+    assert_eq!(reason, "settling after a turn");
+    let (degraded, _) = watch.observe(0.2, 4, 0.4 + DEFAULT_DEGRADED_SETTLE, None, limits);
+    assert!(!degraded);
+    let (degraded, reason) = watch.observe(0.2, 5, 3., Some(false), limits);
+    assert!(degraded);
+    assert_eq!(reason, "VIO tracking lost");
+    assert_eq!(
+        goal_blocked(true),
+        Some("pose is degraded; not sending a goal")
+    );
+    let fallback = fallback_degrade_reason(reason);
+    assert!(fallback.starts_with("yaw-rate fallback"));
+    let value = serde_json::json!({"x": 1, "y": 2, "yaw": 0, "tracked": false});
+    assert_eq!(pose_tracking_flag(&value), Some(false));
+    assert_eq!(
+        pose_tracking_flag(&serde_json::json!({"quality": 0.2})),
+        Some(false)
+    );
+    assert_eq!(
+        pose_tracking_flag(&serde_json::json!({"x": 0, "yaw": 0})),
+        None
+    );
+    assert!(!outdoor_gps_advertised(&serde_json::json!({})));
+    assert!(outdoor_gps_advertised(
+        &serde_json::json!({"authority": {"navigation": {"source": "outdoor_gps"}}})
+    ));
+    assert_eq!(
+        geographic_goal_refusal(false),
+        Some("Outdoor GPS goals are unsupported on this rover")
+    );
+    assert!(geographic_goal_refusal(true).is_none());
+}
+
+#[test]
+fn reverse_uses_the_same_radius_cap_and_quality_replaces_the_heuristic() {
+    let mut guard = TeleopGuard::new(TeleopLimits::default());
+    let mut angular = 0.;
+    let mut linear = 0.;
+    for _ in 0..80 {
+        let sample = guard.step(-1., 1., 0.05);
+        linear = sample.0;
+        angular = sample.1;
+    }
+    let cap = DEFAULT_DRIVE_LINEAR / DEFAULT_MIN_TURN_RADIUS;
+    assert!(linear < 0.);
+    assert!(angular > 0.);
+    assert!(angular <= cap + 1e-9);
+
+    let quality = decode_pose_quality(
+        br#"{"schema_version":1,"rover_id":3,"run_id":"run","sequence":4,"degraded":true,"reason":"tracking lost","pose_age_s":0.2,"imu_age_s":null}"#,
+    )
+    .unwrap();
+    assert!(quality.degraded);
+    assert!(quality.imu_age_s.is_none());
+    assert!((quality.pose_age_s.unwrap() - 0.2).abs() < 1e-9);
+    let status = serde_json::json!({
+        "requested_level": "waypoint",
+        "effective_level": "waypoint",
+        "reason": "heading_requires_spin_or_replan",
+        "commanded_linear": -0.15,
+        "command_origin": "phone_bluetooth",
+        "global_route": [[0.0, 0.0], [1.0, 0.0, -0.2], {"x": 1.0, "y": 1.0, "velocity": 0.2}],
+        "pose_quality": {
+            "schema_version": 1,
+            "rover_id": 3,
+            "run_id": "run",
+            "sequence": 4,
+            "degraded": false,
+            "reason": "",
+            "pose_age_s": null,
+            "imu_age_s": null
+        }
+    });
+    let report = decode_autonomy_value(&status).unwrap();
+    assert_eq!(report.hold.as_deref(), Some(HEADING_HOLD));
+    assert_eq!(report.commanded_linear, Some(-0.15));
+    assert_eq!(report.origin, CommandOrigin::PhoneBluetooth);
+    assert_eq!(report.route[1].travel, Travel::Reverse);
+    assert_eq!(report.route[2].travel, Travel::Forward);
+    assert_eq!(report.route[0].travel, Travel::Unspecified);
+    assert!(report.pose_quality.is_some_and(|quality| !quality.degraded));
+    assert!(pose_warning_text(report.origin, true, "tracking lost").is_none());
+}
