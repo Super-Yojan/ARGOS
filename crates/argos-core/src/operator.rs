@@ -262,7 +262,6 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
                         | "waypoint_direct"
                         | "supervised"
                         | "target_search"
-                        | "explore"
                 )
             ) {
                 return Err(invalid("invalid level"));

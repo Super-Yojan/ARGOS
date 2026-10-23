@@ -306,7 +306,12 @@ fn authority_teleop_release_and_export_are_correlated() {
         c.operator_snapshot().contains("accepted")
     });
     wait_for(|| {
-        peer.put("terra/rover/8/hardware/status",r#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"fault":null}"#).wait().unwrap();
+        peer.put(
+            "terra/rover/8/hardware/status",
+            r#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"reason":"ready","age":0.1}"#,
+        )
+        .wait()
+        .unwrap();
         c.operator_snapshot().contains("streamed_relay")
     });
     c.action(8, "mission/report", serde_json::json!({"survivor_id": 1}))
@@ -420,7 +425,7 @@ fn receives_phone_pose_without_depth_pixels() {
         router
             .put(
                 "phone-test/7/hardware/status",
-                br#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"fault":null,"reason":"ready"}"#.as_slice(),
+                br#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"reason":"ready","age":0.1}"#.as_slice(),
             )
             .wait()
             .unwrap();
@@ -445,13 +450,18 @@ fn receives_phone_pose_without_depth_pixels() {
             .operator_command(
                 7,
                 "hardware",
-                r#"{"action":"arm","token":"arm-one","run_id":"run","authority_revision":4}"#
+                r#"{"action":"arm","token":"arm-one","run_id":"run","authority_revision":4}"#,
             )
             .is_err()
     );
     assert!(
+        client
+            .operator_command(7, "hardware", r#"{"action":"disarm","token":"stop-one"}"#)
+            .is_err()
+    );
+    assert!(
         hardware_commands
-            .recv_timeout(Duration::from_millis(50))
+            .recv_timeout(Duration::from_millis(300))
             .unwrap()
             .is_none()
     );
@@ -473,18 +483,14 @@ fn receives_phone_pose_without_depth_pixels() {
     let command: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(command["linear"], 0.5);
     assert_eq!(command["authority_revision"], 4);
-    std::thread::sleep(Duration::from_secs_f64(argos_core::STALE_SECONDS + 0.1));
-    assert!(
-        client
-            .operator_command(7, "hardware", r#"{"action":"disarm","token":"stop-one"}"#)
-            .is_err()
-    );
-    assert!(
-        hardware_commands
-            .recv_timeout(Duration::from_millis(50))
-            .unwrap()
-            .is_none()
-    );
+    router
+        .put(
+            "phone-test/7/hardware/status",
+            br#"{"schema_version":1,"control_mode":"streamed_relay","connected":false,"ready":false,"output_active":false,"reason":"disconnected","age":0.1}"#.as_slice(),
+        )
+        .wait()
+        .unwrap();
+    wait_for(|| client.operator_snapshot().contains("\"connected\":false"));
     assert!(client.operator_command(7, "teleop", r#"{"linear":0.5,"angular":0,"run_id":"run","authority_revision":4,"operator_session_id":"session","sequence":2}"#).is_err());
     client.operator_command(7, "teleop", r#"{"linear":0,"angular":0,"run_id":"run","authority_revision":4,"operator_session_id":"session","sequence":3}"#).unwrap();
     let sample = commands

@@ -16,12 +16,22 @@ path = "src/main.rs"
 argos-core = { path = "../argos-core" }
 argos-zenoh = { path = "../argos-zenoh" }
 serde_json.workspace = true
+fpv-signaling.workspace = true
+zenoh.workspace = true
 dotenvy = "0.15"
 terra-map = { path = "../terra-map" }
 gpui-kit = "=0.8.0"
+webrtc.workspace = true
+openh264.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+image.workspace = true
+smallvec.workspace = true
 
-[dev-dependencies]
-zenoh.workspace = true
+[[bin]]
+name = "fpv-test-sender"
+path = "src/bin/fpv_test_sender.rs"
 
 [[test]]
 name = "fleet_feed"

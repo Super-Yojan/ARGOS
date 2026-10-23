@@ -156,12 +156,11 @@ fn arrival_radius_stays_in_the_reviewed_range() {
 }
 
 #[test]
-fn source_changes_require_neutral_output_and_raw_gps_survives_a_hold() {
+fn source_changes_require_a_ready_neutral_relay_and_raw_gps_survives_a_hold() {
     let report = ready();
-    assert!(
-        source_change_refusal(false, false, false, "outdoor_gps", Some(&report))
-            .unwrap()
-            .contains("neutral")
+    assert_eq!(
+        source_change_refusal(false, false, false, "outdoor_gps", Some(&report)),
+        Some("Navigation source changes require ready hardware and neutral output")
     );
     assert!(
         source_change_refusal(true, true, false, "local", Some(&report))

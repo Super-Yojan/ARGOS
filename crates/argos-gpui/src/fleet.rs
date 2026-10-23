@@ -28,7 +28,7 @@ pub const PASSWORD_NOTICE: &str = "Set ARGOS_ZENOH_PASSWORD in .env";
 pub const MAPS_API_KEY_ENV: &str = "GOOGLE_MAPS_API_KEY";
 pub const MAPS_KEY_NOTICE: &str = "Set GOOGLE_MAPS_API_KEY in .env";
 const POSE_FRESH_SECONDS: f64 = 2.5;
-const SETTING_KEYS: [&str; 17] = [
+const SETTING_KEYS: [&str; 21] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -46,6 +46,10 @@ const SETTING_KEYS: [&str; 17] = [
     "ARGOS_DEGRADED_YAW_RATE",
     "ARGOS_DEGRADED_SETTLE",
     MAPS_API_KEY_ENV,
+    "ARGOS_FPV_STUN",
+    "ARGOS_FPV_TURN_URL",
+    "ARGOS_FPV_TURN_USERNAME",
+    "ARGOS_FPV_TURN_CREDENTIAL",
 ];
 
 #[derive(Clone)]
@@ -66,6 +70,8 @@ pub struct DashboardConfig {
     pub maps_api_key: Option<String>,
     /// Set when tiles need a key and none was loaded. Absent in `MAPS_DEMO=1`.
     pub maps_notice: Option<String>,
+    /// ICE servers for the receive-only camera. Credentials stay in this struct.
+    pub fpv: crate::fpv::FpvConfig,
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -137,6 +143,7 @@ impl DashboardConfig {
             None
         };
         config.maps_api_key = maps_api_key;
+        config.fpv = crate::fpv::FpvConfig::from_values(&settings)?;
         Ok(config)
     }
     pub fn parse(
@@ -210,6 +217,7 @@ impl DashboardConfig {
             degrade: DegradeLimits::default(),
             maps_api_key: None,
             maps_notice: None,
+            fpv: crate::fpv::FpvConfig::default(),
         })
     }
 }
@@ -538,44 +546,44 @@ impl LocalizationHistory {
         if let Some(reports) = incoming.as_object() {
             for (id, report) in reports {
                 let mut report = report.clone();
-                if let Ok(rover) = id.parse::<u64>() {
-                    if let Some(cutoff) = self.retired_at.get(&rover) {
-                        let source_time = now - report["age"].as_f64().unwrap_or(0.);
-                        if self
-                            .membership
-                            .get(&rover)
-                            .is_some_and(|state| state == "absent")
-                            || source_time <= *cutoff
-                        {
-                            report = serde_json::json!({"version":1,"mode":"local","frameID":report["frameID"],"run_id":report["run_id"],
-                                "reason":"Position unavailable · waiting for a new observation after retirement"});
-                        } else if decode_raw_gps(&report)
-                            .is_some_and(|gps| now - gps.age_s.unwrap_or(f64::INFINITY) <= *cutoff)
-                        {
-                            if let Some(o) = report.as_object_mut() {
-                                o.remove("gpsLatitude");
-                                o.remove("gpsLongitude");
-                                o.insert("gpsFresh".into(), Value::Bool(false));
-                            }
-                        }
+                if let Ok(rover) = id.parse::<u64>()
+                    && let Some(cutoff) = self.retired_at.get(&rover)
+                {
+                    let source_time = now - report["age"].as_f64().unwrap_or(0.);
+                    if self
+                        .membership
+                        .get(&rover)
+                        .is_some_and(|state| state == "absent")
+                        || source_time <= *cutoff
+                    {
+                        report = serde_json::json!({"version":1,"mode":"local","frameID":report["frameID"],"run_id":report["run_id"],
+                            "reason":"Position unavailable · waiting for a new observation after retirement"});
+                    } else if decode_raw_gps(&report)
+                        .is_some_and(|gps| now - gps.age_s.unwrap_or(f64::INFINITY) <= *cutoff)
+                        && let Some(o) = report.as_object_mut()
+                    {
+                        o.remove("gpsLatitude");
+                        o.remove("gpsLongitude");
+                        o.insert("gpsFresh".into(), Value::Bool(false));
                     }
                 }
                 if let Some((previous, at)) = self.values.get(id) {
                     let same_frame = report["frameID"] == previous["frameID"]
                         && report["run_id"] == previous["run_id"];
-                    if same_frame && decode_raw_gps(&report).is_none() {
-                        if let Some(gps) = decode_raw_gps(previous) {
-                            report["gpsLatitude"] = serde_json::json!(gps.latitude);
-                            report["gpsLongitude"] = serde_json::json!(gps.longitude);
-                            report["gpsAccuracy"] = serde_json::json!(gps.accuracy_m);
-                            report["gpsObservedAt"] = previous["gpsObservedAt"].clone();
-                            report["gpsFresh"] = serde_json::json!(false);
-                            let age = gps.age_s.map(|age| {
-                                (age + (now - at).max(0.) - report["age"].as_f64().unwrap_or(0.))
-                                    .max(0.)
-                            });
-                            report["gpsFixAge"] = serde_json::json!(age);
-                        }
+                    if same_frame
+                        && decode_raw_gps(&report).is_none()
+                        && let Some(gps) = decode_raw_gps(previous)
+                    {
+                        report["gpsLatitude"] = serde_json::json!(gps.latitude);
+                        report["gpsLongitude"] = serde_json::json!(gps.longitude);
+                        report["gpsAccuracy"] = serde_json::json!(gps.accuracy_m);
+                        report["gpsObservedAt"] = previous["gpsObservedAt"].clone();
+                        report["gpsFresh"] = serde_json::json!(false);
+                        let age = gps.age_s.map(|age| {
+                            (age + (now - at).max(0.) - report["age"].as_f64().unwrap_or(0.))
+                                .max(0.)
+                        });
+                        report["gpsFixAge"] = serde_json::json!(age);
                     }
                 }
                 self.values.insert(id.clone(), (report, now));

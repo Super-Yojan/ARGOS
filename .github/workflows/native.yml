@@ -19,7 +19,7 @@ jobs:
             pkg-config libssl-dev libvulkan-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev libasound2-dev \
-            libfontconfig-dev
+            libfontconfig-dev libvpx-dev nasm
       - run: python3 -m unittest discover -s tests/deployment -v
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
