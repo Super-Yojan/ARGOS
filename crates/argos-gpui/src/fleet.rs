@@ -1446,11 +1446,10 @@ fn poll(
                     let Ok(id) = id.parse::<u64>() else { continue };
                     if let Some((receipt, message)) =
                         argos_core::vehicle_request_receipt(&state["authority"], issued_after_ms)
+                        && last_receipts.get(&id) != Some(&receipt)
                     {
-                        if last_receipts.get(&id) != Some(&receipt) {
-                            last_receipts.insert(id, receipt);
-                            current.command = format!("Rover {id}: {message}");
-                        }
+                        last_receipts.insert(id, receipt);
+                        current.command = format!("Rover {id}: {message}");
                     }
                 }
             }
