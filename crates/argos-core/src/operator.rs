@@ -134,6 +134,7 @@ impl OperatorCache {
                         | "waypoint_direct"
                         | "supervised"
                         | "target_search"
+                        | "explore"
                 ) || value["revision"].as_u64().is_none()
                 {
                     return Err(invalid("invalid authority"));

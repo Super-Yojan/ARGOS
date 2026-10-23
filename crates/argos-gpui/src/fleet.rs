@@ -1063,7 +1063,9 @@ impl FleetFeed {
                 client
                     .operator_command(id, "autonomy", &payload)
                     .map_err(|error| error.to_string())?;
-                Ok::<_, String>(format!("Sent {level} to rover {id}"))
+                Ok::<_, String>(format!(
+                    "Requested {level} for rover {id} · waiting for vehicle acknowledgement"
+                ))
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
@@ -1361,6 +1363,8 @@ fn poll(
     started: std::time::Instant,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
+    let issued_after_ms = unix_millis();
+    let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
     loop {
         let mut snapshot = client.snapshot();
         if snapshot.link == "failed" || snapshot.link == "disconnected" {
@@ -1437,6 +1441,18 @@ fn poll(
         }
         {
             let mut current = picture.lock().unwrap();
+            if let Some(entries) = operator.as_object() {
+                for (id, state) in entries {
+                    let Ok(id) = id.parse::<u64>() else { continue };
+                    if let Some((receipt, message)) =
+                        argos_core::vehicle_request_receipt(&state["authority"], issued_after_ms)
+                        && last_receipts.get(&id) != Some(&receipt)
+                    {
+                        last_receipts.insert(id, receipt);
+                        current.command = format!("Rover {id}: {message}");
+                    }
+                }
+            }
             current.detail = describe(&snapshot, &marks);
             current.presence = fleet_presence(&snapshot, &marks);
             for row in &mut current.presence {

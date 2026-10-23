@@ -336,6 +336,15 @@ fn hardware_status_is_copied_onto_the_rover() {
         drive_block(&marks[0].hardware),
         Some("Motor relay is not ready")
     );
+
+    let mut ready = operator;
+    ready["3"]["hardware"]["ready"] = serde_json::json!(true);
+    ready["3"]["hardware"]["reason"] = serde_json::json!("ready");
+    let ready_marks = fleet_marks(&snapshot, &Value::Null, &ready, |_| None, origin);
+    assert!(ready_marks[0].hardware.ready);
+    assert!(!ready_marks[0].hardware.output_active);
+    assert!(ready_marks[0].hardware.ready_and_neutral());
+    assert_eq!(drive_block(&ready_marks[0].hardware), None);
 }
 
 #[test]

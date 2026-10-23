@@ -455,6 +455,11 @@ fn receives_phone_pose_without_depth_pixels() {
             .is_err()
     );
     assert!(
+        client
+            .operator_command(7, "hardware", r#"{"action":"disarm","token":"stop-one"}"#)
+            .is_err()
+    );
+    assert!(
         hardware_commands
             .recv_timeout(Duration::from_millis(300))
             .unwrap()
