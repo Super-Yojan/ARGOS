@@ -28,7 +28,7 @@ pub const PASSWORD_NOTICE: &str = "Set ARGOS_ZENOH_PASSWORD in .env";
 pub const MAPS_API_KEY_ENV: &str = "GOOGLE_MAPS_API_KEY";
 pub const MAPS_KEY_NOTICE: &str = "Set GOOGLE_MAPS_API_KEY in .env";
 const POSE_FRESH_SECONDS: f64 = 2.5;
-const SETTING_KEYS: [&str; 17] = [
+const SETTING_KEYS: [&str; 21] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -46,6 +46,10 @@ const SETTING_KEYS: [&str; 17] = [
     "ARGOS_DEGRADED_YAW_RATE",
     "ARGOS_DEGRADED_SETTLE",
     MAPS_API_KEY_ENV,
+    "ARGOS_FPV_STUN",
+    "ARGOS_FPV_TURN_URL",
+    "ARGOS_FPV_TURN_USERNAME",
+    "ARGOS_FPV_TURN_CREDENTIAL",
 ];
 
 #[derive(Clone)]
@@ -66,6 +70,8 @@ pub struct DashboardConfig {
     pub maps_api_key: Option<String>,
     /// Set when tiles need a key and none was loaded. Absent in `MAPS_DEMO=1`.
     pub maps_notice: Option<String>,
+    /// ICE servers for the receive-only camera. Credentials stay in this struct.
+    pub fpv: crate::fpv::FpvConfig,
 }
 impl DashboardConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -137,6 +143,7 @@ impl DashboardConfig {
             None
         };
         config.maps_api_key = maps_api_key;
+        config.fpv = crate::fpv::FpvConfig::from_values(&settings)?;
         Ok(config)
     }
     pub fn parse(
@@ -210,6 +217,7 @@ impl DashboardConfig {
             degrade: DegradeLimits::default(),
             maps_api_key: None,
             maps_notice: None,
+            fpv: crate::fpv::FpvConfig::default(),
         })
     }
 }

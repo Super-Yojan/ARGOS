@@ -24,7 +24,10 @@ use argos_core::{
     Travel, arm_disabled_reason, drag_disabled_reason, drive_block, level_label, phase_label,
     pose_warning_text,
 };
-use argos_gpui::{DashboardConfig, FleetFeed, RoverMark, model_position, reframing_target};
+use argos_gpui::{
+    DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, model_position,
+    reframing_target,
+};
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -72,10 +75,17 @@ struct Dashboard {
     claim: ControlClaim,
     arms: BTreeMap<u64, ArmControl>,
     latched: BTreeSet<u64>,
+    fpv: FpvController,
     _poll: Task<()>,
 }
 impl Dashboard {
-    fn new(map: Map, feed: FleetFeed, maps_notice: Option<String>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        map: Map,
+        feed: FleetFeed,
+        fpv: FpvController,
+        maps_notice: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let model =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terra-map/src/assets/robot.glb");
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
@@ -91,6 +101,9 @@ impl Dashboard {
                             if let MapEvent::ObjectLoadFailed { message, .. } = event {
                                 this.note = message;
                             }
+                        }
+                        for retired in this.fpv.take_retired() {
+                            cx.drop_image(retired, None);
                         }
                         this.sync(cx);
                         if this.close_preview {
@@ -137,6 +150,7 @@ impl Dashboard {
             claim: ControlClaim::new(),
             arms: BTreeMap::new(),
             latched: BTreeSet::new(),
+            fpv,
             _poll: poll,
         }
     }
@@ -943,7 +957,146 @@ impl Render for Dashboard {
                             )
                     })),
             )
+            .child(fpv_panel(self, cx))
     }
+}
+
+fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let picture = dashboard.fpv.view();
+    let selected = dashboard.selected;
+    let phase = picture.phase;
+    let detail = picture.detail.clone();
+    let stats = fpv_stats(&picture);
+    let watching = picture.phone_id;
+    div()
+        .id("fpv")
+        .w(px(360.))
+        .h_full()
+        .flex_none()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .bg(rgb(0x101c25))
+        .border_l_1()
+        .border_color(rgb(0x263d48))
+        .child(div().text_size(px(16.)).child("FPV"))
+        .child(div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
+            match (selected, watching) {
+                (Some(id), Some(active)) if id != active => {
+                    format!("Selected rover {id}. Video is rover {active}.")
+                }
+                (Some(id), _) => format!("Selected rover {id}"),
+                (None, Some(active)) => format!("Video is rover {active}"),
+                (None, None) => "Select a rover, then start video.".into(),
+            },
+        ))
+        .child(
+            div()
+                .w_full()
+                .h(px(188.))
+                .bg(rgb(0x0b141d))
+                .rounded_md()
+                .overflow_hidden()
+                .when_some(picture.image.clone(), |frame, image| {
+                    frame.child(
+                        img(image)
+                            .id("fpv-picture")
+                            .size_full()
+                            .object_fit(ObjectFit::Contain),
+                    )
+                })
+                .when(picture.image.is_none(), |frame| {
+                    frame.child(
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_3()
+                            .text_size(px(12.))
+                            .text_color(rgb(0x98aeb9))
+                            .child(detail.clone()),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(phase_color(phase))
+                .child(format!("{} · {detail}", phase.label())),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(0x98aeb9))
+                .child(stats),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .child(button(
+                    "fpv-start",
+                    "Start FPV",
+                    rgb(0x245c49),
+                    cx.listener(|this, _, _, cx| {
+                        if let Some(id) = this.selected {
+                            this.fpv.start_phone(id);
+                            this.note = format!("FPV requested for rover {id}");
+                        } else {
+                            this.note = "Select a rover before starting FPV".into();
+                        }
+                        cx.notify();
+                    }),
+                ))
+                .child(button(
+                    "fpv-stop",
+                    "Stop FPV",
+                    rgb(0x5c2a2a),
+                    cx.listener(|this, _, _, cx| {
+                        this.fpv.stop();
+                        this.note = "FPV stopped".into();
+                        cx.notify();
+                    }),
+                )),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(0x98aeb9))
+                .child("Video only. Drive, arm, and stop stay on the Zenoh controls."),
+        )
+}
+
+fn fpv_stats(picture: &argos_gpui::FpvView) -> String {
+    let size = if picture.width == 0 {
+        "—".to_string()
+    } else {
+        format!("{}×{}", picture.width, picture.height)
+    };
+    let codec = if picture.codec.is_empty() {
+        "—"
+    } else {
+        picture.codec.as_str()
+    };
+    let rtt = picture
+        .rtt_ms
+        .map(|rtt| format!("{rtt:.0} ms"))
+        .unwrap_or_else(|| "—".into());
+    format!(
+        "{codec} · {size} · {:.1} fps · {:.0} kbps · rtt {rtt}",
+        picture.fps, picture.bitrate_kbps
+    )
+}
+
+fn phase_color(phase: FpvPhase) -> Rgba {
+    rgb(match phase {
+        FpvPhase::Connected => 0x3dcc9a,
+        FpvPhase::Failed => 0xe07a5f,
+        FpvPhase::Connecting | FpvPhase::Starting => 0xf0c36a,
+        FpvPhase::Idle | FpvPhase::Closed => 0x98aeb9,
+    })
 }
 
 fn navigation_toggle(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl IntoElement {
@@ -1631,6 +1784,7 @@ fn main() {
     let maps_api_key = config.maps_api_key.clone();
     let maps_notice = config.maps_notice.clone();
     let feed = FleetFeed::start(config.clone());
+    let fpv = FpvController::start(config.clone());
     let map = Map::new(MapConfig {
         latitude: config.start_latitude,
         longitude: config.start_longitude,
@@ -1664,7 +1818,7 @@ fn main() {
             },
             cx,
             |window, cx| {
-                let view = cx.new(|cx| Dashboard::new(map, feed, maps_notice, cx));
+                let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
                 view
