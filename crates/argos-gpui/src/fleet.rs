@@ -5,11 +5,11 @@
 
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
-    HardwareCommand, HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission,
-    OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
-    admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_raw_gps, drive_block,
-    encode_hardware, encode_source_request, fallback_degrade_reason, goal_blocked, local_map,
-    map_heading_degrees, reported_outdoor, reported_pose_quality, source_change_refusal,
+    HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport,
+    Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal,
+    classify_cell, decode_autonomy_value, decode_raw_gps, drive_block, encode_source_request,
+    fallback_degrade_reason, goal_blocked, local_map, map_heading_degrees, reported_outdoor,
+    reported_pose_quality, source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -398,7 +398,6 @@ pub struct RoverMark {
     pub arrival_radius: f64,
     /// True when outdoor GPS is the acknowledged navigation source.
     pub outdoor_gps: bool,
-    pub disarmed: bool,
     pub hardware: HardwareObservation,
     pub authority_revision: u64,
     pub safety: String,
@@ -406,6 +405,9 @@ pub struct RoverMark {
     pub navigation_revision: u64,
     pub outdoor: Option<OutdoorReport>,
     pub raw_gps: Option<RawGps>,
+    pub pose_available: bool,
+    pub gps_display_freshness_seconds: f64,
+    pub gps_source_fresh: bool,
     pub app_update_required: bool,
     pub mission_active: bool,
     pub goal_active: bool,
@@ -413,8 +415,191 @@ pub struct RoverMark {
 impl RoverMark {
     /// L0 uses direct operator effort; a missing camera pose is only a map warning.
     pub fn control_pose_ready(&self) -> bool {
-        self.status == "online"
-            || (self.status == "pose stale" && self.requested_level.as_deref() == Some("teleop"))
+        self.pose_available
+            && (self.status == "online"
+                || (self.status == "pose stale"
+                    && self.requested_level.as_deref() == Some("teleop")))
+    }
+}
+
+/// Fleet identity is independent of a drawable geographic marker.
+#[derive(Clone, Debug)]
+pub struct RoverPresence {
+    id: u64,
+    membership: String,
+    pose_available: bool,
+    observation_age: Option<f64>,
+    position_reason: String,
+    source_reason: String,
+}
+impl RoverPresence {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    pub fn membership(&self) -> &str {
+        &self.membership
+    }
+    pub fn pose_available(&self) -> bool {
+        self.pose_available
+    }
+    pub fn observation_age(&self) -> Option<f64> {
+        self.observation_age
+    }
+    pub fn position_reason(&self) -> &str {
+        &self.position_reason
+    }
+}
+pub fn fleet_presence(snapshot: &Snapshot, marks: &[RoverMark]) -> Vec<RoverPresence> {
+    // Defensively deduplicate wire membership; retired entries remain explicitly absent.
+    snapshot
+        .rovers
+        .iter()
+        .map(|r| (r.id, r))
+        .collect::<BTreeMap<_, _>>()
+        .values()
+        .map(|r| RoverPresence {
+            id: r.id,
+            membership: r.membership.clone(),
+            pose_available: r.pose.is_some(),
+            observation_age: r.pose_age.or(snapshot.fleet_age),
+            source_reason: String::new(),
+            position_reason: marks
+                .iter()
+                .find(|m| m.id == r.id)
+                .map(position_label)
+                .unwrap_or_else(|| "Position unavailable".into()),
+        })
+        .collect()
+}
+pub fn position_label(mark: &RoverMark) -> String {
+    if let Some(gps) = mark.raw_gps {
+        let fresh = gps
+            .age_s
+            .is_some_and(|age| age <= mark.gps_display_freshness_seconds);
+        format!(
+            "{}{}",
+            if fresh && mark.gps_source_fresh {
+                "GPS observation"
+            } else {
+                "Last known GPS"
+            },
+            gps.age_s
+                .map(|age| format!(" · {age:.1} s old"))
+                .unwrap_or_else(|| " · age unknown".into())
+        )
+    } else if mark.status == "online" {
+        "Local map position".into()
+    } else {
+        "Last known local position".into()
+    }
+}
+fn scope_localization(mut report: Value, current_run: Option<&str>) -> Value {
+    if let Some(run) = current_run {
+        if report["run_id"]
+            .as_str()
+            .is_some_and(|source| source != run)
+        {
+            // Keep explicit local identity so a pending report cannot invoke the default origin.
+            report = serde_json::json!({"version":1,"mode":"local","frameID":report["frameID"],
+                "reason":"Position unavailable · waiting for localization from the current run"});
+        }
+        report["run_id"] = Value::String(run.into());
+    }
+    report
+}
+
+/// Retain display observations across empty reports/reconnects, never across frames/runs.
+#[derive(Default)]
+struct LocalizationHistory {
+    values: BTreeMap<String, (Value, f64)>,
+    membership: BTreeMap<u64, String>,
+    retired_at: BTreeMap<u64, f64>,
+}
+impl LocalizationHistory {
+    fn observe_membership(&mut self, rows: &[(u64, &str)], now: f64) {
+        let ids: BTreeSet<_> = rows.iter().map(|r| r.0).collect();
+        self.membership.retain(|id, _| ids.contains(id));
+        self.retired_at.retain(|id, _| ids.contains(id));
+        for (id, state) in rows {
+            if *state == "absent" && self.membership.get(id).is_none_or(|old| old != "absent") {
+                self.retired_at.insert(*id, now);
+                self.values.remove(&id.to_string());
+            }
+            self.membership.insert(*id, (*state).into());
+            if *state != "absent" && self.retired_at.contains_key(id) {
+                self.values.entry(id.to_string()).or_insert_with(|| (serde_json::json!({"version":1,"mode":"local",
+                    "reason":"Position unavailable · waiting for a new observation after retirement"}), now));
+            }
+        }
+    }
+    fn retain(&mut self, ids: &BTreeSet<u64>) {
+        self.values
+            .retain(|id, _| id.parse::<u64>().is_ok_and(|id| ids.contains(&id)));
+    }
+    fn scope_runs(&mut self, operator: &Value) {
+        for (id, (report, _)) in &mut self.values {
+            *report =
+                scope_localization(report.clone(), operator[id]["authority"]["run_id"].as_str());
+        }
+    }
+    fn update(&mut self, incoming: &Value, now: f64) -> Value {
+        if let Some(reports) = incoming.as_object() {
+            for (id, report) in reports {
+                let mut report = report.clone();
+                if let Ok(rover) = id.parse::<u64>() {
+                    if let Some(cutoff) = self.retired_at.get(&rover) {
+                        let source_time = now - report["age"].as_f64().unwrap_or(0.);
+                        if self
+                            .membership
+                            .get(&rover)
+                            .is_some_and(|state| state == "absent")
+                            || source_time <= *cutoff
+                        {
+                            report = serde_json::json!({"version":1,"mode":"local","frameID":report["frameID"],"run_id":report["run_id"],
+                                "reason":"Position unavailable · waiting for a new observation after retirement"});
+                        } else if decode_raw_gps(&report)
+                            .is_some_and(|gps| now - gps.age_s.unwrap_or(f64::INFINITY) <= *cutoff)
+                        {
+                            if let Some(o) = report.as_object_mut() {
+                                o.remove("gpsLatitude");
+                                o.remove("gpsLongitude");
+                                o.insert("gpsFresh".into(), Value::Bool(false));
+                            }
+                        }
+                    }
+                }
+                if let Some((previous, at)) = self.values.get(id) {
+                    let same_frame = report["frameID"] == previous["frameID"]
+                        && report["run_id"] == previous["run_id"];
+                    if same_frame && decode_raw_gps(&report).is_none() {
+                        if let Some(gps) = decode_raw_gps(previous) {
+                            report["gpsLatitude"] = serde_json::json!(gps.latitude);
+                            report["gpsLongitude"] = serde_json::json!(gps.longitude);
+                            report["gpsAccuracy"] = serde_json::json!(gps.accuracy_m);
+                            report["gpsObservedAt"] = previous["gpsObservedAt"].clone();
+                            report["gpsFresh"] = serde_json::json!(false);
+                            let age = gps.age_s.map(|age| {
+                                (age + (now - at).max(0.) - report["age"].as_f64().unwrap_or(0.))
+                                    .max(0.)
+                            });
+                            report["gpsFixAge"] = serde_json::json!(age);
+                        }
+                    }
+                }
+                self.values.insert(id.clone(), (report, now));
+            }
+        }
+        Value::Object(
+            self.values
+                .iter()
+                .map(|(id, (value, at))| {
+                    let mut value = value.clone();
+                    value["age"] =
+                        serde_json::json!(value["age"].as_f64().unwrap_or(0.) + (now - at).max(0.));
+                    (id.clone(), value)
+                })
+                .collect(),
+        )
     }
 }
 
@@ -424,6 +609,8 @@ pub struct FleetPicture {
     pub detail: String,
     pub command: String,
     pub marks: Vec<RoverMark>,
+    pub presence: Vec<RoverPresence>,
+    pub observed_at: std::time::Instant,
 }
 impl Default for FleetPicture {
     fn default() -> Self {
@@ -432,6 +619,8 @@ impl Default for FleetPicture {
             detail: "Connecting".into(),
             command: String::new(),
             marks: Vec::new(),
+            presence: Vec::new(),
+            observed_at: std::time::Instant::now(),
         }
     }
 }
@@ -446,6 +635,7 @@ pub fn fleet_marks(
     snapshot
         .rovers
         .iter()
+        .filter(|rover| rover.membership != "absent")
         .filter_map(|rover| {
             let pose = rover.pose.as_ref()?;
             let key = rover.id.to_string();
@@ -524,7 +714,6 @@ pub fn fleet_marks(
                 outdoor_gps: outdoor
                     .as_ref()
                     .is_some_and(|report| report.acknowledged_outdoor()),
-                disarmed: hardware.present && !hardware.armed && !hardware.arming,
                 hardware,
                 authority_revision: authority["revision"].as_u64().unwrap_or(0),
                 safety: authority["safety"].as_str().unwrap_or("").to_string(),
@@ -546,11 +735,93 @@ pub fn fleet_marks(
                     .is_some_and(|goal| goal.state == GoalState::Active),
                 app_update_required: argos_core::app_update_required(outdoor.as_ref()),
                 raw_gps,
+                pose_available: true,
+                gps_display_freshness_seconds: display_policy(
+                    localization.unwrap_or(&Value::Null),
+                    &operator[&key]["authority"],
+                )
+                .gps_display_freshness_seconds,
+                gps_source_fresh: localization.is_none_or(|report| report["gpsFresh"] != false),
                 outdoor,
             })
         })
         .collect()
 }
+fn display_policy(
+    localization: &Value,
+    authority: &Value,
+) -> argos_core::ConnectivityPolicySettings {
+    let policy = authority
+        .get("connectivity")
+        .and_then(|c| c.get("policy"))
+        .or_else(|| localization.get("connectivity_policy"));
+    policy
+        .and_then(|p| {
+            serde_json::from_value::<argos_core::ConnectivityPolicySettings>(p.clone()).ok()
+        })
+        .filter(|p| p.validate().is_ok())
+        .unwrap_or_default()
+}
+fn display_link(snapshot: &Snapshot, localizations: &Value, operator: &Value) -> String {
+    if !matches!(snapshot.link.as_str(), "healthy" | "stale") {
+        return snapshot.link.clone();
+    }
+    let age_limit = snapshot
+        .rovers
+        .iter()
+        .filter(|r| r.membership != "absent")
+        .map(|r| {
+            let id = r.id.to_string();
+            display_policy(&localizations[&id], &operator[&id]["authority"])
+                .fleet_display_stale_seconds
+        })
+        .reduce(f64::min)
+        .unwrap_or(argos_core::ConnectivityPolicySettings::default().fleet_display_stale_seconds);
+    if snapshot.fleet_age.is_some_and(|age| age >= age_limit) {
+        "stale".into()
+    } else {
+        "healthy".into()
+    }
+}
+fn retain_geographic_markers(
+    snapshot: &Snapshot,
+    localizations: &Value,
+    previous: &FleetPicture,
+    marks: &mut Vec<RoverMark>,
+) {
+    for rover in snapshot
+        .rovers
+        .iter()
+        .filter(|r| r.membership != "absent" && r.pose.is_none())
+    {
+        if marks.iter().any(|m| m.id == rover.id) {
+            continue;
+        }
+        let Some(gps) = decode_raw_gps(&localizations[rover.id.to_string()]) else {
+            continue;
+        };
+        let Some(old) = previous
+            .marks
+            .iter()
+            .find(|m| m.id == rover.id && m.raw_gps.is_some())
+        else {
+            continue;
+        };
+        let mut mark = old.clone();
+        mark.latitude = gps.latitude;
+        mark.longitude = gps.longitude;
+        mark.raw_gps = Some(gps);
+        mark.pose_available = false;
+        mark.map_frame = None;
+        mark.status = "pose unavailable".into();
+        mark.grid = None;
+        mark.goal = None;
+        mark.route.clear();
+        mark.gps_source_fresh = false;
+        marks.push(mark);
+    }
+}
+
 fn goal_mark(
     rover: &argos_core::RoverSnapshot,
     localizations: &Value,
@@ -603,8 +874,14 @@ fn occupancy_summary(grid: &OccupancyGrid, age: f64) -> String {
         grid.width, grid.height
     )
 }
-pub fn describe(snapshot: &Snapshot, marks: &[RoverMark]) -> String {
-    let count = marks.len();
+pub fn describe(snapshot: &Snapshot, _marks: &[RoverMark]) -> String {
+    let count = snapshot
+        .rovers
+        .iter()
+        .filter(|r| r.membership != "absent")
+        .map(|r| r.id)
+        .collect::<BTreeSet<_>>()
+        .len();
     let noun = if count == 1 { "rover" } else { "rovers" };
     let mut detail = match snapshot.link.as_str() {
         "healthy" => format!("{count} {noun}"),
@@ -686,6 +963,8 @@ impl FleetFeed {
                     detail: notice.clone(),
                     command: String::new(),
                     marks: Vec::new(),
+                    presence: Vec::new(),
+                    observed_at: std::time::Instant::now(),
                 })),
                 client: Arc::new(Mutex::new(None)),
                 limits,
@@ -698,6 +977,8 @@ impl FleetFeed {
             detail: format!("Connecting to {} ({})", config.endpoint, config.prefix),
             command: String::new(),
             marks: Vec::new(),
+            presence: Vec::new(),
+            observed_at: std::time::Instant::now(),
         }));
         let client = Arc::new(Mutex::new(None));
         let shared = picture.clone();
@@ -717,7 +998,24 @@ impl FleetFeed {
         self.origin
     }
     pub fn picture(&self) -> FleetPicture {
-        self.picture.lock().unwrap().clone()
+        let mut picture = self.picture.lock().unwrap().clone();
+        let elapsed = picture.observed_at.elapsed().as_secs_f64();
+        for mark in &mut picture.marks {
+            if let Some(gps) = &mut mark.raw_gps {
+                gps.age_s = gps.age_s.map(|age| age + elapsed);
+            }
+        }
+        for row in &mut picture.presence {
+            row.observation_age = row.observation_age.map(|age| age + elapsed);
+            if let Some(mark) = picture.marks.iter().find(|mark| mark.id == row.id) {
+                row.position_reason = position_label(mark);
+            }
+            if !row.source_reason.is_empty() {
+                row.position_reason.push_str(" · ");
+                row.position_reason.push_str(&row.source_reason);
+            }
+        }
+        picture
     }
     pub fn limits(&self) -> TeleopLimits {
         *self.limits.lock().unwrap()
@@ -842,7 +1140,7 @@ impl FleetFeed {
         let source = source.to_string();
         std::thread::spawn(move || {
             let message = (|| {
-                let (run_id, revision, disarmed, goal_active, mission_active, outdoor) = {
+                let (run_id, revision, ready_and_neutral, goal_active, mission_active, outdoor) = {
                     let current = picture.lock().unwrap();
                     let mark = current
                         .marks
@@ -852,14 +1150,14 @@ impl FleetFeed {
                     (
                         mark.run_id.clone(),
                         mark.navigation_revision,
-                        mark.disarmed,
+                        mark.hardware.ready_and_neutral(),
                         mark.goal_active,
                         mark.mission_active,
                         mark.outdoor.clone(),
                     )
                 };
                 if let Some(reason) = source_change_refusal(
-                    disarmed,
+                    ready_and_neutral,
                     goal_active,
                     mission_active,
                     &source,
@@ -973,28 +1271,6 @@ impl FleetFeed {
             client.refresh_drive(id);
         }
     }
-    pub fn publish_hardware(&self, id: u64, command: HardwareCommand) {
-        let client = self.client.clone();
-        let picture = self.picture.clone();
-        std::thread::spawn(move || {
-            let message = (|| {
-                let bytes = encode_hardware(&command).map_err(|error| error.to_string())?;
-                let payload =
-                    String::from_utf8(bytes).map_err(|_| "hardware payload".to_string())?;
-                let guard = client.lock().unwrap();
-                let client = guard.as_ref().ok_or("Not connected")?;
-                client
-                    .operator_command(id, "hardware", &payload)
-                    .map_err(|error| error.to_string())?;
-                Ok::<_, String>(match command {
-                    HardwareCommand::Arm { .. } => format!("Arm request sent to rover {id}"),
-                    HardwareCommand::Disarm { .. } => format!("Disarm sent to rover {id}"),
-                    HardwareCommand::Reset => "Reset is a safety action".into(),
-                })
-            })();
-            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
-        });
-    }
     pub fn safety_reset(&self, id: u64) -> Result<(), String> {
         let client = self.connected()?;
         client
@@ -1031,6 +1307,8 @@ fn run(
     picture: Arc<Mutex<FleetPicture>>,
     slot: Arc<Mutex<Option<Arc<Client>>>>,
 ) {
+    let mut history = LocalizationHistory::default();
+    let started = std::time::Instant::now();
     loop {
         let credentials = config
             .credentials
@@ -1040,36 +1318,103 @@ fn run(
             Ok(client) => {
                 let client = Arc::new(client);
                 *slot.lock().unwrap() = Some(client.clone());
-                poll(&client, &config, &picture);
+                poll(&client, &config, &picture, &mut history, started);
+                mark_disconnected(&picture);
                 *slot.lock().unwrap() = None;
             }
             Err(error) => {
                 let mut current = picture.lock().unwrap();
                 current.link = "disconnected".into();
                 current.detail = error.to_string();
+                for mark in &mut current.marks {
+                    mark.status = "offline".into();
+                    mark.gps_source_fresh = false;
+                }
+                for row in &mut current.presence {
+                    row.membership = "offline".into();
+                }
             }
         }
         std::thread::sleep(Duration::from_secs(2));
     }
 }
-fn poll(client: &Client, config: &DashboardConfig, picture: &Mutex<FleetPicture>) {
+fn mark_disconnected(picture: &Mutex<FleetPicture>) {
+    let mut current = picture.lock().unwrap();
+    current.link = "disconnected".into();
+    current.detail = format!(
+        "Disconnected · {} last known rovers",
+        current.presence.len()
+    );
+    for mark in &mut current.marks {
+        mark.status = "offline".into();
+        mark.gps_source_fresh = false;
+    }
+    for row in &mut current.presence {
+        row.membership = "offline".into();
+    }
+}
+fn poll(
+    client: &Client,
+    config: &DashboardConfig,
+    picture: &Mutex<FleetPicture>,
+    history: &mut LocalizationHistory,
+    started: std::time::Instant,
+) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
-    let started = std::time::Instant::now();
     loop {
-        let snapshot = client.snapshot();
+        let mut snapshot = client.snapshot();
         if snapshot.link == "failed" || snapshot.link == "disconnected" {
             break;
         }
         let localizations =
             serde_json::from_str::<Value>(&client.localization_snapshot()).unwrap_or(Value::Null);
+        if snapshot.fleet_age.is_none() {
+            // A replacement client has not received authoritative membership yet.
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        let ids = snapshot
+            .rovers
+            .iter()
+            .filter(|r| r.membership != "absent")
+            .map(|r| r.id)
+            .collect();
+        history.observe_membership(
+            &snapshot
+                .rovers
+                .iter()
+                .map(|r| (r.id, r.membership.as_str()))
+                .collect::<Vec<_>>(),
+            started.elapsed().as_secs_f64(),
+        );
+        history.retain(&ids);
         let operator =
             serde_json::from_str::<Value>(&client.operator_state_snapshot()).unwrap_or(Value::Null);
+        history.scope_runs(&operator);
+        let mut localizations = localizations;
+        if let Some(reports) = localizations.as_object_mut() {
+            for (id, report) in reports {
+                *report = scope_localization(
+                    report.clone(),
+                    operator[id]["authority"]["run_id"].as_str(),
+                );
+            }
+        }
+        let localizations = history.update(&localizations, started.elapsed().as_secs_f64());
+        history.retain(&ids);
         let mut marks = fleet_marks(
             &snapshot,
             &localizations,
             &operator,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             config.origin,
+        );
+        snapshot.link = display_link(&snapshot, &localizations, &operator);
+        retain_geographic_markers(
+            &snapshot,
+            &localizations,
+            &picture.lock().unwrap(),
+            &mut marks,
         );
         let now = started.elapsed().as_secs_f64();
         for mark in &mut marks {
@@ -1093,8 +1438,26 @@ fn poll(client: &Client, config: &DashboardConfig, picture: &Mutex<FleetPicture>
         {
             let mut current = picture.lock().unwrap();
             current.detail = describe(&snapshot, &marks);
+            current.presence = fleet_presence(&snapshot, &marks);
+            for row in &mut current.presence {
+                if matches!(row.membership.as_str(), "online" | "stale") {
+                    let id = row.id.to_string();
+                    let limit = display_policy(&localizations[&id], &operator[&id]["authority"])
+                        .fleet_display_stale_seconds;
+                    row.membership = if snapshot.fleet_age.is_some_and(|age| age >= limit) {
+                        "stale".into()
+                    } else {
+                        "online".into()
+                    };
+                }
+                row.source_reason = localizations[row.id.to_string()]["reason"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned();
+            }
             current.link = snapshot.link;
             current.marks = marks;
+            current.observed_at = std::time::Instant::now();
         }
         std::thread::sleep(Duration::from_millis(100));
     }

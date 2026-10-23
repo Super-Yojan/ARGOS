@@ -13,6 +13,18 @@ fn wait_for(mut predicate: impl FnMut() -> bool) {
     }
 }
 
+fn fresh_authority(peer: &zenoh::Session, client: &Client, prefix: &str, id: u64) {
+    wait_for(|| {
+        peer.put(format!("{prefix}/{id}/autonomy/status"), serde_json::json!({
+            "requested_level":"teleop","effective_level":"teleop","active_source":"none","safety":"clear",
+            "run_id":"run","revision":0,"supported_levels":["teleop","waypoint"]
+        }).to_string()).wait().unwrap();
+        let state: serde_json::Value =
+            serde_json::from_str(&client.operator_state_snapshot()).unwrap();
+        state[id.to_string()]["authority"]["run_id"] == "run"
+    });
+}
+
 #[test]
 fn content_heartbeats_refresh_only_received_baselines_and_reconnect_recovers() {
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -197,6 +209,7 @@ fn receives_fleet_and_publishes_one_correlated_goal() {
         operator["8"]["occupancy"]["occupancy"],
         serde_json::json!([-1, 0, 65, 100])
     );
+    fresh_authority(&peer, &client, "terra/rover", 8);
     let token = client
         .send_goal(
             8,
@@ -259,6 +272,7 @@ fn authority_teleop_release_and_export_are_correlated() {
         .unwrap();
         c.snapshot().link == "healthy"
     });
+    fresh_authority(&peer, &c, "terra/rover", 8);
     let token = c
         .action(8, "autonomy", serde_json::json!({"level": "teleop"}))
         .unwrap();
@@ -591,6 +605,7 @@ fn managed_router_routes_two_clients_and_reconnect_does_not_replay_goal() {
             .unwrap();
         client.snapshot().link == "healthy"
     });
+    fresh_authority(&phone, &client, "terra/phone", 8);
     let token = client
         .send_goal(
             8,

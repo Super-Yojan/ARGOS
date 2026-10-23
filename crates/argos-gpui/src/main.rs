@@ -19,14 +19,17 @@ use local_map::local_grid;
 use map_overlay::map_paint;
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, ArmControl, ArmGate, ControlClaim, DragAnchor, DragGate, DragSpace,
-    GoalDrag, HEADING_HOLD, HEADING_HOLD_LABEL, HardwareCommand, OPERATOR_LEVELS, PlanarPoint,
-    Travel, arm_disabled_reason, drag_disabled_reason, drive_block, level_label, phase_label,
-    pose_warning_text,
+    APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, GoalDrag, HEADING_HOLD,
+    HEADING_HOLD_LABEL, OPERATOR_LEVELS, PlanarPoint, Travel, drag_disabled_reason, drive_block,
+    level_label, phase_label, pose_warning_text,
 };
 use argos_gpui::{
-    DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, model_position,
-    reframing_target,
+    DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, RoverPresence, model_position,
+    position_label, reframing_target,
+};
+use gpui_kit::component::{
+    ActiveTheme,
+    button::{Button, ButtonVariants},
 };
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,6 +58,7 @@ struct Dashboard {
     framed: BTreeSet<u64>,
     framed_center: Option<(f64, f64)>,
     marks: Vec<RoverMark>,
+    presence: Vec<RoverPresence>,
     selected: Option<u64>,
     drag: Option<ActiveDrag>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -73,7 +77,6 @@ struct Dashboard {
     started: Instant,
     now: f64,
     claim: ControlClaim,
-    arms: BTreeMap<u64, ArmControl>,
     latched: BTreeSet<u64>,
     fpv: FpvController,
     _poll: Task<()>,
@@ -130,6 +133,7 @@ impl Dashboard {
             framed: BTreeSet::new(),
             framed_center: None,
             marks: Vec::new(),
+            presence: Vec::new(),
             selected: None,
             drag: None,
             grid_frame: Arc::new(Mutex::new(None)),
@@ -148,7 +152,6 @@ impl Dashboard {
             started: Instant::now(),
             now: 0.,
             claim: ControlClaim::new(),
-            arms: BTreeMap::new(),
             latched: BTreeSet::new(),
             fpv,
             _poll: poll,
@@ -162,6 +165,7 @@ impl Dashboard {
             self.command.clone_from(&picture.command);
         }
         self.marks = picture.marks;
+        self.presence = picture.presence;
         if self
             .selected
             .is_some_and(|id| !self.marks.iter().any(|mark| mark.id == id))
@@ -187,9 +191,9 @@ impl Dashboard {
                 self.note = reason;
             }
         }
-        self.tick_arms();
+        self.now = self.started.elapsed().as_secs_f64();
+        self.claim.renew(self.now);
         let seen: BTreeSet<u64> = self.marks.iter().map(|mark| mark.id).collect();
-        self.arms.retain(|id, _| seen.contains(id));
         self.latched.retain(|id| seen.contains(id));
         self.sync_markers(&seen, false, self.view.read(cx).ground_altitude());
         self.sync_markers(&seen, true, self.view.read(cx).ground_altitude());
@@ -428,154 +432,52 @@ impl Dashboard {
         self.claim.take(self.now);
         self.note = format!("Rover {id} selected · control active in this window");
     }
-    fn tick_arms(&mut self) {
-        let now = self.started.elapsed().as_secs_f64();
-        let dt = (now - self.now).max(0.);
-        self.now = now;
-        self.claim.renew(now);
-        let samples: Vec<_> = self
-            .marks
-            .iter()
-            .map(|mark| {
-                (
-                    mark.id,
-                    mark.run_id.clone(),
-                    mark.authority_revision,
-                    mark.hardware.clone(),
-                    self.selected == Some(mark.id),
-                    mark.control_pose_ready(),
-                    self.latched.contains(&mark.id),
-                    mark.safety.clone(),
-                    !mark.run_id.is_empty(),
-                    mark.hardware.present,
-                )
-            })
-            .collect();
-        let link_healthy = self.link == "healthy";
-        let claim_held = self.claim.held(self.now);
-        let mut commands = Vec::new();
-        for (
-            id,
-            run_id,
-            revision,
-            hardware,
-            selected,
-            pose_fresh,
-            local_latch,
-            safety,
-            run_ready,
-            hardware_present,
-        ) in &samples
-        {
-            let gate = ArmGate {
-                selected: *selected,
-                link_healthy,
-                pose_fresh: *pose_fresh,
-                local_latch: *local_latch,
-                safety,
-                claim_held,
-                run_ready: *run_ready,
-                hardware_present: *hardware_present,
-            };
-            if let Some(command) = self
-                .arms
-                .entry(*id)
-                .or_default()
-                .tick(dt, gate, hardware, run_id, *revision)
-            {
-                commands.push((*id, command));
-            }
-        }
-        for (id, command) in commands {
-            self.dispatch_hardware(id, command);
-        }
-    }
-    fn arm_gate<'a>(&self, mark: &'a RoverMark) -> ArmGate<'a> {
-        ArmGate {
-            selected: self.selected == Some(mark.id),
-            link_healthy: self.link == "healthy",
-            pose_fresh: mark.control_pose_ready(),
-            local_latch: self.latched.contains(&mark.id),
-            safety: &mark.safety,
-            claim_held: self.claim.held(self.now),
-            run_ready: !mark.run_id.is_empty(),
-            hardware_present: mark.hardware.present,
-        }
-    }
-    fn dispatch_hardware(&mut self, id: u64, command: HardwareCommand) {
-        match command {
-            HardwareCommand::Reset => {
-                if let Err(error) = self.feed.safety_reset(id) {
-                    self.note = error;
-                }
-            }
-            command => self.feed.publish_hardware(id, command),
-        }
-    }
-    fn arm_press(&mut self, id: u64) {
-        if self.selected != Some(id) {
-            self.select(id);
-            self.note = "Select this rover before arming".into();
-            return;
-        }
-        let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
-            return;
-        };
-        let gate = self.arm_gate(&mark);
-        if let Some(reason) = self.arms.entry(id).or_default().press(gate) {
-            self.note = reason.into();
-        } else {
-            self.note = "Hold to arm".into();
-        }
-    }
-    fn arm_release(&mut self, id: u64) {
-        let Some(control) = self.arms.get_mut(&id) else {
-            return;
-        };
-        let was_holding = control.holding().is_some();
-        control.release();
-        if was_holding && self.note == "Hold to arm" {
-            self.note.clear();
-        }
-    }
-    fn disarm(&mut self, id: u64) {
-        let run_id = self
-            .marks
-            .iter()
-            .find(|mark| mark.id == id)
-            .map(|mark| mark.run_id.clone())
-            .unwrap_or_default();
-        let command = self.arms.entry(id).or_default().disarm(&run_id);
-        self.dispatch_hardware(id, command);
-        self.note.clear();
-    }
     fn reset_safety(&mut self, id: u64) {
-        self.latched.remove(&id);
-        let command = self.arms.entry(id).or_default().reset();
-        self.dispatch_hardware(id, command);
-        self.note = format!("Reset sent to rover {id}");
+        self.stop_drive();
+        match self.feed.safety_reset(id) {
+            Ok(()) => {
+                self.latched.remove(&id);
+                self.note = format!("Reset stop sent to rover {id}");
+            }
+            Err(error) => self.note = error,
+        }
+    }
+    fn stop_rover(&mut self, id: u64) {
+        self.stop_drive();
+        self.drag = None;
+        self.latched.insert(id);
+        self.note = match self.feed.emergency_stop(id) {
+            Ok(()) => format!("Stop sent to rover {id}"),
+            Err(error) => error,
+        };
     }
     fn begin_drive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.selected else {
             self.note = "Select a rover before driving".into();
             return;
         };
+        if self.latched.contains(&id)
+            || self
+                .selected_mark()
+                .is_some_and(|mark| mark.safety == "emergency_stop")
+        {
+            self.note = "Stop is active · use Reset stop before driving".into();
+            return;
+        }
         self.drag = None;
-        // Mode selection does not move or arm the rover. Permit the operator to
-        // leave a held navigation mode before asking for arm/resume readiness.
+        // Selecting manual control does not send motor commands.
         if self
             .selected_mark()
             .is_some_and(|mark| mark.requested_level.as_deref() != Some("teleop"))
         {
             self.feed.publish_level(id, "teleop");
-            self.note = "Selecting manual control · wait for L0 confirmation, then arm or resume if required".into();
+            self.note = "Selecting manual control · waiting for L0 confirmation".into();
             return;
         }
         match self.feed.begin_drive(id) {
             Ok(()) => {
                 self.driving = true;
                 self.note = "Drive is manual. In-place spin is off.".into();
-                self.feed.cancel_goal(id);
                 self.focus.focus(window, cx);
             }
             Err(error) => self.note = error,
@@ -593,23 +495,19 @@ impl Dashboard {
     }
     fn estop(&mut self) {
         if let Some(id) = self.selected {
-            self.latched.insert(id);
-            if let Some(control) = self.arms.get_mut(&id) {
-                control.cancel_hold();
-            }
-            match self.feed.emergency_stop(id) {
-                Ok(()) => self.note = format!("Stop latched for rover {id}"),
-                Err(error) => self.note = error,
-            }
+            self.stop_rover(id);
+        } else {
+            self.stop_drive();
         }
-        self.driving = false;
-        self.held.clear();
     }
     fn hold(&mut self, key: &str, down: bool) {
         let Some(id) = self.selected else {
             return;
         };
         if !self.driving {
+            if down {
+                self.note = "Click Drive this rover, then hold W/A/S/D in this window".into();
+            }
             return;
         }
         match self.feed.drive_key(id, key, down) {
@@ -715,9 +613,7 @@ impl Render for Dashboard {
                     cx.stop_propagation();
                     return;
                 }
-                if this.driving
-                    && let Some(key) = drive_key(&event.keystroke.key)
-                {
+                if let Some(key) = drive_key(&event.keystroke.key) {
                     this.hold(key, true);
                     cx.stop_propagation();
                 }
@@ -808,11 +704,22 @@ impl Render for Dashboard {
                             cx.notify();
                         }),
                     ))
+                    .children(self.presence.iter().filter(|row| !self.marks.iter().any(|mark| mark.id == row.id())).map(|row| {
+                        div().id(("unlocated-rover", row.id())).p_2().border_1()
+                            .border_color(cx.theme().border).rounded_md().text_size(px(12.))
+                            .text_color(cx.theme().foreground)
+                            .child(format!("Rover {} · {}", row.id(), row.membership()))
+                            .child(div().text_color(cx.theme().muted_foreground).child(row.position_reason().to_owned()))
+                            .child(div().text_color(cx.theme().muted_foreground).child(
+                                row.observation_age().map(|age| format!("Last observation {age:.1} s ago")).unwrap_or_else(|| "Waiting for telemetry".into())))
+                    }))
                     .children(self.marks.iter().map(|mark| {
                         let id = mark.id;
                         let attention = mark.status != "online";
                         let chosen = selected == Some(id);
-                        let face = arm_face(self.arms.get(&id), mark, self.arm_gate(mark));
+                        let stopped = self.latched.contains(&id) || mark.safety == "emergency_stop";
+                        let hardware_status = if stopped { "Stop active" } else { mark.hardware.status_label() };
+                        let hardware_detail = if stopped { "Use Reset stop before driving" } else { drive_block(&mark.hardware).unwrap_or("") };
                         div()
                             .id(("rover", id))
                             .p_2()
@@ -834,21 +741,22 @@ impl Render for Dashboard {
                             }))
                             .child(format!(
                                 "Rover {id} · {} · {}",
-                                mark.status, mark.occupancy
+                                self.presence.iter().find(|row| row.id() == id).map(|row| row.membership()).unwrap_or(mark.status.as_str()), mark.occupancy
                             ))
+                            .child(div().text_color(cx.theme().muted_foreground).child(self.presence.iter().find(|row| row.id() == mark.id).map(|row| row.position_reason().to_owned()).unwrap_or_else(|| position_label(mark))))
                             .child(div().text_color(rgb(0x98aeb9)).child(level_line(mark)))
                             .child(
                                 div()
-                                    .text_color(rgb(0xf0c36a))
-                                    .child(face.status.clone()),
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(hardware_status),
                             )
-                            .child(hardware_row(id, &face, cx))
-                            .when(!face.detail.is_empty(), |row| {
-                                let detail = face.detail.clone();
+                            .child(hardware_row(id, cx))
+                            .when(!hardware_detail.is_empty(), |row| {
+                                let detail = hardware_detail.to_owned();
                                 row.child(
                                     div()
                                         .text_size(px(11.))
-                                        .text_color(rgb(0xf0c36a))
+                                        .text_color(cx.theme().warning)
                                         .child(detail),
                                 )
                             })
@@ -866,7 +774,7 @@ impl Render for Dashboard {
                     .when(self.marks.is_empty(), |this| {
                         this.child(
                             div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
-                                "No rover position yet. The map stays at the start location.",
+                                "No geographic position yet. Rover connection status is listed above.",
                             ),
                         )
                     })
@@ -896,7 +804,7 @@ impl Render for Dashboard {
                     ))
                     .child(
                         div().mt_2().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-                            "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Hold Arm for one second. Disarm is one click. Reset clears a latched stop and does not arm.",
+                            "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
                         ),
                     ),
             )
@@ -1179,7 +1087,7 @@ fn rover_panel(
         "Local navigation. Outdoor GPS stays off until the vehicle acknowledges it.".into()
     };
     let drive_reason = drive_block(&mark.hardware);
-    let needs_arm = drive_reason.is_some();
+    let hardware_blocked = drive_reason.is_some();
     let drag_line = if let Some((_, _, _, distance, radius)) = drag.filter(|item| item.0 == id) {
         match radius {
             Some(radius) => format!("{distance:.1} m GPS · arrival radius {radius:.0} m"),
@@ -1188,13 +1096,13 @@ fn rover_panel(
     } else if mark.outdoor_gps {
         match drag_disabled_reason(geographic_gate(&mark, link, true)) {
             Some(reason) => reason.to_string(),
-            None if needs_arm => drive_reason.unwrap().into(),
+            None if hardware_blocked => drive_reason.unwrap().into(),
             None => "Drag the map marker. Release sends the GPS goal.".into(),
         }
     } else {
         match drag_disabled_reason(local_gate) {
             Some(reason) => reason.to_string(),
-            None if needs_arm => drive_reason.unwrap().into(),
+            None if hardware_blocked => drive_reason.unwrap().into(),
             None => "Drag the rover or its goal. Release sends.".into(),
         }
     };
@@ -1221,7 +1129,8 @@ fn rover_panel(
         })
         .when_some(mark.raw_gps, |panel, gps| {
             panel.child(div().text_size(px(12.)).child(format!(
-                    "GPS {:.5}, {:.5}{}{}",
+                    "{} · {:.5}, {:.5}{}{}",
+                    position_label(&mark),
                     gps.latitude,
                     gps.longitude,
                     gps.accuracy_m
@@ -1366,7 +1275,7 @@ fn rover_panel(
                 .text_size(px(12.))
                 .child(if driving { "Drive · manual" } else { "Drive" }),
         )
-        .when(needs_arm && !driving, |panel| {
+        .when(hardware_blocked && !driving, |panel| {
             panel.child(
                 div()
                     .text_size(px(12.))
@@ -1596,143 +1505,31 @@ fn drive_pad(driving: bool, cx: &mut Context<Dashboard>) -> impl IntoElement {
         )
 }
 
-struct ArmFace {
-    status: String,
-    detail: String,
-    arm_label: &'static str,
-    arm_enabled: bool,
-}
-
-fn arm_face(control: Option<&ArmControl>, mark: &RoverMark, gate: ArmGate<'_>) -> ArmFace {
-    let control = control.cloned().unwrap_or_default();
-    let reason = arm_disabled_reason(gate);
-    let armed = mark.hardware.present && mark.hardware.armed;
-    let arm_enabled = reason.is_none()
-        && !control.pending_arm()
-        && (!armed || mark.hardware.motion_paused())
-        && !mark.hardware.arming;
-    let arm_label = if control.holding().is_some() {
-        "Hold…"
-    } else if control.pending_arm() || (mark.hardware.arming && !armed) {
-        "arming…"
-    } else if mark.hardware.motion_paused() {
-        "Resume motion"
-    } else {
-        "Arm"
-    };
-    let detail = if let Some(error) = control.error.clone() {
-        error
-    } else if control.holding().is_some() {
-        String::new()
-    } else if !arm_enabled && !control.pending_arm() {
-        reason.unwrap_or("").to_string()
-    } else if arm_enabled {
-        if mark.hardware.motion_paused() {
-            format!(
-                "{} · Hold Resume motion; previous input is cleared",
-                drive_block(&mark.hardware).unwrap_or("Motion paused")
-            )
-        } else {
-            "Hold to arm".into()
-        }
-    } else {
-        String::new()
-    };
-    ArmFace {
-        status: control.status_label(&mark.hardware),
-        detail,
-        arm_label,
-        arm_enabled,
-    }
-}
-
-fn hardware_row(id: u64, face: &ArmFace, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    let enabled = face.arm_enabled;
-    let arm_label = face.arm_label;
+fn hardware_row(id: u64, cx: &mut Context<Dashboard>) -> impl IntoElement {
     div()
         .flex()
         .gap_1()
         .flex_wrap()
         .child(
-            div()
-                .id(("arm", id))
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .text_size(px(12.))
-                .bg(rgb(if enabled { 0x8a5a12 } else { 0x1b2c38 }))
-                .text_color(rgb(if enabled { 0xf8efe2 } else { 0x98aeb9 }))
-                .when(enabled, |this| {
-                    this.cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.arm_press(id);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        )
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.arm_release(id);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        )
-                        .on_mouse_up_out(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.arm_release(id);
-                                cx.notify();
-                            }),
-                        )
-                })
-                .child(arm_label),
+            Button::new(("stop-rover", id))
+                .label("Stop")
+                .danger()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.stop_rover(id);
+                    cx.stop_propagation();
+                    cx.notify();
+                })),
         )
-        .child(card_button(
-            "Disarm",
-            id.saturating_mul(2),
-            rgb(0x1b2c38),
-            cx,
-            move |this| {
-                this.disarm(id);
-            },
-        ))
-        .child(card_button(
-            "Reset",
-            id.saturating_mul(2).saturating_add(1),
-            rgb(0x1b2c38),
-            cx,
-            move |this| {
-                this.reset_safety(id);
-            },
-        ))
-}
-
-fn card_button(
-    label: &'static str,
-    slot: u64,
-    color: Rgba,
-    cx: &mut Context<Dashboard>,
-    apply: impl Fn(&mut Dashboard) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(("hardware", slot))
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .text_size(px(12.))
-        .cursor_pointer()
-        .bg(color)
-        .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| {
-                apply(this);
-                cx.stop_propagation();
-                cx.notify();
-            }),
+        .child(
+            Button::new(("reset-stop", id))
+                .label("Reset stop")
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.reset_safety(id);
+                    cx.stop_propagation();
+                    cx.notify();
+                })),
         )
 }
 

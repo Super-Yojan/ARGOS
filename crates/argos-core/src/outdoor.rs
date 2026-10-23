@@ -34,7 +34,7 @@
 //!
 //! A source change is `{prefix}/{id}/navigation/source` :
 //! `{"schema_version":1,"source","token","run_id","navigation_revision"}`.
-//! Selecting a source does not arm hardware and does not start a mission.
+//! Selecting a source requires neutral output and does not start a mission.
 
 use crate::{Result, invalid, valid_token};
 use serde_json::{Value, json};
@@ -61,7 +61,6 @@ pub const OUTDOOR_HOLDS: &[(&str, &str)] = &[
     ("gps_stale", "GPS stale"),
     ("gps_uncertain", "GPS uncertain"),
     ("authority_lost", "Authority lost"),
-    ("disarmed", "Disarmed"),
     ("heading_uncertain", "Heading uncertain"),
     ("tracking_lost", "Tracking lost"),
     ("obstacle_map_stale", "Obstacle map stale"),
@@ -400,7 +399,7 @@ pub fn freeze_arrival_radius(requested: Option<f64>, reported: f64) -> StdResult
 }
 
 pub fn source_change_refusal(
-    disarmed: bool,
+    ready_and_neutral: bool,
     goal_active: bool,
     mission_active: bool,
     source: &str,
@@ -409,8 +408,8 @@ pub fn source_change_refusal(
     if source != LOCAL_SOURCE && source != OUTDOOR_SOURCE {
         return Some("Unsupported navigation source");
     }
-    if !disarmed {
-        return Some("Navigation source changes while the rover is disarmed");
+    if !ready_and_neutral {
+        return Some("Navigation source changes require ready hardware and neutral output");
     }
     if goal_active || mission_active {
         return Some("Navigation source changes require no active mission");
@@ -486,7 +485,7 @@ fn finite_coord(value: &Value, key: &str, limit: f64) -> Option<f64> {
 }
 
 /// A resume is operator intent, never an automatic consequence of recovered sensors.
-/// The vehicle rechecks pose/map/feedback and arming at receipt.
+/// The vehicle rechecks pose, map, feedback and hardware readiness at receipt.
 pub fn outdoor_resume_refusal(
     report: &OutdoorReport,
     run: &str,
