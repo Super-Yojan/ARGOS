@@ -305,6 +305,15 @@ fn authority_teleop_release_and_export_are_correlated() {
         .unwrap();
         c.operator_snapshot().contains("accepted")
     });
+    wait_for(|| {
+        peer.put(
+            "terra/rover/8/hardware/status",
+            r#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"reason":"ready","age":0.1}"#,
+        )
+        .wait()
+        .unwrap();
+        c.operator_snapshot().contains("streamed_relay")
+    });
     c.action(8, "mission/report", serde_json::json!({"survivor_id": 1}))
         .unwrap();
     // Observational reporting does not create an authority gate without an authority receipt.
@@ -448,7 +457,8 @@ fn receives_phone_pose_without_depth_pixels() {
     assert!(
         hardware_commands
             .recv_timeout(Duration::from_millis(300))
-            .is_err()
+            .unwrap()
+            .is_none()
     );
     assert!(
         client
