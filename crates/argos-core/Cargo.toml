@@ -9,8 +9,8 @@ thiserror.workspace = true
 terra-types = { path = "../../../Terra/crates/terra-types" }
 
 [[test]]
-name = "arm"
-path = "../../tests/argos-core/arm.rs"
+name = "hardware"
+path = "../../tests/argos-core/hardware.rs"
 
 [[test]]
 name = "contract"
@@ -51,3 +51,7 @@ path = "../../tests/argos-core/search.rs"
 [[test]]
 name = "state"
 path = "../../tests/argos-core/state.rs"
+
+[[test]]
+name = "runtime"
+path = "../../tests/argos-core/runtime.rs"

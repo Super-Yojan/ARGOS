@@ -184,7 +184,7 @@ fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
                 "hardware",
                 r#"{"action":"arm","token":"manual-arm","run_id":"run","authority_revision":1}"#
             )
-            .is_ok()
+            .is_err()
     );
     assert!(
         client

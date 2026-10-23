@@ -214,7 +214,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             let _ = publisher
                 .put(
                     "terra/rover/3/hardware/status",
-                    br#"{"ready":true,"armed":true,"arming":false,"reason":"armed","token":"arm-1","result":"accepted"}"#,
+                    br#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"fault":null,"reason":"ready"}"#,
                 )
                 .wait();
             sequence += 1;
@@ -237,7 +237,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
             && picture.marks.first().is_some_and(|mark| {
                 mark.status == "online"
                     && mark.occupancy.starts_with("2x2, 1 occupied")
-                    && mark.hardware.armed
+                    && mark.hardware.ready
                     && mark.requested_level.as_deref() == Some("teleop")
                     && mark.recommended_level.as_deref() == Some("waypoint")
                     && !mark.outdoor_gps
