@@ -416,7 +416,7 @@ fn receives_phone_pose_without_depth_pixels() {
         router
             .put(
                 "phone-test/7/hardware/status",
-                br#"{"ready":true,"armed":true,"arming":false,"reason":"Armed"}"#.as_slice(),
+                br#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"reason":"ready","age":0.1}"#.as_slice(),
             )
             .wait()
             .unwrap();
@@ -436,19 +436,20 @@ fn receives_phone_pose_without_depth_pixels() {
             )
             .is_err()
     );
-    client
-        .operator_command(
-            7,
-            "hardware",
-            r#"{"action":"arm","token":"arm-one","run_id":"run","authority_revision":4}"#,
-        )
-        .unwrap();
-    let sample = hardware_commands
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap()
-        .unwrap();
-    let arm: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
-    assert_eq!(arm["action"], "arm");
+    assert!(
+        client
+            .operator_command(
+                7,
+                "hardware",
+                r#"{"action":"arm","token":"arm-one","run_id":"run","authority_revision":4}"#,
+            )
+            .is_err()
+    );
+    assert!(
+        hardware_commands
+            .recv_timeout(Duration::from_millis(300))
+            .is_err()
+    );
     assert!(
         client
             .operator_command(7, "teleop", r#"{"linear":1,"angular":0}"#)
@@ -467,16 +468,14 @@ fn receives_phone_pose_without_depth_pixels() {
     let command: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
     assert_eq!(command["linear"], 0.5);
     assert_eq!(command["authority_revision"], 4);
-    std::thread::sleep(Duration::from_millis(600));
-    client
-        .operator_command(7, "hardware", r#"{"action":"disarm","token":"stop-one"}"#)
+    router
+        .put(
+            "phone-test/7/hardware/status",
+            br#"{"schema_version":1,"control_mode":"streamed_relay","connected":false,"ready":false,"output_active":false,"reason":"disconnected","age":0.1}"#.as_slice(),
+        )
+        .wait()
         .unwrap();
-    assert!(
-        hardware_commands
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .is_some()
-    );
+    wait_for(|| client.operator_snapshot().contains("\"connected\":false"));
     assert!(client.operator_command(7, "teleop", r#"{"linear":0.5,"angular":0,"run_id":"run","authority_revision":4,"operator_session_id":"session","sequence":2}"#).is_err());
     client.operator_command(7, "teleop", r#"{"linear":0,"angular":0,"run_id":"run","authority_revision":4,"operator_session_id":"session","sequence":3}"#).unwrap();
     let sample = commands
