@@ -16,3 +16,6 @@ pub use occupancy::occupancy_runs;
 
 mod model_drag;
 pub use model_drag::model_position;
+
+mod fpv;
+pub use fpv::{FpvConfig, FpvController, FpvPhase, FpvView, SenderOptions, run_test_sender};

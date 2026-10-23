@@ -52,6 +52,12 @@ The camera opens at a fallback location. It is not locked to a campus. Once one 
 | `ARGOS_DRIVE_ALLOW_SPIN` | off | `1`, `true`, or `yes` allows a turn with no forward speed |
 | `ARGOS_DEGRADED_YAW_RATE` | 0.4 | Fallback yaw-rate warning when pose/quality is absent |
 | `ARGOS_DEGRADED_SETTLE` | 1.0 | How long that fallback warning stays up, seconds |
+| `ARGOS_FPV_STUN` | `stun:stun.l.google.com:19302` | STUN URLs, comma-separated. `none` keeps host candidates only |
+| `ARGOS_FPV_TURN_URL` | unset | Optional `turn:` or `turns:` URL. Do not embed the username or password |
+| `ARGOS_FPV_TURN_USERNAME` | unset | TURN username. Required together with the URL and credential |
+| `ARGOS_FPV_TURN_CREDENTIAL` | unset | TURN credential. Never committed or printed |
+
+FPV signaling comes from Terra's `fpv-signaling` crate (message types, JSON rules, topic keys, and the session machine). The dashboard uses `SignalingSession::dashboard()` and publishes only the effects that machine returns. Session ids are hyphenated UUIDs. `v` is the JSON number `1`. Signaling samples are capped at 65536 bytes. The dashboard subscribes before `start`. The machine stops a call that sits too long: 15 seconds for the offer, 20 for the answer, and 30 to connect. That timeout publishes `request` `stop`. A repeated `start` for a live call does not restart it. The phone offers H.264 first and VP8 as a fallback. No data channel is opened. Drive, arm, and stop stay on the existing Zenoh command path. The git dependency is pinned to branch `cursor/webrtc-fpv-ios-c3c2` until Terra PR 54 merges; point it at `main` after that.
 
 A bad number, a half-set user/password pair on a `tcp/` router, or an endpoint that is not `tcp/` or `tls/` prints the reason and exits before the window opens. A hosted `tls/` router with no password does not exit: the sidebar tells you to set `ARGOS_ZENOH_PASSWORD` in `.env`. A router that is down does not exit either. `MAPS_DEMO=1` keeps working in both cases.
 

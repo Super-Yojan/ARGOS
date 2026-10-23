@@ -311,28 +311,30 @@ fn hardware_status_is_copied_onto_the_rover() {
                 "safety": "clear"
             },
             "hardware": {
-                "ready": true,
-                "armed": false,
-                "arming": true,
-                "reason": "arming",
-                "token": "arm-1",
-                "result": "",
+                "schema_version": 1,
+                "control_mode": "streamed_relay",
+                "connected": true,
+                "ready": false,
+                "output_active": false,
+                "fault": null,
+                "reason": "Motor relay is not ready",
                 "age": 0.2
             }
         }
     });
     let marks = fleet_marks(&snapshot, &Value::Null, &operator, |_| None, origin);
     assert!(marks[0].hardware.present);
-    assert!(marks[0].hardware.arming);
-    assert!(!marks[0].hardware.armed);
-    assert!(!marks[0].disarmed);
-    assert_eq!(marks[0].hardware.token, "arm-1");
+    assert!(marks[0].hardware.connected);
+    assert!(!marks[0].hardware.ready);
+    assert!(!marks[0].hardware.output_active);
+    assert!(marks[0].hardware.fault.is_none());
+    assert_eq!(marks[0].hardware.reason, "Motor relay is not ready");
     assert_eq!(marks[0].authority_revision, 4);
     assert_eq!(marks[0].safety, "clear");
     assert_eq!(marks[0].run_id, "run");
     assert_eq!(
         drive_block(&marks[0].hardware),
-        Some("Arming · wait for hardware confirmation")
+        Some("Motor relay is not ready")
     );
 }
 

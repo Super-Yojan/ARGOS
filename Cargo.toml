@@ -17,5 +17,15 @@ serde_json = "1"
 thiserror = "2"
 uniffi = "=0.31.1"
 zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_tls", "auth_usrpwd"] }
+webrtc = "=0.17.2"
+openh264 = "=0.9.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+image = "0.25"
+smallvec = "1"
+# `../Terra` is the observability pin (`checkout-observability.sh`) and does not
+# contain this crate. Repoint at Terra main, or the sibling path, after PR 54 merges.
+fpv-signaling = { git = "https://github.com/Super-Yojan/Terra.git", rev = "309042d518a918247b38fb0c004283a967447dcd" }
 [profile.dev]
 debug = 0
