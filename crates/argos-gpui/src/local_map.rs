@@ -4,6 +4,7 @@ use argos_core::{
     CellClass, DragAnchor, HEADING_HOLD, HEADING_HOLD_LABEL, Travel, pose_warning_text,
 };
 use argos_gpui::RoverMark;
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::{prelude::*, *};
 use std::sync::{Arc, Mutex};
 
@@ -15,8 +16,8 @@ pub(super) fn local_grid(
 ) -> impl IntoElement {
     let Some(map) = mark.grid.clone() else {
         return div()
-            .text_size(px(12.))
-            .text_color(rgb(0x98aeb9))
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
             .child("No occupancy yet")
             .into_any_element();
     };
@@ -55,7 +56,7 @@ pub(super) fn local_grid(
                     .bottom(px(2.))
                     .left(px(2.))
                     .text_size(px(10.))
-                    .text_color(rgb(0xe7b15a))
+                    .text_color(cx.theme().warning)
                     .child(HEADING_HOLD_LABEL),
             )
         })
@@ -320,11 +321,11 @@ fn drag_handle_at(
         .h(px(18.))
         .rounded_md()
         .cursor_pointer()
-        .bg(rgb(if anchor == DragAnchor::Goal {
-            0x3dcc9a
+        .bg(if anchor == DragAnchor::Goal {
+            cx.theme().success
         } else {
-            0xf0b429
-        }))
+            cx.theme().warning
+        })
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| {

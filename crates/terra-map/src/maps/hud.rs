@@ -1,14 +1,14 @@
-//! Dark maritime instrument UI, following the user's city-map reference.
+//! Light maritime instrument UI on the ARGOS console background (#F1F4F3).
 use super::{MapView, camera::MapMode};
 use gpui_kit::{img, prelude::*, *};
 
-const CANVAS: u32 = 0x0b141d;
-const PANEL: u32 = 0x101f2b;
-const TEXT: u32 = 0xe5f1f5;
-const MUTED: u32 = 0x9bb4c2;
-const ACCENT: u32 = 0x86dce8;
-const RULE: u32 = 0x2d4859;
-const ACTIVE: u32 = 0x193847;
+const CANVAS: u32 = 0xf1f4f3;
+const PANEL: u32 = 0xe8eeef;
+const TEXT: u32 = 0x17242c;
+const MUTED: u32 = 0x4f6169;
+const ACCENT: u32 = 0x0f6873;
+const RULE: u32 = 0xc9d3d6;
+const ACTIVE: u32 = 0xd3e6e8;
 
 fn label(text: impl Into<SharedString>) -> Div {
     div()
@@ -304,7 +304,7 @@ impl MapView {
             .rounded(px(6.))
             .border_1()
             .border_color(rgb(RULE))
-            .bg(rgba(0x101f2bec))
+            .bg(rgba(0xe8eeefec))
             .p_4()
             .child(label("VIEW PARAMETERS"))
             .child(metric(
@@ -428,7 +428,7 @@ impl MapView {
             .font_family("Menlo")
             .text_size(px(12.))
             .text_color(rgb(TEXT))
-            .bg(rgba(0x101f2bec))
+            .bg(rgba(0xe8eeefec))
             .rounded(px(4.))
             .px_3()
             .py_2()
@@ -515,7 +515,7 @@ impl MapView {
                         .right_0()
                         .h(px(76.))
                         .occlude()
-                        .bg(rgba(0x0b141def))
+                        .bg(rgba(0xf1f4f3ef))
                         .border_b_1()
                         .border_color(rgb(RULE))
                         .px_6()
@@ -573,7 +573,7 @@ impl MapView {
                                 .max_w(px(500.))
                                 .occlude()
                                 .p_6()
-                                .bg(rgba(0x101f2bec))
+                                .bg(rgba(0xe8eeefec))
                                 .rounded(px(6.))
                                 .border_1()
                                 .border_color(rgb(RULE))

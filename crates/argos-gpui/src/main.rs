@@ -13,17 +13,17 @@
 mod interaction;
 mod local_map;
 mod map_overlay;
+mod palette;
 
 use interaction::{geographic_gate, goal_geo, gps_point};
 use local_map::local_grid;
 use map_overlay::map_paint;
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, GoalDrag, HEADING_HOLD,
-    HEADING_HOLD_LABEL, OPERATOR_LEVELS, PlanarPoint, Travel, drag_disabled_reason, drive_block,
-    level_label, phase_label, pose_warning_text,
+    APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, GoalDrag, OPERATOR_LEVELS,
+    PlanarPoint, drag_disabled_reason, drive_block, level_label, phase_label,
 };
-use argos_gpui::console::{self, CalloutTag};
+use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
     DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, RoverPresence, model_position,
     position_label, reframing_target,
@@ -33,7 +33,10 @@ use gpui_kit::component::{
     ActiveTheme, Selectable, Sizable, StyledExt, Theme, ThemeMode, ThemeStyled, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     description_list::{DescriptionItem, DescriptionList},
+    scroll::ScrollableElement,
+    tab::{Tab, TabBar},
     tag::Tag,
+    tooltip::Tooltip,
 };
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,6 +75,7 @@ struct Dashboard {
     field_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     inspector_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     show_occupancy: bool,
+    inspector_tab: InspectorTab,
     driving: bool,
     held: BTreeSet<String>,
     link: String,
@@ -150,6 +154,7 @@ impl Dashboard {
             field_frame: Arc::new(Mutex::new(None)),
             inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
+            inspector_tab: InspectorTab::default(),
             driving: false,
             held: BTreeSet::new(),
             link: initial.link,
@@ -598,11 +603,9 @@ impl Render for Dashboard {
                 goal.arrival_radius_m,
             ))
         });
-        let note = if self.note.is_empty() {
-            self.command.clone()
-        } else {
-            self.note.clone()
-        };
+        let status = console::status_line(&self.note, &self.command).to_owned();
+        let unlocated = console::unlocated(&self.marks, &self.presence);
+        let notices = console::field_notices(&self.link, &self.detail, self.maps_notice.as_deref());
         let grid_frame = self.grid_frame.clone();
         let reversing_key = self.driving && self.held.contains("s");
         let handles: Vec<(u64, DragAnchor, Point<Pixels>)> = {
@@ -681,10 +684,19 @@ impl Render for Dashboard {
                 ),
             },
         );
-        let inspector = self.selected_mark().cloned().map(|mark| {
-            let stopped = self.is_stopped(&mark);
-            rover_inspector(&mark, stopped, driving, self.inspector_frame.clone(), cx)
-                .into_any_element()
+        let inspector = mark.map(|mark| {
+            rover_inspector(
+                self,
+                &mark,
+                Facts {
+                    drag: drag_local,
+                    limits,
+                    reversing_key,
+                    grid_frame: grid_frame.clone(),
+                },
+                cx,
+            )
+            .into_any_element()
         });
         div()
             .id("argos")
@@ -742,199 +754,38 @@ impl Render for Dashboard {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x0b141d))
-            .text_color(rgb(0xd8e7ec))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .font_family(".SystemUIFont")
-            .child(console_bar(self, cx))
-            .child(
-                h_flex()
-                    .items_stretch()
-                    .flex_1()
-                    .min_h_0()
-            .child(
-                div()
-                    .id("sidebar")
-                    .w(px(340.))
-                    .h_full()
-                    .flex_none()
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .overflow_y_scroll()
-                    .child(div().text_size(px(22.)).child("ARGOS"))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0x98aeb9))
-                            .child(format!("{} · {}", self.link, self.detail)),
-                    )
-                    .when_some(self.maps_notice.clone(), |this, notice| {
-                        this.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(0xf0c36a))
-                                .child(notice),
-                        )
-                    })
-                    .when(!note.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(0xf0c36a))
-                                .child(note),
-                        )
-                    })
-                    .child(button(
-                        "control-claim",
-                        if self.claim.held(self.now) {
-                            "Release control"
-                        } else {
-                            "Take control"
-                        },
-                        rgb(if self.claim.held(self.now) {
-                            0x245c49
-                        } else {
-                            0x1b2c38
-                        }),
-                        cx.listener(|this, _, _, cx| {
-                            if this.claim.held(this.now) {
-                                this.claim.release();
-                                this.note = "Control released".into();
-                            } else {
-                                this.claim.take(this.now);
-                                this.note = "Control held by this window".into();
-                            }
-                            cx.notify();
-                        }),
-                    ))
-                    .children(self.presence.iter().filter(|row| !self.marks.iter().any(|mark| mark.id == row.id())).map(|row| {
-                        div().id(("unlocated-rover", row.id())).p_2().border_1()
-                            .border_color(cx.theme().border).rounded_md().text_size(px(12.))
-                            .text_color(cx.theme().foreground)
-                            .child(format!("Rover {} · {}", row.id(), row.membership()))
-                            .child(div().text_color(cx.theme().muted_foreground).child(row.position_reason().to_owned()))
-                            .child(div().text_color(cx.theme().muted_foreground).child(
-                                row.observation_age().map(|age| format!("Last observation {age:.1} s ago")).unwrap_or_else(|| "Waiting for telemetry".into())))
-                    }))
-                    .children(self.marks.iter().map(|mark| {
-                        let id = mark.id;
-                        let attention = mark.status != "online";
-                        let chosen = selected == Some(id);
-                        let stopped = self.latched.contains(&id) || mark.safety == "emergency_stop";
-                        let hardware_status = if stopped { "Stop active" } else { mark.hardware.status_label() };
-                        let hardware_detail = if stopped { "Use Reset stop before driving" } else { drive_block(&mark.hardware).unwrap_or("") };
-                        div()
-                            .id(("rover", id))
-                            .p_2()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(if chosen {
-                                0x3dcc9a
-                            } else if attention {
-                                0xc47b2a
-                            } else {
-                                0x263d48
-                            }))
-                            .bg(rgb(0x14232e))
-                            .text_size(px(12.))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select(id);
-                                cx.notify();
-                            }))
-                            .child(format!(
-                                "Rover {id} · {} · {}",
-                                self.presence.iter().find(|row| row.id() == id).map(|row| row.membership()).unwrap_or(mark.status.as_str()), mark.occupancy
-                            ))
-                            .child(div().text_color(cx.theme().muted_foreground).child(self.presence.iter().find(|row| row.id() == mark.id).map(|row| row.position_reason().to_owned()).unwrap_or_else(|| position_label(mark))))
-                            .child(div().text_color(rgb(0x98aeb9)).child(level_line(mark)))
-                            .child(
-                                div()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(hardware_status),
-                            )
-                            .child(hardware_row(id, cx))
-                            .when(!hardware_detail.is_empty(), |row| {
-                                let detail = hardware_detail.to_owned();
-                                row.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(cx.theme().warning)
-                                        .child(detail),
-                                )
-                            })
-                            .when(mark.reversing || (reversing_key && chosen), |row| {
-                                row.child(div().text_color(rgb(0xf0c36a)).child("Reversing"))
-                            })
-                            .when(mark.hold.as_deref() == Some(HEADING_HOLD), |row| {
-                                row.child(div().text_color(rgb(0xe7b15a)).child(HEADING_HOLD_LABEL))
-                            })
-                            .when_some(
-                                pose_warning_text(mark.command_origin, mark.degraded, &mark.degrade_reason),
-                                |row, text| row.child(div().text_color(rgb(0x98aeb9)).child(text)),
-                            )
-                    }))
-                    .when(self.marks.is_empty(), |this| {
-                        this.child(
-                            div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
-                                "No geographic position yet. Rover connection status is listed above.",
-                            ),
-                        )
-                    })
-                    .children(mark.map(|mark| {
-                        rover_panel(
-                            mark,
-                            drag_local,
-                            driving,
-                            limits,
-                            &self.link,
-                            grid_frame.clone(),
-                            cx,
-                        )
-                    }))
-                    .child(button(
-                        "occupancy-overlay",
-                        if self.show_occupancy {
-                            "Map grid on"
-                        } else {
-                            "Map grid off"
-                        },
-                        rgb(if self.show_occupancy { 0x245c49 } else { 0x1b2c38 }),
-                        cx.listener(|this, _, _, cx| {
-                            this.show_occupancy = !this.show_occupancy;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(
-                        div().mt_2().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-                            "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
-                        ),
-                    ),
-            )
+            .child(console_bar(self, status, cx))
             .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_w_0()
-                    .h_full()
+                    .min_h_0()
+                    .w_full()
                     .child(self.view.clone())
                     .child(overlay)
                     .children(model_handles.into_iter().map(|(id, bounds)| {
                         div()
                             .id(("model-drag", id))
                             .absolute()
-                            .left(bounds.origin.x).top(bounds.origin.y)
-                            .w(bounds.size.width).h(bounds.size.height)
+                            .left(bounds.origin.x)
+                            .top(bounds.origin.y)
+                            .w(bounds.size.width)
+                            .h(bounds.size.height)
                             .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                this.focus.focus(window, cx);
-                                this.pick_model(id, event, cx);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                    this.focus.focus(window, cx);
+                                    this.pick_model(id, event, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
                     }))
-                        .children(handles.into_iter().map(|(id, anchor, at)| {
+                    .children(handles.into_iter().map(|(id, anchor, at)| {
                         let slot = match anchor {
                             DragAnchor::Rover => 2,
                             DragAnchor::Goal => 3,
@@ -948,11 +799,15 @@ impl Render for Dashboard {
                             .h(px(18.))
                             .rounded_md()
                             .cursor_pointer()
-                            .bg(rgb(if anchor == DragAnchor::Goal || (selected == Some(id) && control_held) {
-                                0x3dcc9a
-                            } else {
-                                0xf0b429
-                            }))
+                            .bg(
+                                if anchor == DragAnchor::Goal
+                                    || (selected == Some(id) && control_held)
+                                {
+                                    cx.theme().success
+                                } else {
+                                    cx.theme().warning
+                                },
+                            )
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -979,123 +834,31 @@ impl Render for Dashboard {
                         .left_0()
                         .size_full()
                     })
-                    .children(groups.into_iter().map(|group| {
-                        card_group(group, &field, selected, cx).into_any_element()
-                    }))
-                    .child(offscreen_tabs(&field, selected, cx))
+                    .children(
+                        groups.into_iter().map(|group| {
+                            card_group(group, &field, selected, cx).into_any_element()
+                        }),
+                    )
+                    .when(!notices.is_empty(), |field| {
+                        field.child(
+                            v_flex()
+                                .absolute()
+                                .top_3()
+                                .left_3()
+                                .max_w(px(420.))
+                                .px_2()
+                                .py_1()
+                                .gap_1()
+                                .popover_style(cx)
+                                .text_xs()
+                                .text_color(cx.theme().warning)
+                                .children(notices),
+                        )
+                    })
+                    .child(offscreen_tabs(&field, &unlocated, selected, cx))
                     .children(inspector),
             )
-            .child(fpv_panel(self, cx)),
-            )
     }
-}
-
-fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    let picture = dashboard.fpv.view();
-    let selected = dashboard.selected;
-    let phase = picture.phase;
-    let detail = picture.detail.clone();
-    let stats = fpv_stats(&picture);
-    let watching = picture.phone_id;
-    div()
-        .id("fpv")
-        .w(px(360.))
-        .h_full()
-        .flex_none()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .bg(rgb(0x101c25))
-        .border_l_1()
-        .border_color(rgb(0x263d48))
-        .child(div().text_size(px(16.)).child("FPV"))
-        .child(div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
-            match (selected, watching) {
-                (Some(id), Some(active)) if id != active => {
-                    format!("Selected rover {id}. Video is rover {active}.")
-                }
-                (Some(id), _) => format!("Selected rover {id}"),
-                (None, Some(active)) => format!("Video is rover {active}"),
-                (None, None) => "Select a rover, then start video.".into(),
-            },
-        ))
-        .child(
-            div()
-                .w_full()
-                .h(px(188.))
-                .bg(rgb(0x0b141d))
-                .rounded_md()
-                .overflow_hidden()
-                .when_some(picture.image.clone(), |frame, image| {
-                    frame.child(
-                        img(image)
-                            .id("fpv-picture")
-                            .size_full()
-                            .object_fit(ObjectFit::Contain),
-                    )
-                })
-                .when(picture.image.is_none(), |frame| {
-                    frame.child(
-                        div()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_3()
-                            .text_size(px(12.))
-                            .text_color(rgb(0x98aeb9))
-                            .child(detail.clone()),
-                    )
-                }),
-        )
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(phase_color(phase))
-                .child(format!("{} · {detail}", phase.label())),
-        )
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(rgb(0x98aeb9))
-                .child(stats),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .child(button(
-                    "fpv-start",
-                    "Start FPV",
-                    rgb(0x245c49),
-                    cx.listener(|this, _, _, cx| {
-                        if let Some(id) = this.selected {
-                            this.fpv.start_phone(id);
-                            this.note = format!("FPV requested for rover {id}");
-                        } else {
-                            this.note = "Select a rover before starting FPV".into();
-                        }
-                        cx.notify();
-                    }),
-                ))
-                .child(button(
-                    "fpv-stop",
-                    "Stop FPV",
-                    rgb(0x5c2a2a),
-                    cx.listener(|this, _, _, cx| {
-                        this.fpv.stop();
-                        this.note = "FPV stopped".into();
-                        cx.notify();
-                    }),
-                )),
-        )
-        .child(
-            div()
-                .text_size(px(11.))
-                .text_color(rgb(0x98aeb9))
-                .child("Video only. Drive, arm, and stop stay on the Zenoh controls."),
-        )
 }
 
 fn fpv_stats(picture: &argos_gpui::FpvView) -> String {
@@ -1119,566 +882,39 @@ fn fpv_stats(picture: &argos_gpui::FpvView) -> String {
     )
 }
 
-fn phase_color(phase: FpvPhase) -> Rgba {
-    rgb(match phase {
-        FpvPhase::Connected => 0x3dcc9a,
-        FpvPhase::Failed => 0xe07a5f,
-        FpvPhase::Connecting | FpvPhase::Starting => 0xf0c36a,
-        FpvPhase::Idle | FpvPhase::Closed => 0x98aeb9,
-    })
+fn phase_color(phase: FpvPhase, cx: &App) -> Hsla {
+    match phase {
+        FpvPhase::Connected => cx.theme().success,
+        FpvPhase::Failed => cx.theme().danger,
+        FpvPhase::Connecting | FpvPhase::Starting => cx.theme().warning,
+        FpvPhase::Idle | FpvPhase::Closed => cx.theme().muted_foreground,
+    }
 }
 
-fn navigation_toggle(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    let id = mark.id;
-    let selected = mark
-        .outdoor
-        .as_ref()
-        .map(|report| report.source.as_str())
-        .unwrap_or("local");
-    div().flex().gap_1().children(
-        [("local", "Local"), ("outdoor_gps", "Outdoor GPS")]
-            .into_iter()
-            .enumerate()
-            .map(|(index, (source, label))| {
-                let source = source.to_string();
-                let current = selected == source;
-                div()
-                    .id(("source", id.saturating_mul(2).saturating_add(index as u64)))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .text_size(px(11.))
-                    .cursor_pointer()
-                    .bg(rgb(if current { 0x245c49 } else { 0x1b2c38 }))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selected == Some(id) {
-                            this.feed.select_source(id, &source);
-                        }
-                        cx.notify();
-                    }))
-            }),
-    )
-}
-
-fn level_line(mark: &RoverMark) -> String {
-    let current = mark
-        .effective_level
-        .as_deref()
-        .or(mark.requested_level.as_deref())
-        .map(level_label)
-        .unwrap_or("level unknown");
-    let recommended = mark
-        .recommended_level
-        .as_deref()
-        .map(|level| format!(" · recommended {}", level_label(level)))
-        .unwrap_or_default();
-    format!("{current}{recommended}")
-}
-
-fn rover_panel(
-    mark: RoverMark,
-    drag: Option<(u64, f64, f64, f64, Option<f64>)>,
-    driving: bool,
-    limits: argos_core::TeleopLimits,
-    link: &str,
-    grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+/// Window chrome for the console: map camera and grid, the latest status,
+/// this window's control claim, link health, and the fleet stop.
+fn console_bar(
+    dashboard: &Dashboard,
+    status: String,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
-    let id = mark.id;
-    let level = mark
-        .effective_level
-        .clone()
-        .or_else(|| mark.requested_level.clone());
-    let local_gate = DragGate {
-        selected: true,
-        link_healthy: link == "healthy",
-        pose_fresh: mark.status == "online",
-        degraded: mark.degraded,
-        level: level.as_deref(),
-        geographic: false,
-        outdoor: false,
-        admission: None,
-    };
-    let outdoor = if mark.app_update_required {
-        "Local navigation. Outdoor GPS is unavailable in this runtime.".to_string()
-    } else if mark.outdoor_gps {
-        "Outdoor GPS acknowledged. Drag the map marker. Release sends the WGS84 goal.".into()
-    } else {
-        "Local navigation. Outdoor GPS stays off until the vehicle acknowledges it.".into()
-    };
-    let drive_reason = drive_block(&mark.hardware);
-    let hardware_blocked = drive_reason.is_some();
-    let drag_line = if let Some((_, _, _, distance, radius)) = drag.filter(|item| item.0 == id) {
-        match radius {
-            Some(radius) => format!("{distance:.1} m GPS · arrival radius {radius:.0} m"),
-            None => format!("{distance:.1} m"),
-        }
-    } else if mark.outdoor_gps {
-        match drag_disabled_reason(geographic_gate(&mark, link, true)) {
-            Some(reason) => reason.to_string(),
-            None if hardware_blocked => drive_reason.unwrap().into(),
-            None => "Drag the map marker. Release sends the GPS goal.".into(),
-        }
-    } else {
-        match drag_disabled_reason(local_gate) {
-            Some(reason) => reason.to_string(),
-            None if hardware_blocked => drive_reason.unwrap().into(),
-            None => "Drag the rover or its goal. Release sends.".into(),
-        }
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .mt_1()
-        .child(div().text_size(px(12.)).child("Navigation"))
-        .child(navigation_toggle(&mark, cx))
-        .child(
-            div()
-                .text_size(px(11.))
-                .text_color(rgb(0x98aeb9))
-                .child(outdoor.clone()),
-        )
-        .when(mark.app_update_required && mark.outdoor_gps, |panel| {
-            panel.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xf0c36a))
-                    .child(APP_UPDATE_REQUIRED),
-            )
-        })
-        .when_some(mark.raw_gps, |panel, gps| {
-            panel.child(div().text_size(px(12.)).child(format!(
-                    "{} · {:.5}, {:.5}{}{}",
-                    position_label(&mark),
-                    gps.latitude,
-                    gps.longitude,
-                    gps.accuracy_m
-                        .map(|accuracy| format!(" · ±{accuracy:.1} m"))
-                        .unwrap_or_default(),
-                    gps.age_s
-                        .map(|age| format!(" · {age:.1} s"))
-                        .unwrap_or_default()
-                )))
-        })
-        .when_some(
-            mark.outdoor.as_ref().and_then(|report| report.hold_label()),
-            |panel, label| {
-                panel.child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(0xe7b15a))
-                        .child(label),
-                )
-            },
-        )
-        .when_some(mark.outdoor.clone(), |panel, report| {
-            let remaining = report.remaining_m.map(|metres| format!("{metres:.0} m"));
-            let destination = match (report.destination_latitude, report.destination_longitude) {
-                (Some(latitude), Some(longitude)) => Some(format!("{latitude:.5}, {longitude:.5}")),
-                _ => None,
-            };
-            panel
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .child(format!("Phase {}", phase_label(&report.phase))),
-                )
-                .when_some(remaining, |panel, remaining| {
-                    panel.child(
-                        div()
-                            .text_size(px(12.))
-                            .child(format!("Remaining {remaining}")),
-                    )
-                })
-                .when_some(destination, |panel, destination| {
-                    panel.child(
-                        div()
-                            .text_size(px(12.))
-                            .child(format!("Destination {destination}")),
-                    )
-                })
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .child(format!("Arrival radius {:.0} m", report.arrival_radius_m)),
-                )
-        })
-        .child(div().text_size(px(12.)).child("Autonomy"))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                .children(
-                    OPERATOR_LEVELS
-                        .iter()
-                        .enumerate()
-                        .map(|(index, (wire, label))| {
-                            let wire = (*wire).to_string();
-                            let current = mark.requested_level.as_deref() == Some(wire.as_str());
-                            div()
-                                .id(("level", index as u64))
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .text_size(px(11.))
-                                .cursor_pointer()
-                                .bg(rgb(if current { 0x245c49 } else { 0x1b2c38 }))
-                                .child(*label)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if this.selected == Some(id) {
-                                        this.feed.publish_level(id, &wire);
-                                        this.note = format!("Sending {}", level_label(&wire));
-                                    }
-                                    cx.notify();
-                                }))
-                        }),
-                ),
-        )
-        .when(mark.hold.as_deref() == Some(HEADING_HOLD), |panel| {
-            panel.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xe7b15a))
-                    .child(HEADING_HOLD_LABEL),
-            )
-        })
-        .child(div().text_size(px(12.)).child("Local map"))
-        .child(local_grid(&mark, drag, grid_frame, cx))
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(rgb(0xf0c36a))
-                .child(drag_line),
-        )
-        .when(
-            mark.route
-                .iter()
-                .any(|sample| sample.travel == Travel::Unspecified)
-                && mark.route.len() > 1,
-            |panel| {
-                panel.child(
-                    div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-                        "Path direction is provisional until a segment velocity is published.",
-                    ),
-                )
-            },
-        )
-        .when(
-            mark.outdoor.as_ref().is_some_and(|r| r.phase == "paused"),
-            |panel| {
-                panel.child(button(
-                    "resume-outdoor",
-                    "Resume outdoor mission",
-                    rgb(0x24594a),
-                    cx.listener(move |this, _, _, cx| {
-                        this.feed.resume_outdoor(id);
-                        cx.notify();
-                    }),
-                ))
-            },
-        )
-        .child(button(
-            "cancel-goal",
-            "Cancel goal",
-            rgb(0x1b2c38),
-            cx.listener(move |this, _, _, cx| {
-                this.feed.cancel_goal(id);
-                this.drag = None;
-                this.note = "Cancel requested".into();
-                cx.notify();
-            }),
-        ))
-        .child(
-            div()
-                .text_size(px(12.))
-                .child(if driving { "Drive · manual" } else { "Drive" }),
-        )
-        .when(hardware_blocked && !driving, |panel| {
-            panel.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xf0c36a))
-                    .child(drive_reason.unwrap_or_default().to_string()),
-            )
-        })
-        .child(
-            div().flex().gap_2().flex_wrap().children(
-                [0.1, 0.2, 0.3, 0.4, 0.5]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, speed)| {
-                        let chosen = (limits.linear - speed).abs() < 0.001;
-                        div()
-                            .id(("speed", index as u64))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .text_size(px(11.))
-                            .cursor_pointer()
-                            .bg(rgb(if chosen { 0x245c49 } else { 0x1b2c38 }))
-                            .child(format!("{speed:.1} m/s"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Err(error) = this.feed.set_linear(speed) {
-                                    this.note = error;
-                                }
-                                cx.notify();
-                            }))
-                    }),
-            ),
-        )
-        .when(
-            mark.requested_level.as_deref() == Some("teleop") && mark.status == "pose stale",
-            |panel| {
-                panel.child(
-                    div()
-                        .text_size(px(12.))
-                        .child("Camera pose unavailable · manual control does not need tracking"),
-                )
-            },
-        )
-        .child(turning_row(limits, cx))
-        .child(
-            div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
-                "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
-            ),
-        )
-        .child(drive_pad(driving, cx))
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .when(driving, |this| {
-                    this.child(button(
-                        "leave-drive",
-                        "Leave drive",
-                        rgb(0x1b2c38),
-                        cx.listener(|this, _, _, cx| {
-                            this.stop_drive();
-                            this.note = "Drive off. Zero twist sent.".into();
-                            cx.notify();
-                        }),
-                    ))
-                })
-                .when(!driving, |this| {
-                    this.child(button(
-                        "start-drive",
-                        if mark.requested_level.as_deref() == Some("teleop") {
-                            "Drive this rover"
-                        } else {
-                            "Select manual control"
-                        },
-                        rgb(0x245c49),
-                        cx.listener(|this, _, window, cx| {
-                            this.begin_drive(window, cx);
-                            cx.notify();
-                        }),
-                    ))
-                })
-                .child(button(
-                    "estop",
-                    "Stop",
-                    rgb(0x8d2b2b),
-                    cx.listener(|this, _, _, cx| {
-                        this.estop();
-                        cx.notify();
-                    }),
-                )),
-        )
-}
-
-fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    let yaw = cycle(limits.yaw_rate, &[0.25, 0.5, 1.0]);
-    let accel = cycle(limits.yaw_accel, &[0.25, 0.5, 1.0]);
-    let decel = cycle(limits.yaw_decel, &[0.4, 0.8, 1.6]);
-    let radius = cycle(limits.min_turn_radius, &[0.35, 0.5, 1.0]);
-    div()
-        .flex()
-        .flex_wrap()
-        .gap_1()
-        .child(limit_chip(
-            "yaw-rate",
-            format!("Yaw {:.2}", limits.yaw_rate),
-            cx,
-            move |this| this.feed.set_yaw_rate(yaw),
-        ))
-        .child(limit_chip(
-            "yaw-accel",
-            format!("Accel {:.2}", limits.yaw_accel),
-            cx,
-            move |this| this.feed.set_yaw_accel(accel),
-        ))
-        .child(limit_chip(
-            "yaw-decel",
-            format!("Decel {:.2}", limits.yaw_decel),
-            cx,
-            move |this| this.feed.set_yaw_decel(decel),
-        ))
-        .child(limit_chip(
-            "turn-radius",
-            format!("Radius {:.2}", limits.min_turn_radius),
-            cx,
-            move |this| this.feed.set_min_radius(radius),
-        ))
-        .child(button(
-            "spin",
-            if limits.allow_spin {
-                "In-place spin on"
-            } else {
-                "In-place spin off"
-            },
-            rgb(if limits.allow_spin {
-                0x8a5a12
-            } else {
-                0x1b2c38
-            }),
-            cx.listener(|this, _, _, cx| {
-                let allow = !this.feed.limits().allow_spin;
-                if let Err(error) = this.feed.set_spin(allow) {
-                    this.note = error;
-                }
-                cx.notify();
-            }),
-        ))
-}
-
-fn limit_chip(
-    id: &'static str,
-    label: String,
-    cx: &mut Context<Dashboard>,
-    apply: impl Fn(&mut Dashboard) -> Result<(), String> + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .text_size(px(11.))
-        .cursor_pointer()
-        .bg(rgb(0x1b2c38))
-        .child(label)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if let Err(error) = apply(this) {
-                this.note = error;
-            }
-            cx.notify();
-        }))
-}
-
-fn cycle(current: f64, choices: &[f64]) -> f64 {
-    choices
-        .iter()
-        .copied()
-        .find(|value| *value > current + 0.001)
-        .unwrap_or(choices[0])
-}
-
-fn drive_pad(driving: bool, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    let key = |name: &'static str, label: &'static str, cx: &mut Context<Dashboard>| {
-        div()
-            .id(name)
-            .w(px(36.))
-            .h(px(28.))
-            .rounded_md()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgb(if driving { 0x245c49 } else { 0x1b2c38 }))
-            .text_size(px(12.))
-            .child(label)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.hold(name, true);
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.hold(name, false);
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.hold(name, false);
-                    cx.notify();
-                }),
-            )
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(div().flex().justify_center().child(key("w", "W", cx)))
-        .child(
-            div()
-                .flex()
-                .justify_center()
-                .gap_1()
-                .child(key("a", "A", cx))
-                .child(key("s", "S", cx))
-                .child(key("d", "D", cx)),
-        )
-}
-
-fn hardware_row(id: u64, cx: &mut Context<Dashboard>) -> impl IntoElement {
-    div()
-        .flex()
-        .gap_1()
-        .flex_wrap()
-        .child(
-            Button::new(("stop-rover", id))
-                .label("Stop")
-                .danger()
-                .compact()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.stop_rover(id);
-                    cx.stop_propagation();
-                    cx.notify();
-                })),
-        )
-        .child(
-            Button::new(("reset-stop", id))
-                .label("Reset stop")
-                .compact()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.reset_safety(id);
-                    cx.stop_propagation();
-                    cx.notify();
-                })),
-        )
-}
-
-fn button(
-    id: &'static str,
-    label: &'static str,
-    color: Rgba,
-    listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .cursor_pointer()
-        .bg(color)
-        .text_size(px(13.))
-        .child(label)
-        .on_click(listener)
-}
-
-/// Window chrome for the console: map camera, link health, and the fleet stop.
-fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let mode = dashboard.map_mode;
+    let held = dashboard.claim.held(dashboard.now);
+    let detail: SharedString = format!("{} · {}", dashboard.link, dashboard.detail).into();
+    let status: SharedString = status.into();
+    // Video keeps running when its rover leaves the field; without a
+    // selection there is no inspector to stop it from.
+    let orphan_video = dashboard
+        .fpv
+        .view()
+        .phone_id
+        .filter(|_| dashboard.selected.is_none());
     TitleBar::new()
         .child(
             h_flex()
                 .gap_3()
+                .flex_1()
+                .min_w_0()
                 .child(div().text_sm().font_semibold().child("ARGOS"))
                 .child(
                     ButtonGroup::new("map-mode")
@@ -1703,16 +939,76 @@ fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoE
                             this.focus.focus(window, cx);
                             cx.notify();
                         })),
+                )
+                .child(
+                    Button::new("occupancy-overlay")
+                        .outline()
+                        .small()
+                        .selected(dashboard.show_occupancy)
+                        .label("Map grid")
+                        .tooltip("Show each rover's occupancy grid on the map")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_occupancy = !this.show_occupancy;
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .id("console-status")
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .when(!status.is_empty(), |line| {
+                            let full = status.clone();
+                            line.tooltip(move |window, cx| {
+                                Tooltip::new(full.clone()).build(window, cx)
+                            })
+                        })
+                        .child(status),
                 ),
         )
         .child(
             h_flex()
                 .gap_3()
                 .pr_2()
+                .flex_none()
+                .when_some(orphan_video, |bar, active| {
+                    bar.child(
+                        stop_fpv_button(cx)
+                            .ghost()
+                            .tooltip(format!("Video is rover {active}")),
+                    )
+                })
+                .child(
+                    Button::new("control-claim")
+                        .outline()
+                        .small()
+                        .selected(held)
+                        .label(if held {
+                            "Release control"
+                        } else {
+                            "Take control"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.claim.held(this.now) {
+                                this.claim.release();
+                                this.note = "Control released".into();
+                            } else {
+                                this.claim.take(this.now);
+                                this.note = "Control held by this window".into();
+                            }
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
                 .child(
                     div()
+                        .id("link-health")
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
+                        .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
                         .child(format!("Link {}", dashboard.link)),
                 )
                 .child(
@@ -1837,18 +1133,21 @@ fn rover_card(
         }))
 }
 
-/// Rovers whose position is outside the current view. Choosing one centers
-/// the map on it and selects it.
+/// Rovers whose position is outside the current view, then fleet members
+/// with no position at all. Choosing an off-screen rover centers the map on
+/// it and selects it; an unlocated one can only say why it has no position.
+/// Kept on the leading edge so the inspector never covers it.
 fn offscreen_tabs(
     field: &[(u64, Option<Point<Pixels>>, console::Callout)],
+    unlocated: &[console::Unlocated],
     selected: Option<u64>,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     v_flex()
         .absolute()
-        .right_3()
+        .left_3()
         .bottom_3()
-        .items_end()
+        .items_start()
         .gap_2()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .children(
@@ -1887,18 +1186,48 @@ fn offscreen_tabs(
                         }))
                 }),
         )
+        .children(unlocated.iter().map(|row| {
+            let id = row.id;
+            let detail: SharedString = row.detail.clone().into();
+            Button::new(("unlocated", id))
+                .outline()
+                .small()
+                .bg(cx.theme().popover)
+                .tooltip(detail.clone())
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(row.label.clone())
+                        .child(Tag::secondary().small().child("No position")),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.focus.focus(window, cx);
+                    this.note = format!("Rover {id} · {detail}");
+                    cx.notify();
+                }))
+        }))
 }
 
-/// The selected rover's state and the commands that act on it. Arm, levels,
-/// navigation source, and drive limits stay in the sidebar for now.
+/// Live telemetry the inspector draws but does not own.
+struct Facts {
+    drag: Option<(u64, f64, f64, f64, Option<f64>)>,
+    limits: argos_core::TeleopLimits,
+    reversing_key: bool,
+    grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+}
+
+/// The selected rover: identity, state, and the commands that act on it on
+/// every tab; the rest of its controls are grouped by tab and section.
 fn rover_inspector(
+    dashboard: &Dashboard,
     mark: &RoverMark,
-    stopped: bool,
-    driving: bool,
-    frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    facts: Facts,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let id = mark.id;
+    let stopped = dashboard.is_stopped(mark);
+    let driving = dashboard.driving;
+    let tab = dashboard.inspector_tab;
     let callout = console::callout(mark, stopped, driving);
     let manual = mark.requested_level.as_deref() == Some("teleop");
     let primary = if stopped {
@@ -1931,16 +1260,23 @@ fn rover_inspector(
                 cx.notify();
             }))
     };
+    let reversing = mark.reversing || (facts.reversing_key && driving);
+    let body = match tab {
+        InspectorTab::Overview => overview_tab(dashboard, mark, &facts, cx).into_any_element(),
+        InspectorTab::LocalMap => local_map_tab(dashboard, mark, &facts, cx).into_any_element(),
+        InspectorTab::Video => video_tab(dashboard, cx).into_any_element(),
+    };
     v_flex()
         .absolute()
         .top_3()
         .right_3()
-        .w_80()
-        .p_4()
-        .gap_3()
+        .bottom_3()
+        .w(px(360.))
         .popover_style(cx)
+        .overflow_hidden()
         // Measured so rover cards can stay out from under the inspector.
-        .child(
+        .child({
+            let frame = dashboard.inspector_frame.clone();
             canvas(
                 move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
                 |_, _, _, _| {},
@@ -1948,46 +1284,661 @@ fn rover_inspector(
             .absolute()
             .top_0()
             .left_0()
-            .size_full(),
-        )
+            .size_full()
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
-            h_flex()
-                .justify_between()
+            v_flex()
+                .flex_none()
+                .p_4()
+                .pb_2()
+                .gap_3()
                 .child(
-                    div()
-                        .text_sm()
-                        .font_semibold()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(format!("Rover {id}")),
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_semibold()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(format!("Rover {id}")),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .when(reversing, |tags| {
+                                    tags.child(Tag::warning().small().child("Reversing"))
+                                })
+                                .children(callout.tag.map(callout_tag)),
+                        ),
                 )
-                .children(callout.tag.map(callout_tag)),
-        )
-        .child(div().text_base().font_medium().child(callout.state))
-        .child(
-            DescriptionList::horizontal()
-                .columns(1)
-                .bordered(false)
-                .label_width(rems(6.))
-                .children(
-                    console::trace(mark, stopped)
-                        .into_iter()
-                        .map(|(label, value)| DescriptionItem::new(label).value(value)),
+                .child(div().text_base().font_medium().child(callout.state))
+                .child(
+                    h_flex().gap_2().child(primary.outline().small()).child(
+                        Button::new(("inspector-stop", id))
+                            .danger()
+                            .small()
+                            .label("Stop")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.stop_rover(id);
+                                this.focus.focus(window, cx);
+                                cx.notify();
+                            })),
+                    ),
                 ),
         )
         .child(
-            h_flex().gap_2().child(primary.outline().small()).child(
-                Button::new(("inspector-stop", id))
-                    .danger()
-                    .small()
-                    .label("Stop")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.stop_rover(id);
-                        this.focus.focus(window, cx);
-                        cx.notify();
-                    })),
-            ),
+            TabBar::new("inspector-tabs")
+                .underline()
+                .small()
+                .px_2()
+                .selected_index(tab.index())
+                .children(
+                    InspectorTab::ALL
+                        .into_iter()
+                        .map(|tab| Tab::new().label(tab.label())),
+                )
+                .on_click(cx.listener(|this, index: &usize, _, cx| {
+                    this.inspector_tab = InspectorTab::from_index(*index);
+                    cx.notify();
+                })),
         )
+        .child(
+            v_flex()
+                .id("inspector-body")
+                // Zero basis: the body takes only the height left under the
+                // header and tab bar, and scrolls the rest.
+                .h_0()
+                .flex_1()
+                .min_h_0()
+                .p_4()
+                .gap_5()
+                .child(body)
+                .overflow_y_scrollbar(),
+        )
+}
+
+fn section(title: &'static str, cx: &App) -> Div {
+    v_flex().gap_2().child(
+        div()
+            .text_xs()
+            .font_semibold()
+            .text_color(cx.theme().muted_foreground)
+            .child(title),
+    )
+}
+
+fn hint(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.into())
+}
+
+fn caution(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .text_xs()
+        .text_color(cx.theme().warning)
+        .child(text.into())
+}
+
+fn rows(items: Vec<(&'static str, String)>) -> DescriptionList {
+    DescriptionList::horizontal()
+        .columns(1)
+        .bordered(false)
+        .label_width(rems(6.))
+        .children(
+            items
+                .into_iter()
+                .map(|(label, value)| DescriptionItem::new(label).value(value)),
+        )
+}
+
+/// What a goal drag would do now, or why it cannot start.
+fn goal_line(
+    mark: &RoverMark,
+    drag: Option<(u64, f64, f64, f64, Option<f64>)>,
+    link: &str,
+) -> String {
+    let level = mark
+        .effective_level
+        .clone()
+        .or_else(|| mark.requested_level.clone());
+    let local_gate = DragGate {
+        selected: true,
+        link_healthy: link == "healthy",
+        pose_fresh: mark.status == "online",
+        degraded: mark.degraded,
+        level: level.as_deref(),
+        geographic: false,
+        outdoor: false,
+        admission: None,
+    };
+    let drive_reason = drive_block(&mark.hardware);
+    if let Some((_, _, _, distance, radius)) = drag.filter(|item| item.0 == mark.id) {
+        match radius {
+            Some(radius) => format!("{distance:.1} m GPS · arrival radius {radius:.0} m"),
+            None => format!("{distance:.1} m"),
+        }
+    } else if mark.outdoor_gps {
+        match drag_disabled_reason(geographic_gate(mark, link, true)) {
+            Some(reason) => reason.to_string(),
+            None => drive_reason
+                .unwrap_or("Drag the map marker. Release sends the GPS goal.")
+                .into(),
+        }
+    } else {
+        match drag_disabled_reason(local_gate) {
+            Some(reason) => reason.to_string(),
+            None => drive_reason
+                .unwrap_or("Drag the rover or its goal. Release sends.")
+                .into(),
+        }
+    }
+}
+
+fn overview_tab(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    facts: &Facts,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let id = mark.id;
+    let stopped = dashboard.is_stopped(mark);
+    let driving = dashboard.driving;
+    let (hardware_status, hardware_detail) = console::hardware_lines(mark, stopped);
+    let level = console::level_index(mark);
+    let source = console::source_index(mark);
+    let mut navigation = Vec::new();
+    if let Some(gps) = mark.raw_gps {
+        navigation.push((
+            "Position",
+            format!(
+                "{} · {:.5}, {:.5}{}{}",
+                position_label(mark),
+                gps.latitude,
+                gps.longitude,
+                gps.accuracy_m
+                    .map(|accuracy| format!(" · ±{accuracy:.1} m"))
+                    .unwrap_or_default(),
+                gps.age_s
+                    .map(|age| format!(" · {age:.1} s"))
+                    .unwrap_or_default()
+            ),
+        ));
+    } else {
+        navigation.push(("Position", position_label(mark)));
+    }
+    if let Some(report) = mark.outdoor.as_ref() {
+        navigation.push(("Phase", phase_label(&report.phase)));
+        if let Some(metres) = report.remaining_m {
+            navigation.push(("Remaining", format!("{metres:.0} m")));
+        }
+        if let (Some(latitude), Some(longitude)) =
+            (report.destination_latitude, report.destination_longitude)
+        {
+            navigation.push(("Destination", format!("{latitude:.5}, {longitude:.5}")));
+        }
+        navigation.push((
+            "Arrival radius",
+            format!("{:.0} m", report.arrival_radius_m),
+        ));
+    }
+    v_flex()
+        .gap_5()
+        .child(rows(console::trace(mark, stopped)))
+        .child(
+            section("Hardware", cx)
+                .child(div().text_sm().child(hardware_status.to_owned()))
+                .when_some(hardware_detail, |section, detail| {
+                    section.child(caution(detail.to_owned(), cx))
+                })
+                // Reset stop clears this window's latch or the rover's own stop.
+                .when(stopped, |section| {
+                    section.child(
+                        h_flex().child(
+                            Button::new(("reset-stop", id))
+                                .outline()
+                                .small()
+                                .label("Reset stop")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.reset_safety(id);
+                                    cx.notify();
+                                })),
+                        ),
+                    )
+                }),
+        )
+        .child(
+            section("Autonomy", cx)
+                .child(hint(console::level_line(mark), cx))
+                // L0–L3, then the supervised levels, so neither row wraps.
+                .child(level_group(id, level, 0..4, cx))
+                .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
+        )
+        .child(
+            section("Navigation", cx)
+                .child(
+                    ButtonGroup::new(("source", id))
+                        .outline()
+                        .small()
+                        .children(console::NAVIGATION_SOURCES.iter().enumerate().map(
+                            |(index, (_, label))| {
+                                Button::new(("source", index as u64))
+                                    .label(*label)
+                                    .selected(source == index)
+                            },
+                        ))
+                        .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
+                            if this.selected == Some(id)
+                                && let Some((wire, _)) = clicks
+                                    .first()
+                                    .and_then(|index| console::NAVIGATION_SOURCES.get(*index))
+                            {
+                                this.feed.select_source(id, wire);
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(hint(console::navigation_note(mark), cx))
+                .when(mark.app_update_required && mark.outdoor_gps, |section| {
+                    section.child(caution(APP_UPDATE_REQUIRED, cx))
+                })
+                .when_some(
+                    mark.outdoor.as_ref().and_then(|report| report.hold_label()),
+                    |section, label| section.child(caution(label.to_owned(), cx)),
+                )
+                .child(rows(navigation))
+                .when(
+                    mark.outdoor
+                        .as_ref()
+                        .is_some_and(|report| report.phase == "paused"),
+                    |section| {
+                        section.child(
+                            h_flex().child(
+                                Button::new("resume-outdoor")
+                                    .outline()
+                                    .small()
+                                    .label("Resume outdoor mission")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.feed.resume_outdoor(id);
+                                        cx.notify();
+                                    })),
+                            ),
+                        )
+                    },
+                ),
+        )
+        .child(goal_section(dashboard, mark, facts, cx))
+        .when(driving, |tab| tab.child(drive_section(dashboard, mark, facts.limits, cx)))
+        .child(hint(
+            "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
+            cx,
+        ))
+}
+
+/// One row of the autonomy picker over `OPERATOR_LEVELS[range]`; the
+/// requested level is selected.
+fn level_group(
+    id: u64,
+    requested: Option<usize>,
+    range: std::ops::Range<usize>,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let start = range.start;
+    ButtonGroup::new((
+        "level",
+        id.saturating_mul(2).saturating_add(u64::from(start > 0)),
+    ))
+    .outline()
+    .small()
+    .children(
+        OPERATOR_LEVELS[range]
+            .iter()
+            .enumerate()
+            .map(|(offset, (_, label))| {
+                let index = start + offset;
+                Button::new(("level", index as u64))
+                    .label(*label)
+                    .selected(requested == Some(index))
+            }),
+    )
+    .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
+        if this.selected == Some(id)
+            && let Some((wire, _)) = clicks
+                .first()
+                .and_then(|offset| OPERATOR_LEVELS.get(start + offset))
+        {
+            this.feed.publish_level(id, wire);
+            this.note = format!("Sending {}", level_label(wire));
+        }
+        cx.notify();
+    }))
+}
+
+fn goal_section(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    facts: &Facts,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let id = mark.id;
+    section("Goal", cx)
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_between()
+                .child(div().min_w_0().flex_1().text_xs().child(goal_line(
+                    mark,
+                    facts.drag,
+                    &dashboard.link,
+                )))
+                .child(
+                    Button::new("cancel-goal")
+                        .outline()
+                        .small()
+                        .label("Cancel goal")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.feed.cancel_goal(id);
+                            this.drag = None;
+                            this.note = "Cancel requested".into();
+                            cx.notify();
+                        })),
+                ),
+        )
+        .when(console::path_provisional(mark), |section| {
+            section.child(hint(
+                "Path direction is provisional until a segment velocity is published.",
+                cx,
+            ))
+        })
+}
+
+/// Manual drive settings and the on-screen keys. Shown only while this
+/// window drives the rover.
+fn drive_section(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    limits: argos_core::TeleopLimits,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let speed = console::speed_index(limits.linear);
+    section("Drive · manual", cx)
+        .child(
+            ButtonGroup::new("drive-speed")
+                .outline()
+                .small()
+                .children(
+                    console::DRIVE_SPEEDS
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            Button::new(("speed", index as u64))
+                                .label(format!("{value:.1} m/s"))
+                                .selected(speed == Some(index))
+                        }),
+                )
+                .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                    if let Some(value) = clicks
+                        .first()
+                        .and_then(|index| console::DRIVE_SPEEDS.get(*index))
+                        && let Err(error) = this.feed.set_linear(*value)
+                    {
+                        this.note = error;
+                    }
+                    cx.notify();
+                })),
+        )
+        .when(
+            mark.requested_level.as_deref() == Some("teleop") && mark.status == "pose stale",
+            |section| {
+                section.child(hint(
+                    "Camera pose unavailable · manual control does not need tracking",
+                    cx,
+                ))
+            },
+        )
+        .child(turning_row(limits, cx))
+        .child(hint(
+            "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
+            cx,
+        ))
+        .child(drive_pad(&dashboard.held, cx))
+}
+
+fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let yaw = cycle(limits.yaw_rate, &[0.25, 0.5, 1.0]);
+    let accel = cycle(limits.yaw_accel, &[0.25, 0.5, 1.0]);
+    let decel = cycle(limits.yaw_decel, &[0.4, 0.8, 1.6]);
+    let radius = cycle(limits.min_turn_radius, &[0.35, 0.5, 1.0]);
+    h_flex()
+        .flex_wrap()
+        .gap_1()
+        .child(limit_chip(
+            "yaw-rate",
+            format!("Yaw {:.2}", limits.yaw_rate),
+            cx,
+            move |this| this.feed.set_yaw_rate(yaw),
+        ))
+        .child(limit_chip(
+            "yaw-accel",
+            format!("Accel {:.2}", limits.yaw_accel),
+            cx,
+            move |this| this.feed.set_yaw_accel(accel),
+        ))
+        .child(limit_chip(
+            "yaw-decel",
+            format!("Decel {:.2}", limits.yaw_decel),
+            cx,
+            move |this| this.feed.set_yaw_decel(decel),
+        ))
+        .child(limit_chip(
+            "turn-radius",
+            format!("Radius {:.2}", limits.min_turn_radius),
+            cx,
+            move |this| this.feed.set_min_radius(radius),
+        ))
+        .child(
+            Button::new("spin")
+                .outline()
+                .small()
+                .selected(limits.allow_spin)
+                .label(if limits.allow_spin {
+                    "In-place spin on"
+                } else {
+                    "In-place spin off"
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    let allow = !this.feed.limits().allow_spin;
+                    if let Err(error) = this.feed.set_spin(allow) {
+                        this.note = error;
+                    }
+                    cx.notify();
+                })),
+        )
+}
+
+/// A drive limit that steps to its next preset on each click.
+fn limit_chip(
+    id: &'static str,
+    label: String,
+    cx: &mut Context<Dashboard>,
+    apply: impl Fn(&mut Dashboard) -> Result<(), String> + 'static,
+) -> impl IntoElement {
+    Button::new(id)
+        .outline()
+        .small()
+        .compact()
+        .label(label)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if let Err(error) = apply(this) {
+                this.note = error;
+            }
+            cx.notify();
+        }))
+}
+
+fn cycle(current: f64, choices: &[f64]) -> f64 {
+    choices
+        .iter()
+        .copied()
+        .find(|value| *value > current + 0.001)
+        .unwrap_or(choices[0])
+}
+
+/// On-screen W/A/S/D. Each key drives while the pointer holds it, like the
+/// keyboard; a held key shows as selected.
+fn drive_pad(held: &BTreeSet<String>, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let key = |name: &'static str, label: &'static str, cx: &mut Context<Dashboard>| {
+        Button::new(name)
+            .outline()
+            .small()
+            .w(px(36.))
+            .label(label)
+            .selected(held.contains(name))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.hold(name, true);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.hold(name, false);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.hold(name, false);
+                    cx.notify();
+                }),
+            )
+    };
+    v_flex()
+        .gap_1()
+        .items_center()
+        .child(key("w", "W", cx))
+        .child(
+            h_flex()
+                .gap_1()
+                .child(key("a", "A", cx))
+                .child(key("s", "S", cx))
+                .child(key("d", "D", cx)),
+        )
+}
+
+fn local_map_tab(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    facts: &Facts,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    v_flex()
+        .gap_3()
+        .child(hint(mark.occupancy.clone(), cx))
+        .child(local_grid(mark, facts.drag, facts.grid_frame.clone(), cx))
+        .child(
+            div()
+                .text_xs()
+                .child(goal_line(mark, facts.drag, &dashboard.link)),
+        )
+}
+
+/// Video stays with the selection: Start FPV asks the selected rover's phone.
+fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let picture = dashboard.fpv.view();
+    let phase = picture.phase;
+    let detail = picture.detail.clone();
+    v_flex()
+        .gap_3()
+        .child(hint(fpv_subject(dashboard.selected, picture.phone_id), cx))
+        .child(
+            div()
+                .w_full()
+                .h(px(188.))
+                .bg(cx.theme().background)
+                .rounded(cx.theme().radius)
+                .overflow_hidden()
+                .when_some(picture.image.clone(), |frame, image| {
+                    frame.child(
+                        img(image)
+                            .id("fpv-picture")
+                            .size_full()
+                            .object_fit(ObjectFit::Contain),
+                    )
+                })
+                .when(picture.image.is_none(), |frame| {
+                    frame.child(
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_3()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(detail.clone()),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(phase_color(phase, cx))
+                .child(format!("{} · {detail}", phase.label())),
+        )
+        .child(hint(fpv_stats(&picture), cx))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("fpv-start")
+                        .outline()
+                        .small()
+                        .label("Start FPV")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(id) = this.selected {
+                                this.fpv.start_phone(id);
+                                this.note = format!("FPV requested for rover {id}");
+                            } else {
+                                this.note = "Select a rover before starting FPV".into();
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(stop_fpv_button(cx)),
+        )
+        .child(hint(
+            "Video only. Drive, arm, and stop stay on the Zenoh controls.",
+            cx,
+        ))
+}
+
+fn stop_fpv_button(cx: &mut Context<Dashboard>) -> Button {
+    Button::new("fpv-stop")
+        .outline()
+        .small()
+        .label("Stop FPV")
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.fpv.stop();
+            this.note = "FPV stopped".into();
+            cx.notify();
+        }))
+}
+
+fn fpv_subject(selected: Option<u64>, watching: Option<u64>) -> String {
+    match (selected, watching) {
+        (Some(id), Some(active)) if id != active => {
+            format!("Selected rover {id}. Video is rover {active}.")
+        }
+        (Some(id), _) => format!("Selected rover {id}"),
+        (None, Some(active)) => format!("Video is rover {active}"),
+        (None, None) => "Select a rover, then start video.".into(),
+    }
 }
 
 fn drive_key(key: &str) -> Option<&'static str> {
@@ -2053,8 +2004,26 @@ fn main() {
             },
             cx,
             |window, cx| {
-                // The field and every console surface are drawn for a dark room.
-                Theme::change(ThemeMode::Dark, Some(window), cx);
+                // Kit widgets follow the light theme on the console background.
+                // The status colors are darkened so they read as text too.
+                Theme::change(ThemeMode::Light, Some(window), cx);
+                Theme::update(cx, |theme| {
+                    theme.background = rgb(palette::BACKGROUND).into();
+                    theme.title_bar = rgb(palette::BACKGROUND).into();
+                    theme.foreground = rgb(palette::TEXT).into();
+                    theme.muted_foreground = rgb(palette::MUTED).into();
+                    let status = |color: u32| {
+                        let color: Hsla = rgb(color).into();
+                        (color, color.opacity(0.9), color.opacity(0.8))
+                    };
+                    (theme.warning, theme.warning_hover, theme.warning_active) =
+                        status(palette::WARNING);
+                    (theme.success, theme.success_hover, theme.success_active) =
+                        status(palette::SUCCESS);
+                    (theme.danger, theme.danger_hover, theme.danger_active) =
+                        status(palette::DANGER);
+                    theme.warning_foreground = gpui::white();
+                });
                 let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);

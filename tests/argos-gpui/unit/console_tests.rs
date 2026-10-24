@@ -1,6 +1,9 @@
 use super::*;
 use crate::GoalMark;
-use argos_core::{CommandOrigin, HardwareObservation, OutdoorReport};
+use crate::fleet_presence;
+use argos_core::{
+    CommandOrigin, HardwareObservation, OutdoorReport, RouteSample, RoverSnapshot, Snapshot,
+};
 
 fn mark(id: u64) -> RoverMark {
     RoverMark {
@@ -266,4 +269,139 @@ fn a_stack_too_tall_for_any_side_keeps_the_default() {
         side(&place_cards(&[(0, 100., 25.)], tiny)[0]),
         (false, false)
     );
+}
+
+#[test]
+fn status_prefers_this_windows_note_over_the_feed_command() {
+    assert_eq!(
+        status_line("Stop sent to rover 1", "goal accepted"),
+        "Stop sent to rover 1"
+    );
+    assert_eq!(status_line("", "goal accepted"), "goal accepted");
+}
+
+#[test]
+fn level_group_selects_the_requested_level_not_the_effective_one() {
+    let mut rover = mark(1);
+    rover.requested_level = Some("teleop".into());
+    rover.effective_level = Some("waypoint".into());
+    assert_eq!(level_index(&rover), Some(0));
+    assert_eq!(OPERATOR_LEVELS[level_index(&rover).unwrap()].1, "L0 Manual");
+    rover.requested_level = Some("not_a_level".into());
+    assert_eq!(level_index(&rover), None);
+    rover.requested_level = None;
+    assert_eq!(level_index(&rover), None);
+    rover.recommended_level = Some("supervised".into());
+    assert_eq!(level_line(&rover), "L3 Waypoint · recommended Supervised");
+}
+
+#[test]
+fn navigation_source_follows_the_vehicle_report() {
+    let mut rover = mark(1);
+    assert_eq!(source_index(&rover), 0);
+    assert!(navigation_note(&rover).starts_with("Local navigation. Outdoor GPS stays off"));
+    rover.outdoor = Some(outdoor("driving", None, None));
+    rover.outdoor_gps = true;
+    assert_eq!(NAVIGATION_SOURCES[source_index(&rover)].0, "outdoor_gps");
+    assert!(navigation_note(&rover).starts_with("Outdoor GPS acknowledged"));
+    rover.app_update_required = true;
+    assert!(navigation_note(&rover).contains("unavailable in this runtime"));
+}
+
+#[test]
+fn speed_chips_match_the_active_cap_only() {
+    assert_eq!(speed_index(0.3), Some(2));
+    assert_eq!(speed_index(0.3000004), Some(2));
+    assert_eq!(speed_index(0.25), None);
+}
+
+#[test]
+fn hardware_lines_put_the_stop_ahead_of_the_relay() {
+    let rover = mark(1);
+    assert_eq!(
+        hardware_lines(&rover, false),
+        (
+            "Hardware status unavailable",
+            Some("Hardware status unavailable · connect the updated Terra app")
+        )
+    );
+    assert_eq!(
+        hardware_lines(&rover, true),
+        ("Stop active", Some("Use Reset stop before driving"))
+    );
+}
+
+#[test]
+fn a_path_is_provisional_only_with_an_unspecified_segment() {
+    let mut rover = mark(1);
+    let sample = |travel| RouteSample {
+        x: 0.,
+        y: 0.,
+        travel,
+    };
+    rover.route = vec![sample(Travel::Unspecified)];
+    assert!(!path_provisional(&rover));
+    rover.route = vec![sample(Travel::Forward), sample(Travel::Forward)];
+    assert!(!path_provisional(&rover));
+    rover.route.push(sample(Travel::Unspecified));
+    assert!(path_provisional(&rover));
+}
+
+#[test]
+fn unlocated_lists_only_fleet_members_without_a_mark() {
+    let member = |id, pose_age| RoverSnapshot {
+        id,
+        membership: "online".into(),
+        pose: None,
+        pose_age,
+        goal: None,
+        goal_age: None,
+        goal_received_at: None,
+        command_phase: "none".into(),
+        command_token: None,
+    };
+    let snapshot = Snapshot {
+        link: "healthy".into(),
+        fleet_age: None,
+        rovers: vec![member(4, Some(2.)), member(1, None), member(2, None)],
+        notice: None,
+    };
+    let marks = [mark(2)];
+    let presence = fleet_presence(&snapshot, &marks);
+    let rows = unlocated(&marks, &presence);
+    assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), [1, 4]);
+    assert_eq!(rows[0].label, "Rover 1 · online");
+    assert_eq!(
+        rows[0].detail,
+        "Position unavailable · Waiting for telemetry"
+    );
+    assert_eq!(
+        rows[1].detail,
+        "Position unavailable · Last observation 2.0 s ago"
+    );
+}
+
+#[test]
+fn inspector_tabs_round_trip_through_the_tab_bar_index() {
+    for tab in InspectorTab::ALL {
+        assert_eq!(InspectorTab::from_index(tab.index()), tab);
+    }
+    assert_eq!(InspectorTab::from_index(9), InspectorTab::Overview);
+}
+
+#[test]
+fn field_notices_show_the_link_reason_only_while_unhealthy() {
+    assert_eq!(
+        field_notices(
+            "password",
+            "Set ARGOS_ZENOH_PASSWORD in .env",
+            Some("Set GOOGLE_MAPS_API_KEY in .env")
+        ),
+        [
+            "Link password · Set ARGOS_ZENOH_PASSWORD in .env",
+            "Set GOOGLE_MAPS_API_KEY in .env"
+        ]
+    );
+    assert!(field_notices("healthy", "2 rovers", None).is_empty());
+    assert!(field_notices("connecting", "", None).is_empty());
 }
