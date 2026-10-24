@@ -1,46 +1,44 @@
-//! Rover pickup, destination preview, cancellation, and goal submission.
-//! Model positions are previews; only release publishes a destination.
-use super::local_map::point_to_local;
+//! Click-to-place destinations, the confirm popup's actions, and goal
+//! submission. A proposal is only a preview; only Send goal publishes it.
 use super::{ActiveDrag, Dashboard};
 use argos_core::{
     DragAnchor, DragEnd, DragGate, DragSpace, GoalDrag, OutdoorAdmission, PlanarPoint,
     drag_disabled_reason, drive_block,
 };
-use argos_gpui::{RoverMark, model_position};
+use argos_gpui::RoverMark;
 use gpui_kit::{prelude::*, *};
-use terra_map::{Color, GeoPosition};
 
 impl Dashboard {
-    pub(super) fn pick_model(&mut self, id: u64, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        self.select(id);
-        if !event.modifiers.control {
-            self.note = format!(
-                "Rover {id} selected · control active in this window. Control-drag to place a destination"
-            );
+    /// A plain click on the main map proposes a destination for the selected
+    /// rover. Nothing is sent until the operator confirms in the popup.
+    pub(super) fn click_map(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        if !self.claim.held(self.now) {
+            self.note = "Take control to place a destination".into();
             return;
         }
-        let ground = self
-            .selected_mark()
-            .and_then(|mark| self.view.read(cx).project(mark.latitude, mark.longitude));
-        self.begin_drag(id, DragAnchor::Rover, true);
-        if let (Some(active), Some(ground)) = (self.drag.as_mut(), ground) {
-            active.grab_offset = Some(point(
-                ground.x - event.position.x,
-                ground.y - event.position.y,
-            ));
+        self.drag = None;
+        self.begin_drag(id, DragAnchor::Goal, true);
+        if self.drag.is_none() {
+            return;
+        }
+        if !self.move_drag(position, cx) {
+            self.drag = None;
+            self.note = "No ground under that point".into();
         }
     }
     pub(super) fn begin_drag(&mut self, id: u64, anchor: DragAnchor, from_map: bool) {
         if self.driving {
-            self.note = "Leave drive before dragging a goal".into();
+            self.note = "Leave drive before placing a goal".into();
             return;
         }
         let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
             return;
         };
         if !from_map && mark.outdoor_gps {
-            self.note =
-                "Outdoor GPS is the source. Drag the map marker to send a WGS84 goal.".into();
+            self.note = "Outdoor GPS is the source. Click the map to send a WGS84 goal.".into();
             return;
         }
         let geographic = from_map && mark.outdoor_gps;
@@ -126,82 +124,44 @@ impl Dashboard {
         match GoalDrag::start(id, anchor, space, rover, cursor, radius, gate) {
             Ok(goal) => {
                 self.note = drag_note(&goal);
-                self.drag = Some(ActiveDrag {
-                    goal,
-                    from_map,
-                    grab_offset: None,
-                });
+                self.drag = Some(ActiveDrag { goal, from_map });
             }
             Err(reason) => self.note = reason.into(),
         }
     }
-    pub(super) fn move_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// Points the proposed destination at a window position on the map.
+    /// Returns false when there is no usable ground there.
+    pub(super) fn move_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let Some(active) = self.drag.as_ref() else {
-            return;
+            return false;
         };
-        let from_map = active.from_map;
+        if !active.from_map {
+            return false;
+        }
         let space = active.goal.space;
-        let position = active.grab_offset.map_or(position, |offset| {
-            point(position.x + offset.x, position.y + offset.y)
-        });
-        let next = if from_map {
-            let Some((latitude, longitude)) = self.view.read(cx).ground_at(position) else {
-                return;
-            };
-            if space == DragSpace::Geographic {
-                PlanarPoint {
-                    x: latitude,
-                    y: longitude,
-                }
-            } else {
-                let Some(frame) = self.selected_mark().and_then(|mark| mark.map_frame) else {
-                    return;
-                };
-                let Ok((x, y)) = frame.local(latitude, longitude) else {
-                    return;
-                };
-                PlanarPoint { x, y }
+        let Some((latitude, longitude)) = self.view.read(cx).ground_at(position) else {
+            return false;
+        };
+        let next = if space == DragSpace::Geographic {
+            PlanarPoint {
+                x: latitude,
+                y: longitude,
             }
         } else {
-            let frame = *self.grid_frame.lock().unwrap();
-            let Some(frame) = frame else {
-                return;
+            let Some(frame) = self.selected_mark().and_then(|mark| mark.map_frame) else {
+                return false;
             };
-            let Some(grid) = self.selected_mark().and_then(|mark| mark.grid.clone()) else {
-                return;
-            };
-            let Some((x, y)) = point_to_local(&frame, &grid, position) else {
-                return;
+            let Ok((x, y)) = frame.local(latitude, longitude) else {
+                return false;
             };
             PlanarPoint { x, y }
         };
         let Some(active) = self.drag.as_mut() else {
-            return;
+            return false;
         };
         active.goal.move_to(next);
         self.note = drag_note(&active.goal);
-        if active.from_map
-            && active.goal.anchor == DragAnchor::Rover
-            && let Some(mark) = self.marks.iter().find(|mark| mark.id == active.goal.id)
-            && let Some(object) = self.objects.get(&mark.id)
-        {
-            let (latitude, longitude) = model_position(
-                mark.id,
-                (mark.latitude, mark.longitude),
-                mark.map_frame,
-                Some(&active.goal),
-            );
-            let altitude = self
-                .map
-                .surface_altitude(latitude, longitude)
-                .unwrap_or_else(|| self.view.read(cx).ground_altitude());
-            let _ = self
-                .map
-                .set_object_position(*object, GeoPosition::new(latitude, longitude, altitude));
-            let _ = self
-                .map
-                .illuminate_3d_object(*object, Color::rgb(255, 160, 50));
-        }
+        true
     }
     pub(super) fn release_drag(&mut self) {
         let Some(active) = self.drag.take() else {
@@ -211,7 +171,7 @@ impl Dashboard {
         let radius = active.goal.arrival_radius_m;
         let geographic = active.goal.space == DragSpace::Geographic;
         let Some(mark) = self.marks.iter().find(|mark| mark.id == id).cloned() else {
-            self.note = "Drag cancelled".into();
+            self.note = "Goal not sent".into();
             return;
         };
         let level = mark
@@ -247,7 +207,7 @@ impl Dashboard {
         if let Some(active) = self.drag.take() {
             self.note = match active.goal.escape() {
                 DragEnd::Cancelled(reason) => reason.into(),
-                DragEnd::Send(_) => "Drag cancelled".into(),
+                DragEnd::Send(_) => "Goal not sent".into(),
             };
         }
     }
@@ -304,10 +264,10 @@ pub(super) fn geographic_gate<'a>(mark: &'a RoverMark, link: &str, selected: boo
 pub(super) fn drag_note(goal: &GoalDrag) -> String {
     match goal.arrival_radius_m {
         Some(radius) => format!(
-            "{:.1} m GPS · arrival radius {radius:.0} m — release sends, Esc cancels",
+            "{:.1} m GPS · arrival radius {radius:.0} m · confirm to send, Esc cancels",
             goal.distance_m()
         ),
-        None => format!("{:.1} m — release sends, Esc cancels", goal.distance_m()),
+        None => format!("{:.1} m · confirm to send, Esc cancels", goal.distance_m()),
     }
 }
 
