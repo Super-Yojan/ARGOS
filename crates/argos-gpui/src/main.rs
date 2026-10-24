@@ -67,6 +67,10 @@ struct Dashboard {
     map_mode: MapMode,
     drag: Option<ActiveDrag>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// The map area and the inspector, measured at prepaint for rover card
+    /// placement.
+    field_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    inspector_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     show_occupancy: bool,
     driving: bool,
     held: BTreeSet<String>,
@@ -143,6 +147,8 @@ impl Dashboard {
             map_mode: MapMode::default(),
             drag: None,
             grid_frame: Arc::new(Mutex::new(None)),
+            field_frame: Arc::new(Mutex::new(None)),
+            inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
             driving: false,
             held: BTreeSet::new(),
@@ -641,9 +647,44 @@ impl Render for Dashboard {
                 })
                 .collect()
         };
+        // Measured last frame; until then the field has no known edge.
+        let rem = f32::from(window.rem_size());
+        if self.selected_mark().is_none() {
+            *self.inspector_frame.lock().unwrap() = None;
+        }
+        let field_bounds = *self.field_frame.lock().unwrap();
+        let gap = 0.5 * rem;
+        let groups = console::place_cards(
+            &field
+                .iter()
+                .filter_map(|(id, at, _)| at.map(|at| (*id, f32::from(at.x), f32::from(at.y))))
+                .collect::<Vec<_>>(),
+            console::CardSpace {
+                // The card's 1rem offset from its anchor counts toward its size.
+                card_width: (CARD_WIDTH_REM + 1.) * rem,
+                card_height: CARD_HEIGHT_REM * rem,
+                // Both frames are measured at the previous prepaint; until the
+                // first one, the field has no known edge and nothing to avoid.
+                field: console::FieldRect {
+                    x: 0.,
+                    y: 0.,
+                    width: field_bounds.map_or(f32::INFINITY, |b| f32::from(b.size.width)),
+                    height: field_bounds.map_or(f32::INFINITY, |b| f32::from(b.size.height)),
+                },
+                avoid: field_bounds.zip(*self.inspector_frame.lock().unwrap()).map(
+                    |(field, inspector)| console::FieldRect {
+                        x: f32::from(inspector.origin.x - field.origin.x) - gap,
+                        y: f32::from(inspector.origin.y - field.origin.y) - gap,
+                        width: f32::from(inspector.size.width) + 2. * gap,
+                        height: f32::from(inspector.size.height) + 2. * gap,
+                    },
+                ),
+            },
+        );
         let inspector = self.selected_mark().cloned().map(|mark| {
             let stopped = self.is_stopped(&mark);
-            rover_inspector(&mark, stopped, driving, cx).into_any_element()
+            rover_inspector(&mark, stopped, driving, self.inspector_frame.clone(), cx)
+                .into_any_element()
         });
         div()
             .id("argos")
@@ -927,11 +968,19 @@ impl Render for Dashboard {
                                 }),
                             )
                     }))
-                    .children(field.iter().filter_map(|(id, at, callout)| {
-                        at.map(|at| {
-                            rover_callout(*id, at, callout.clone(), selected == Some(*id), cx)
-                                .into_any_element()
-                        })
+                    .child({
+                        let frame = self.field_frame.clone();
+                        canvas(
+                            move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                    })
+                    .children(groups.into_iter().map(|group| {
+                        card_group(group, &field, selected, cx).into_any_element()
                     }))
                     .child(offscreen_tabs(&field, selected, cx))
                     .children(inspector),
@@ -1692,58 +1741,100 @@ fn callout_tag(tag: CalloutTag) -> Tag {
     .child(tag.label())
 }
 
-/// One rover's state, pinned beside its projected ground position. The card
-/// sits above and to the trailing side so the rover and its drag handle stay
-/// visible. Choosing it selects the rover, as clicking the rover does.
-fn rover_callout(
+/// Widest a rover card draws, so placement can keep it clear of the
+/// inspector. Longer states truncate.
+const CARD_WIDTH_REM: f32 = 14.;
+/// One card's height plus the gap between stacked cards.
+const CARD_HEIGHT_REM: f32 = 3.5;
+
+/// Rover cards that share one projected anchor, stacked beside it on the side
+/// `place_cards` chose to stay inside the field and clear of the inspector. Choosing a card selects
+/// that rover, as clicking the rover does.
+fn card_group(
+    group: console::CardGroup,
+    field: &[(u64, Option<Point<Pixels>>, console::Callout)],
+    selected: Option<u64>,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let cards: Vec<_> = group
+        .ids
+        .iter()
+        .filter_map(|id| field.iter().find(|(row, _, _)| row == id))
+        .map(|(id, _, callout)| {
+            rover_card(*id, callout.clone(), selected == Some(*id), cx).into_any_element()
+        })
+        .collect();
+    div()
+        .absolute()
+        .left(px(group.x))
+        .top(px(group.y))
+        .size_0()
+        .child(
+            v_flex()
+                .absolute()
+                .gap_1()
+                .map(|stack| {
+                    if group.below {
+                        stack.top_4()
+                    } else {
+                        stack.bottom_4()
+                    }
+                })
+                .map(|stack| {
+                    if group.leading {
+                        stack.right_4().items_end()
+                    } else {
+                        stack.left_4().items_start()
+                    }
+                })
+                // Keep the map from starting an orbit under the cards.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(cards),
+        )
+}
+
+fn rover_card(
     id: u64,
-    at: Point<Pixels>,
     callout: console::Callout,
     selected: bool,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
-    div().absolute().left(at.x).top(at.y).size_0().child(
-        div()
-            .absolute()
-            .left_4()
-            .bottom_4()
-            // Keep the map from starting an orbit under the card.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Button::new(("callout", id))
-                    .outline()
-                    .small()
-                    .h_auto()
-                    .py_1()
-                    .bg(cx.theme().popover)
-                    .selected(selected)
-                    .child(
-                        v_flex()
-                            .items_start()
-                            .gap_1()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .font_family(cx.theme().mono_font_family.clone())
-                                            .child(format!("Rover {id}")),
-                                    )
-                                    .children(callout.tag.map(callout_tag)),
-                            )
-                            .child(
-                                div()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(callout.state),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.focus.focus(window, cx);
-                        this.select(id);
-                        cx.notify();
-                    })),
-            ),
-    )
+    Button::new(("callout", id))
+        .outline()
+        .small()
+        .h_auto()
+        .py_1()
+        .max_w(rems(CARD_WIDTH_REM))
+        .bg(cx.theme().popover)
+        .selected(selected)
+        .child(
+            v_flex()
+                .items_start()
+                .gap_1()
+                .min_w_0()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(format!("Rover {id}")),
+                        )
+                        .children(callout.tag.map(callout_tag)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .truncate()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(callout.state),
+                ),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.focus.focus(window, cx);
+            this.select(id);
+            cx.notify();
+        }))
 }
 
 /// Rovers whose position is outside the current view. Choosing one centers
@@ -1804,6 +1895,7 @@ fn rover_inspector(
     mark: &RoverMark,
     stopped: bool,
     driving: bool,
+    frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let id = mark.id;
@@ -1847,6 +1939,17 @@ fn rover_inspector(
         .p_4()
         .gap_3()
         .popover_style(cx)
+        // Measured so rover cards can stay out from under the inspector.
+        .child(
+            canvas(
+                move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             h_flex()

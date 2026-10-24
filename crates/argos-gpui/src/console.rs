@@ -123,6 +123,107 @@ pub fn fleet_ids(marks: &[RoverMark], presence: &[RoverPresence]) -> BTreeSet<u6
         .collect()
 }
 
+/// Rover cards that share one anchor on the field, stacked in id order.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct CardGroup {
+    /// Projected position of the group's first rover, in field pixels.
+    pub x: f32,
+    pub y: f32,
+    pub ids: Vec<u64>,
+    /// The cards sit before the anchor instead of after it.
+    pub leading: bool,
+    /// The cards hang below the anchor instead of standing above it.
+    pub below: bool,
+}
+
+/// An axis-aligned rectangle in field pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+impl FieldRect {
+    fn overlaps(self, other: FieldRect) -> bool {
+        self.x < other.x + other.width
+            && other.x < self.x + self.width
+            && self.y < other.y + other.height
+            && other.y < self.y + self.height
+    }
+    fn contains(self, other: FieldRect) -> bool {
+        other.x >= self.x
+            && other.y >= self.y
+            && other.x + other.width <= self.x + self.width
+            && other.y + other.height <= self.y + self.height
+    }
+}
+
+/// Field geometry for card placement, all in field pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CardSpace {
+    /// The widest a card may draw, including its gap from the anchor.
+    pub card_width: f32,
+    /// One card's height, including its gap from the anchor or the next card.
+    pub card_height: f32,
+    /// The visible field, at the origin.
+    pub field: FieldRect,
+    /// A surface drawn over the field, such as the inspector.
+    pub avoid: Option<FieldRect>,
+}
+
+/// Groups rovers whose cards would overlap, so each one stays readable, then
+/// places each group above-trailing, above-leading, below-trailing, or
+/// below-leading: the first that stays inside the field and clear of `avoid`.
+/// With none clear it keeps above-trailing. `points` are projected positions
+/// in field pixels, in any order.
+pub fn place_cards(points: &[(u64, f32, f32)], space: CardSpace) -> Vec<CardGroup> {
+    let mut points = points.to_vec();
+    points.sort_by_key(|(id, _, _)| *id);
+    let mut groups: Vec<CardGroup> = Vec::new();
+    for (id, x, y) in points {
+        if let Some(group) = groups.iter_mut().find(|group| {
+            (group.x - x).abs() < space.card_width
+                && (group.y - y).abs() < space.card_height * group.ids.len() as f32
+        }) {
+            group.ids.push(id);
+        } else {
+            groups.push(CardGroup {
+                x,
+                y,
+                ids: vec![id],
+                leading: false,
+                below: false,
+            });
+        }
+    }
+    for group in &mut groups {
+        let height = space.card_height * group.ids.len() as f32;
+        let fits = |leading: bool, below: bool| {
+            let rect = FieldRect {
+                x: if leading {
+                    group.x - space.card_width
+                } else {
+                    group.x
+                },
+                y: if below { group.y } else { group.y - height },
+                width: space.card_width,
+                height,
+            };
+            space.field.contains(rect) && space.avoid.is_none_or(|avoid| !avoid.overlaps(rect))
+        };
+        if let Some((leading, below)) = [(false, false), (true, false), (false, true), (true, true)]
+            .into_iter()
+            .find(|(leading, below)| fits(*leading, *below))
+        {
+            group.leading = leading;
+            group.below = below;
+        }
+    }
+    groups
+}
+
 fn level(mark: &RoverMark) -> &str {
     mark.effective_level
         .as_deref()

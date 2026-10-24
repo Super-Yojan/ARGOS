@@ -159,3 +159,111 @@ fn heading_hold_and_motor_fault_are_attention() {
 fn fleet_ids_cover_located_and_unlocated_rovers_once() {
     assert_eq!(fleet_ids(&[mark(1), mark(3)], &[]), BTreeSet::from([1, 3]));
 }
+
+const SPACE: CardSpace = CardSpace {
+    card_width: 240.,
+    card_height: 56.,
+    field: FieldRect {
+        x: 0.,
+        y: 0.,
+        width: 1000.,
+        height: 700.,
+    },
+    avoid: None,
+};
+
+fn side(group: &CardGroup) -> (bool, bool) {
+    (group.leading, group.below)
+}
+
+#[test]
+fn rovers_on_the_same_pixel_share_one_stacked_card_group() {
+    let groups = place_cards(&[(1, 400., 300.), (0, 401., 300.)], SPACE);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].ids, vec![0, 1]);
+    assert_eq!((groups[0].x, groups[0].y), (401., 300.));
+}
+
+#[test]
+fn rovers_whose_cards_do_not_meet_keep_their_own_cards() {
+    let groups = place_cards(&[(0, 100., 300.), (1, 400., 300.), (2, 100., 500.)], SPACE);
+    assert_eq!(groups.len(), 3);
+    assert!(groups.iter().all(|group| group.ids.len() == 1));
+}
+
+#[test]
+fn cards_stand_above_and_after_the_rover_in_open_field() {
+    assert_eq!(
+        side(&place_cards(&[(0, 400., 300.)], SPACE)[0]),
+        (false, false)
+    );
+}
+
+#[test]
+fn cards_move_away_from_field_edges() {
+    assert_eq!(
+        side(&place_cards(&[(0, 900., 300.)], SPACE)[0]),
+        (true, false)
+    );
+    assert_eq!(
+        side(&place_cards(&[(0, 400., 20.)], SPACE)[0]),
+        (false, true)
+    );
+    assert_eq!(
+        side(&place_cards(&[(0, 900., 20.)], SPACE)[0]),
+        (true, true)
+    );
+}
+
+#[test]
+fn cards_clear_the_inspector_or_go_below_it() {
+    // An inspector on the trailing side, covering the top of the field.
+    let inspector = CardSpace {
+        avoid: Some(FieldRect {
+            x: 560.,
+            y: 12.,
+            width: 320.,
+            height: 340.,
+        }),
+        ..SPACE
+    };
+    assert_eq!(
+        side(&place_cards(&[(0, 500., 300.)], inspector)[0]),
+        (true, false)
+    );
+    // Too close on both sides, as in a narrow field: hang below the anchor.
+    let narrow = CardSpace {
+        field: FieldRect {
+            width: 580.,
+            ..SPACE.field
+        },
+        avoid: Some(FieldRect {
+            x: 248.,
+            y: 12.,
+            width: 320.,
+            height: 340.,
+        }),
+        ..SPACE
+    };
+    assert_eq!(
+        side(&place_cards(&[(0, 290., 380.)], narrow)[0]),
+        (false, true)
+    );
+}
+
+#[test]
+fn a_stack_too_tall_for_any_side_keeps_the_default() {
+    let tiny = CardSpace {
+        field: FieldRect {
+            x: 0.,
+            y: 0.,
+            width: 200.,
+            height: 50.,
+        },
+        ..SPACE
+    };
+    assert_eq!(
+        side(&place_cards(&[(0, 100., 25.)], tiny)[0]),
+        (false, false)
+    );
+}
