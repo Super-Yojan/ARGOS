@@ -740,7 +740,7 @@ fn polygon_vertices_outside_viewport_can_still_be_projected() {
         let (x, y) = camera
             .project_ground_unclipped(800, 600, 38., longitude)
             .unwrap();
-        assert!(x < 0. || x > 800.);
+        assert!(!(0. ..=800.).contains(&x));
         assert!(y.is_finite());
     }
     assert_eq!(
