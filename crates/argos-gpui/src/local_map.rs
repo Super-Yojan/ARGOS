@@ -16,7 +16,7 @@ pub(super) fn local_grid(
     let Some(map) = mark.grid.clone() else {
         return div()
             .text_size(px(12.))
-            .text_color(rgb(0x98aeb9))
+            .text_color(rgb(super::palette::MUTED))
             .child("No occupancy yet")
             .into_any_element();
     };

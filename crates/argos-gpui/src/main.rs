@@ -13,6 +13,7 @@
 mod interaction;
 mod local_map;
 mod map_overlay;
+mod palette;
 
 use interaction::{geographic_gate, goal_geo, gps_point};
 use local_map::local_grid;
@@ -742,8 +743,8 @@ impl Render for Dashboard {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x0b141d))
-            .text_color(rgb(0xd8e7ec))
+            .bg(rgb(palette::BACKGROUND))
+            .text_color(rgb(palette::TEXT))
             .font_family(".SystemUIFont")
             .child(console_bar(self, cx))
             .child(
@@ -766,14 +767,14 @@ impl Render for Dashboard {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .text_color(rgb(0x98aeb9))
+                            .text_color(rgb(palette::MUTED))
                             .child(format!("{} · {}", self.link, self.detail)),
                     )
                     .when_some(self.maps_notice.clone(), |this, notice| {
                         this.child(
                             div()
                                 .text_size(px(12.))
-                                .text_color(rgb(0xf0c36a))
+                                .text_color(rgb(palette::WARNING))
                                 .child(notice),
                         )
                     })
@@ -781,7 +782,7 @@ impl Render for Dashboard {
                         this.child(
                             div()
                                 .text_size(px(12.))
-                                .text_color(rgb(0xf0c36a))
+                                .text_color(rgb(palette::WARNING))
                                 .child(note),
                         )
                     })
@@ -793,9 +794,9 @@ impl Render for Dashboard {
                             "Take control"
                         },
                         rgb(if self.claim.held(self.now) {
-                            0x245c49
+                            palette::ACTIVE
                         } else {
-                            0x1b2c38
+                            palette::CONTROL
                         }),
                         cx.listener(|this, _, _, cx| {
                             if this.claim.held(this.now) {
@@ -830,13 +831,13 @@ impl Render for Dashboard {
                             .rounded_md()
                             .border_1()
                             .border_color(rgb(if chosen {
-                                0x3dcc9a
+                                palette::SELECTED
                             } else if attention {
-                                0xc47b2a
+                                palette::ATTENTION
                             } else {
-                                0x263d48
+                                palette::BORDER
                             }))
-                            .bg(rgb(0x14232e))
+                            .bg(rgb(palette::SURFACE))
                             .text_size(px(12.))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -848,7 +849,7 @@ impl Render for Dashboard {
                                 self.presence.iter().find(|row| row.id() == id).map(|row| row.membership()).unwrap_or(mark.status.as_str()), mark.occupancy
                             ))
                             .child(div().text_color(cx.theme().muted_foreground).child(self.presence.iter().find(|row| row.id() == mark.id).map(|row| row.position_reason().to_owned()).unwrap_or_else(|| position_label(mark))))
-                            .child(div().text_color(rgb(0x98aeb9)).child(level_line(mark)))
+                            .child(div().text_color(rgb(palette::MUTED)).child(level_line(mark)))
                             .child(
                                 div()
                                     .text_color(cx.theme().muted_foreground)
@@ -865,19 +866,19 @@ impl Render for Dashboard {
                                 )
                             })
                             .when(mark.reversing || (reversing_key && chosen), |row| {
-                                row.child(div().text_color(rgb(0xf0c36a)).child("Reversing"))
+                                row.child(div().text_color(rgb(palette::WARNING)).child("Reversing"))
                             })
                             .when(mark.hold.as_deref() == Some(HEADING_HOLD), |row| {
-                                row.child(div().text_color(rgb(0xe7b15a)).child(HEADING_HOLD_LABEL))
+                                row.child(div().text_color(rgb(palette::HOLD)).child(HEADING_HOLD_LABEL))
                             })
                             .when_some(
                                 pose_warning_text(mark.command_origin, mark.degraded, &mark.degrade_reason),
-                                |row, text| row.child(div().text_color(rgb(0x98aeb9)).child(text)),
+                                |row, text| row.child(div().text_color(rgb(palette::MUTED)).child(text)),
                             )
                     }))
                     .when(self.marks.is_empty(), |this| {
                         this.child(
-                            div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
+                            div().text_size(px(12.)).text_color(rgb(palette::MUTED)).child(
                                 "No geographic position yet. Rover connection status is listed above.",
                             ),
                         )
@@ -900,14 +901,14 @@ impl Render for Dashboard {
                         } else {
                             "Map grid off"
                         },
-                        rgb(if self.show_occupancy { 0x245c49 } else { 0x1b2c38 }),
+                        rgb(if self.show_occupancy { palette::ACTIVE } else { palette::CONTROL }),
                         cx.listener(|this, _, _, cx| {
                             this.show_occupancy = !this.show_occupancy;
                             cx.notify();
                         }),
                     ))
                     .child(
-                        div().mt_2().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
+                        div().mt_2().text_size(px(11.)).text_color(rgb(palette::MUTED)).child(
                             "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
                         ),
                     ),
@@ -1006,11 +1007,11 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
         .flex()
         .flex_col()
         .gap_2()
-        .bg(rgb(0x101c25))
+        .bg(rgb(palette::PANEL))
         .border_l_1()
-        .border_color(rgb(0x263d48))
+        .border_color(rgb(palette::BORDER))
         .child(div().text_size(px(16.)).child("FPV"))
-        .child(div().text_size(px(12.)).text_color(rgb(0x98aeb9)).child(
+        .child(div().text_size(px(12.)).text_color(rgb(palette::MUTED)).child(
             match (selected, watching) {
                 (Some(id), Some(active)) if id != active => {
                     format!("Selected rover {id}. Video is rover {active}.")
@@ -1058,7 +1059,7 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
         .child(
             div()
                 .text_size(px(12.))
-                .text_color(rgb(0x98aeb9))
+                .text_color(rgb(palette::MUTED))
                 .child(stats),
         )
         .child(
@@ -1068,7 +1069,7 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
                 .child(button(
                     "fpv-start",
                     "Start FPV",
-                    rgb(0x245c49),
+                    rgb(palette::ACTIVE),
                     cx.listener(|this, _, _, cx| {
                         if let Some(id) = this.selected {
                             this.fpv.start_phone(id);
@@ -1082,7 +1083,7 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
                 .child(button(
                     "fpv-stop",
                     "Stop FPV",
-                    rgb(0x5c2a2a),
+                    rgb(palette::DANGER),
                     cx.listener(|this, _, _, cx| {
                         this.fpv.stop();
                         this.note = "FPV stopped".into();
@@ -1093,7 +1094,7 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
         .child(
             div()
                 .text_size(px(11.))
-                .text_color(rgb(0x98aeb9))
+                .text_color(rgb(palette::MUTED))
                 .child("Video only. Drive, arm, and stop stay on the Zenoh controls."),
         )
 }
@@ -1121,10 +1122,10 @@ fn fpv_stats(picture: &argos_gpui::FpvView) -> String {
 
 fn phase_color(phase: FpvPhase) -> Rgba {
     rgb(match phase {
-        FpvPhase::Connected => 0x3dcc9a,
-        FpvPhase::Failed => 0xe07a5f,
-        FpvPhase::Connecting | FpvPhase::Starting => 0xf0c36a,
-        FpvPhase::Idle | FpvPhase::Closed => 0x98aeb9,
+        FpvPhase::Connected => palette::OK_TEXT,
+        FpvPhase::Failed => palette::ERROR_TEXT,
+        FpvPhase::Connecting | FpvPhase::Starting => palette::WARNING,
+        FpvPhase::Idle | FpvPhase::Closed => palette::MUTED,
     })
 }
 
@@ -1149,7 +1150,7 @@ fn navigation_toggle(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl Into
                     .rounded_md()
                     .text_size(px(11.))
                     .cursor_pointer()
-                    .bg(rgb(if current { 0x245c49 } else { 0x1b2c38 }))
+                    .bg(rgb(if current { palette::ACTIVE } else { palette::CONTROL }))
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.selected == Some(id) {
@@ -1237,14 +1238,14 @@ fn rover_panel(
         .child(
             div()
                 .text_size(px(11.))
-                .text_color(rgb(0x98aeb9))
+                .text_color(rgb(palette::MUTED))
                 .child(outdoor.clone()),
         )
         .when(mark.app_update_required && mark.outdoor_gps, |panel| {
             panel.child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(0xf0c36a))
+                    .text_color(rgb(palette::WARNING))
                     .child(APP_UPDATE_REQUIRED),
             )
         })
@@ -1268,7 +1269,7 @@ fn rover_panel(
                 panel.child(
                     div()
                         .text_size(px(12.))
-                        .text_color(rgb(0xe7b15a))
+                        .text_color(rgb(palette::HOLD))
                         .child(label),
                 )
             },
@@ -1325,7 +1326,7 @@ fn rover_panel(
                                 .rounded_md()
                                 .text_size(px(11.))
                                 .cursor_pointer()
-                                .bg(rgb(if current { 0x245c49 } else { 0x1b2c38 }))
+                                .bg(rgb(if current { palette::ACTIVE } else { palette::CONTROL }))
                                 .child(*label)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     if this.selected == Some(id) {
@@ -1341,7 +1342,7 @@ fn rover_panel(
             panel.child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(0xe7b15a))
+                    .text_color(rgb(palette::HOLD))
                     .child(HEADING_HOLD_LABEL),
             )
         })
@@ -1350,7 +1351,7 @@ fn rover_panel(
         .child(
             div()
                 .text_size(px(12.))
-                .text_color(rgb(0xf0c36a))
+                .text_color(rgb(palette::WARNING))
                 .child(drag_line),
         )
         .when(
@@ -1360,7 +1361,7 @@ fn rover_panel(
                 && mark.route.len() > 1,
             |panel| {
                 panel.child(
-                    div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
+                    div().text_size(px(11.)).text_color(rgb(palette::MUTED)).child(
                         "Path direction is provisional until a segment velocity is published.",
                     ),
                 )
@@ -1372,7 +1373,7 @@ fn rover_panel(
                 panel.child(button(
                     "resume-outdoor",
                     "Resume outdoor mission",
-                    rgb(0x24594a),
+                    rgb(palette::ACTIVE),
                     cx.listener(move |this, _, _, cx| {
                         this.feed.resume_outdoor(id);
                         cx.notify();
@@ -1383,7 +1384,7 @@ fn rover_panel(
         .child(button(
             "cancel-goal",
             "Cancel goal",
-            rgb(0x1b2c38),
+            rgb(palette::CONTROL),
             cx.listener(move |this, _, _, cx| {
                 this.feed.cancel_goal(id);
                 this.drag = None;
@@ -1400,7 +1401,7 @@ fn rover_panel(
             panel.child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(0xf0c36a))
+                    .text_color(rgb(palette::WARNING))
                     .child(drive_reason.unwrap_or_default().to_string()),
             )
         })
@@ -1418,7 +1419,7 @@ fn rover_panel(
                             .rounded_md()
                             .text_size(px(11.))
                             .cursor_pointer()
-                            .bg(rgb(if chosen { 0x245c49 } else { 0x1b2c38 }))
+                            .bg(rgb(if chosen { palette::ACTIVE } else { palette::CONTROL }))
                             .child(format!("{speed:.1} m/s"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Err(error) = this.feed.set_linear(speed) {
@@ -1441,7 +1442,7 @@ fn rover_panel(
         )
         .child(turning_row(limits, cx))
         .child(
-            div().text_size(px(11.)).text_color(rgb(0x98aeb9)).child(
+            div().text_size(px(11.)).text_color(rgb(palette::MUTED)).child(
                 "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
             ),
         )
@@ -1454,7 +1455,7 @@ fn rover_panel(
                     this.child(button(
                         "leave-drive",
                         "Leave drive",
-                        rgb(0x1b2c38),
+                        rgb(palette::CONTROL),
                         cx.listener(|this, _, _, cx| {
                             this.stop_drive();
                             this.note = "Drive off. Zero twist sent.".into();
@@ -1470,7 +1471,7 @@ fn rover_panel(
                         } else {
                             "Select manual control"
                         },
-                        rgb(0x245c49),
+                        rgb(palette::ACTIVE),
                         cx.listener(|this, _, window, cx| {
                             this.begin_drive(window, cx);
                             cx.notify();
@@ -1480,7 +1481,7 @@ fn rover_panel(
                 .child(button(
                     "estop",
                     "Stop",
-                    rgb(0x8d2b2b),
+                    rgb(palette::DANGER),
                     cx.listener(|this, _, _, cx| {
                         this.estop();
                         cx.notify();
@@ -1530,9 +1531,9 @@ fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) ->
                 "In-place spin off"
             },
             rgb(if limits.allow_spin {
-                0x8a5a12
+                palette::CAUTION
             } else {
-                0x1b2c38
+                palette::CONTROL
             }),
             cx.listener(|this, _, _, cx| {
                 let allow = !this.feed.limits().allow_spin;
@@ -1557,7 +1558,7 @@ fn limit_chip(
         .rounded_md()
         .text_size(px(11.))
         .cursor_pointer()
-        .bg(rgb(0x1b2c38))
+        .bg(rgb(palette::CONTROL))
         .child(label)
         .on_click(cx.listener(move |this, _, _, cx| {
             if let Err(error) = apply(this) {
@@ -1585,7 +1586,7 @@ fn drive_pad(driving: bool, cx: &mut Context<Dashboard>) -> impl IntoElement {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(if driving { 0x245c49 } else { 0x1b2c38 }))
+            .bg(rgb(if driving { palette::ACTIVE } else { palette::CONTROL }))
             .text_size(px(12.))
             .child(label)
             .on_mouse_down(
@@ -2053,8 +2054,15 @@ fn main() {
             },
             cx,
             |window, cx| {
-                // The field and every console surface are drawn for a dark room.
-                Theme::change(ThemeMode::Dark, Some(window), cx);
+                // Kit widgets follow the light theme; the window, title bar, and
+                // popovers share the console background.
+                Theme::change(ThemeMode::Light, Some(window), cx);
+                Theme::update(cx, |theme| {
+                    theme.background = rgb(palette::BACKGROUND).into();
+                    theme.title_bar = rgb(palette::BACKGROUND).into();
+                    theme.foreground = rgb(palette::TEXT).into();
+                    theme.muted_foreground = rgb(palette::MUTED).into();
+                });
                 let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
