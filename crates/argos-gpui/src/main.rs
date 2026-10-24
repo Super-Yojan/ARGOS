@@ -944,11 +944,8 @@ fn console_bar(
                         .outline()
                         .small()
                         .selected(dashboard.show_occupancy)
-                        .label(if dashboard.show_occupancy {
-                            "Map grid on"
-                        } else {
-                            "Map grid off"
-                        })
+                        .label("Map grid")
+                        .tooltip("Show each rover's occupancy grid on the map")
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_occupancy = !this.show_occupancy;
                             this.focus.focus(window, cx);
@@ -1348,6 +1345,9 @@ fn rover_inspector(
         .child(
             v_flex()
                 .id("inspector-body")
+                // Zero basis: the body takes only the height left under the
+                // header and tab bar, and scrolls the rest.
+                .h_0()
                 .flex_1()
                 .min_h_0()
                 .p_4()
@@ -1492,8 +1492,8 @@ fn overview_tab(
                 .when_some(hardware_detail, |section, detail| {
                     section.child(caution(detail.to_owned(), cx))
                 })
-                // While stopped, Reset stop is the inspector's primary action.
-                .when(!stopped, |section| {
+                // Reset stop clears this window's latch or the rover's own stop.
+                .when(stopped, |section| {
                     section.child(
                         h_flex().child(
                             Button::new(("reset-stop", id))
@@ -1511,30 +1511,9 @@ fn overview_tab(
         .child(
             section("Autonomy", cx)
                 .child(hint(console::level_line(mark), cx))
-                .child(
-                    ButtonGroup::new(("level", id))
-                        .outline()
-                        .small()
-                        .layout(Axis::Vertical)
-                        .children(OPERATOR_LEVELS.iter().enumerate().map(
-                            |(index, (_, label))| {
-                                Button::new(("level", index as u64))
-                                    .w_full()
-                                    .label(*label)
-                                    .selected(level == Some(index))
-                            },
-                        ))
-                        .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
-                            if this.selected == Some(id)
-                                && let Some((wire, _)) =
-                                    clicks.first().and_then(|index| OPERATOR_LEVELS.get(*index))
-                            {
-                                this.feed.publish_level(id, wire);
-                                this.note = format!("Sending {}", level_label(wire));
-                            }
-                            cx.notify();
-                        })),
-                ),
+                // L0–L3, then the supervised levels, so neither row wraps.
+                .child(level_group(id, level, 0..4, cx))
+                .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
         )
         .child(
             section("Navigation", cx)
@@ -1595,6 +1574,45 @@ fn overview_tab(
             "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
             cx,
         ))
+}
+
+/// One row of the autonomy picker over `OPERATOR_LEVELS[range]`; the
+/// requested level is selected.
+fn level_group(
+    id: u64,
+    requested: Option<usize>,
+    range: std::ops::Range<usize>,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let start = range.start;
+    ButtonGroup::new((
+        "level",
+        id.saturating_mul(2).saturating_add(u64::from(start > 0)),
+    ))
+    .outline()
+    .small()
+    .children(
+        OPERATOR_LEVELS[range]
+            .iter()
+            .enumerate()
+            .map(|(offset, (_, label))| {
+                let index = start + offset;
+                Button::new(("level", index as u64))
+                    .label(*label)
+                    .selected(requested == Some(index))
+            }),
+    )
+    .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
+        if this.selected == Some(id)
+            && let Some((wire, _)) = clicks
+                .first()
+                .and_then(|offset| OPERATOR_LEVELS.get(start + offset))
+        {
+            this.feed.publish_level(id, wire);
+            this.note = format!("Sending {}", level_label(wire));
+        }
+        cx.notify();
+    }))
 }
 
 fn goal_section(
@@ -1749,6 +1767,7 @@ fn limit_chip(
     Button::new(id)
         .outline()
         .small()
+        .compact()
         .label(label)
         .on_click(cx.listener(move |this, _, _, cx| {
             if let Err(error) = apply(this) {
