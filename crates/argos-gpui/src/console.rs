@@ -1,10 +1,46 @@
-//! What the C3 console says about one rover: its field callout and the
-//! inspector's trace. Derived from fleet telemetry only; the window owns
-//! selection, stop latches, and drive.
+//! What the C3 console says about one rover: its field callout, the
+//! inspector's trace and sections, and the fleet members without a position.
+//! Derived from fleet telemetry only; the window owns selection, stop
+//! latches, and drive.
 
 use crate::{RoverMark, RoverPresence};
-use argos_core::{HEADING_HOLD, HEADING_HOLD_LABEL, level_label, phase_label, pose_warning_text};
+use argos_core::{
+    HEADING_HOLD, HEADING_HOLD_LABEL, OPERATOR_LEVELS, Travel, drive_block, level_label,
+    phase_label, pose_warning_text,
+};
 use std::collections::BTreeSet;
+
+/// Navigation sources the operator can request, as `(wire, label)`.
+pub const NAVIGATION_SOURCES: [(&str, &str); 2] =
+    [("local", "Local"), ("outdoor_gps", "Outdoor GPS")];
+
+/// Manual drive speed caps offered in the Drive section, in m/s.
+pub const DRIVE_SPEEDS: [f64; 5] = [0.1, 0.2, 0.3, 0.4, 0.5];
+
+/// The selected rover's inspector views, in tab order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InspectorTab {
+    #[default]
+    Overview,
+    LocalMap,
+    Video,
+}
+impl InspectorTab {
+    pub const ALL: [Self; 3] = [Self::Overview, Self::LocalMap, Self::Video];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::LocalMap => "Local map",
+            Self::Video => "Video",
+        }
+    }
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0)
+    }
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
+    }
+}
 
 /// The one state a callout flags, most urgent first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,6 +258,124 @@ pub fn place_cards(points: &[(u64, f32, f32)], space: CardSpace) -> Vec<CardGrou
         }
     }
     groups
+}
+
+/// The console bar's status: this window's latest note, else the feed's
+/// last command result.
+pub fn status_line<'a>(note: &'a str, command: &'a str) -> &'a str {
+    if note.is_empty() { command } else { note }
+}
+
+/// Setup problems the operator must see without hovering: the link's
+/// reason while it is not healthy, then the map tiles notice.
+pub fn field_notices(link: &str, detail: &str, maps: Option<&str>) -> Vec<String> {
+    (link != "healthy" && !detail.is_empty())
+        .then(|| format!("Link {link} · {detail}"))
+        .into_iter()
+        .chain(maps.map(str::to_owned))
+        .collect()
+}
+
+/// Index into [`OPERATOR_LEVELS`] of the level this window last requested.
+pub fn level_index(mark: &RoverMark) -> Option<usize> {
+    let requested = mark.requested_level.as_deref()?;
+    OPERATOR_LEVELS
+        .iter()
+        .position(|(wire, _)| *wire == requested)
+}
+
+/// Current level and, when the vehicle offers one, its recommendation.
+pub fn level_line(mark: &RoverMark) -> String {
+    let current = mark
+        .effective_level
+        .as_deref()
+        .or(mark.requested_level.as_deref())
+        .map(level_label)
+        .unwrap_or("level unknown");
+    let recommended = mark
+        .recommended_level
+        .as_deref()
+        .map(|level| format!(" · recommended {}", level_label(level)))
+        .unwrap_or_default();
+    format!("{current}{recommended}")
+}
+
+/// Index into [`NAVIGATION_SOURCES`] of the source the vehicle reports.
+pub fn source_index(mark: &RoverMark) -> usize {
+    let source = mark
+        .outdoor
+        .as_ref()
+        .map(|report| report.source.as_str())
+        .unwrap_or("local");
+    NAVIGATION_SOURCES
+        .iter()
+        .position(|(wire, _)| *wire == source)
+        .unwrap_or(0)
+}
+
+/// What the navigation source means for goals right now.
+pub fn navigation_note(mark: &RoverMark) -> &'static str {
+    if mark.app_update_required {
+        "Local navigation. Outdoor GPS is unavailable in this runtime."
+    } else if mark.outdoor_gps {
+        "Outdoor GPS acknowledged. Drag the map marker. Release sends the WGS84 goal."
+    } else {
+        "Local navigation. Outdoor GPS stays off until the vehicle acknowledges it."
+    }
+}
+
+/// Index into [`DRIVE_SPEEDS`] of the active linear cap.
+pub fn speed_index(linear: f64) -> Option<usize> {
+    DRIVE_SPEEDS
+        .iter()
+        .position(|speed| (linear - speed).abs() < 0.001)
+}
+
+/// The Hardware section's status and, when motion is blocked, why.
+pub fn hardware_lines(mark: &RoverMark, stopped: bool) -> (&str, Option<&str>) {
+    if stopped {
+        ("Stop active", Some("Use Reset stop before driving"))
+    } else {
+        (mark.hardware.status_label(), drive_block(&mark.hardware))
+    }
+}
+
+/// True while the planner path has a segment without a published velocity.
+pub fn path_provisional(mark: &RoverMark) -> bool {
+    mark.route.len() > 1
+        && mark
+            .route
+            .iter()
+            .any(|sample| sample.travel == Travel::Unspecified)
+}
+
+/// A fleet member the field cannot place.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Unlocated {
+    pub id: u64,
+    pub label: String,
+    pub detail: String,
+}
+
+/// Fleet members with no drawable position, in id order. Each shows as an
+/// off-screen tab marked "No position".
+pub fn unlocated(marks: &[RoverMark], presence: &[RoverPresence]) -> Vec<Unlocated> {
+    presence
+        .iter()
+        .filter(|row| !marks.iter().any(|mark| mark.id == row.id()))
+        .map(|row| Unlocated {
+            id: row.id(),
+            label: format!("Rover {} · {}", row.id(), row.membership()),
+            detail: format!(
+                "{} · {}",
+                row.position_reason(),
+                row.observation_age()
+                    .map(|age| format!("Last observation {age:.1} s ago"))
+                    .unwrap_or_else(|| "Waiting for telemetry".into())
+            ),
+        })
+        .collect()
 }
 
 fn level(mark: &RoverMark) -> &str {
