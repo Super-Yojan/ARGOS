@@ -581,7 +581,14 @@ impl Dashboard {
                 } else {
                     self.held.remove(key);
                 }
-                self.note.clear();
+                // Clearing the note would show the last background command
+                // instead, such as an old "Cancel sent", while driving.
+                self.note = if self.held.is_empty() {
+                    format!("Driving rover {id} · hold W/A/S/D")
+                } else {
+                    let keys: Vec<_> = self.held.iter().map(|key| key.to_uppercase()).collect();
+                    format!("Driving rover {id} · {}", keys.join(" "))
+                };
             }
             Err(error) => {
                 self.held.remove(key);
