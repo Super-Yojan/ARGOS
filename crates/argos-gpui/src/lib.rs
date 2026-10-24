@@ -14,6 +14,8 @@ pub use launch::{LAUNCH_HELP, LaunchMode};
 mod occupancy;
 pub use occupancy::occupancy_runs;
 
+pub mod console;
+
 mod model_drag;
 pub use model_drag::model_position;
 

@@ -23,20 +23,24 @@ use argos_core::{
     HEADING_HOLD_LABEL, OPERATOR_LEVELS, PlanarPoint, Travel, drag_disabled_reason, drive_block,
     level_label, phase_label, pose_warning_text,
 };
+use argos_gpui::console::{self, CalloutTag};
 use argos_gpui::{
     DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, RoverPresence, model_position,
     position_label, reframing_target,
 };
+use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme,
-    button::{Button, ButtonVariants},
+    ActiveTheme, Selectable, Sizable, StyledExt, Theme, ThemeMode, ThemeStyled, TitleBar,
+    button::{Button, ButtonGroup, ButtonVariants},
+    description_list::{DescriptionItem, DescriptionList},
+    tag::Tag,
 };
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use terra_map::{Color, GeoPosition, Map, MapConfig, MapEvent, MapView, ObjectId};
+use terra_map::{Color, GeoPosition, Map, MapConfig, MapEvent, MapMode, MapView, ObjectId};
 
 // Measured 35-inch square footprint, including wheels. Asset is Z-up after loading.
 const ROVER_AXIS_SCALE: [f64; 3] = [0.889 / 2.45, 0.889 / 2.5, 0.889 / 2.5];
@@ -60,6 +64,7 @@ struct Dashboard {
     marks: Vec<RoverMark>,
     presence: Vec<RoverPresence>,
     selected: Option<u64>,
+    map_mode: MapMode,
     drag: Option<ActiveDrag>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     show_occupancy: bool,
@@ -135,6 +140,7 @@ impl Dashboard {
             marks: Vec::new(),
             presence: Vec::new(),
             selected: None,
+            map_mode: MapMode::default(),
             drag: None,
             grid_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
@@ -500,6 +506,34 @@ impl Dashboard {
             self.stop_drive();
         }
     }
+    /// Safety stop for every fleet member, located or not. Each rover then
+    /// needs its own Reset stop; nothing here re-arms or resumes.
+    fn stop_all(&mut self) {
+        self.stop_drive();
+        self.drag = None;
+        let ids = console::fleet_ids(&self.marks, &self.presence);
+        let mut failed = Vec::new();
+        for id in &ids {
+            self.latched.insert(*id);
+            if let Err(error) = self.feed.emergency_stop(*id) {
+                failed.push(format!("rover {id} ({error})"));
+            }
+        }
+        self.note = if ids.is_empty() {
+            "No rovers in the fleet to stop".into()
+        } else if failed.is_empty() {
+            format!("Stop sent to all {} rovers", ids.len())
+        } else {
+            format!("Stop not sent to {}", failed.join(", "))
+        };
+    }
+    fn set_map_mode(&mut self, mode: MapMode) {
+        self.map_mode = mode;
+        self.map.set_mode(mode);
+    }
+    fn is_stopped(&self, mark: &RoverMark) -> bool {
+        self.latched.contains(&mark.id) || mark.safety == "emergency_stop"
+    }
     fn hold(&mut self, key: &str, down: bool) {
         let Some(id) = self.selected else {
             return;
@@ -593,6 +627,24 @@ impl Render for Dashboard {
             })
             .collect();
         let overlay = map_paint(self);
+        let field: Vec<(u64, Option<Point<Pixels>>, console::Callout)> = {
+            let map = self.view.read(cx);
+            self.marks
+                .iter()
+                .map(|mark| {
+                    let driving_here = driving && selected == Some(mark.id);
+                    (
+                        mark.id,
+                        map.project_local(mark.latitude, mark.longitude),
+                        console::callout(mark, self.is_stopped(mark), driving_here),
+                    )
+                })
+                .collect()
+        };
+        let inspector = self.selected_mark().cloned().map(|mark| {
+            let stopped = self.is_stopped(&mark);
+            rover_inspector(&mark, stopped, driving, cx).into_any_element()
+        });
         div()
             .id("argos")
             .track_focus(&self.focus)
@@ -602,14 +654,18 @@ impl Render for Dashboard {
                     cx.stop_propagation();
                 }
             }))
+            // Capture phase: Space stops even when a focused button would
+            // otherwise take it as activation.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "space" {
+                    this.estop();
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     this.cancel_drag();
-                    cx.stop_propagation();
-                    return;
-                }
-                if event.keystroke.key == "space" {
-                    this.estop();
                     cx.stop_propagation();
                     return;
                 }
@@ -644,9 +700,16 @@ impl Render for Dashboard {
             )
             .size_full()
             .flex()
+            .flex_col()
             .bg(rgb(0x0b141d))
             .text_color(rgb(0xd8e7ec))
             .font_family(".SystemUIFont")
+            .child(console_bar(self, cx))
+            .child(
+                h_flex()
+                    .items_stretch()
+                    .flex_1()
+                    .min_h_0()
             .child(
                 div()
                     .id("sidebar")
@@ -863,9 +926,18 @@ impl Render for Dashboard {
                                     cx.notify();
                                 }),
                             )
-                    })),
+                    }))
+                    .children(field.iter().filter_map(|(id, at, callout)| {
+                        at.map(|at| {
+                            rover_callout(*id, at, callout.clone(), selected == Some(*id), cx)
+                                .into_any_element()
+                        })
+                    }))
+                    .child(offscreen_tabs(&field, selected, cx))
+                    .children(inspector),
             )
-            .child(fpv_panel(self, cx))
+            .child(fpv_panel(self, cx)),
+            )
     }
 }
 
@@ -1551,6 +1623,270 @@ fn button(
         .on_click(listener)
 }
 
+/// Window chrome for the console: map camera, link health, and the fleet stop.
+fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let mode = dashboard.map_mode;
+    TitleBar::new()
+        .child(
+            h_flex()
+                .gap_3()
+                .child(div().text_sm().font_semibold().child("ARGOS"))
+                .child(
+                    ButtonGroup::new("map-mode")
+                        .outline()
+                        .small()
+                        .child(
+                            Button::new("map-2d")
+                                .label("2D")
+                                .selected(mode == MapMode::TwoD),
+                        )
+                        .child(
+                            Button::new("map-3d")
+                                .label("3D")
+                                .selected(mode == MapMode::ThreeD),
+                        )
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, window, cx| {
+                            this.set_map_mode(if clicks.contains(&0) {
+                                MapMode::TwoD
+                            } else {
+                                MapMode::ThreeD
+                            });
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                ),
+        )
+        .child(
+            h_flex()
+                .gap_3()
+                .pr_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("Link {}", dashboard.link)),
+                )
+                .child(
+                    Button::new("stop-all")
+                        .danger()
+                        .small()
+                        .label("Stop all")
+                        .tooltip("Safety stop every rover. Each needs Reset stop to move again.")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.stop_all();
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                ),
+        )
+}
+
+fn callout_tag(tag: CalloutTag) -> Tag {
+    match tag {
+        CalloutTag::Stopped => Tag::danger(),
+        CalloutTag::Driving => Tag::info(),
+        CalloutTag::Attention => Tag::warning(),
+        CalloutTag::Goal => Tag::secondary(),
+    }
+    .small()
+    .child(tag.label())
+}
+
+/// One rover's state, pinned beside its projected ground position. The card
+/// sits above and to the trailing side so the rover and its drag handle stay
+/// visible. Choosing it selects the rover, as clicking the rover does.
+fn rover_callout(
+    id: u64,
+    at: Point<Pixels>,
+    callout: console::Callout,
+    selected: bool,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    div().absolute().left(at.x).top(at.y).size_0().child(
+        div()
+            .absolute()
+            .left_4()
+            .bottom_4()
+            // Keep the map from starting an orbit under the card.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Button::new(("callout", id))
+                    .outline()
+                    .small()
+                    .h_auto()
+                    .py_1()
+                    .bg(cx.theme().popover)
+                    .selected(selected)
+                    .child(
+                        v_flex()
+                            .items_start()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .font_family(cx.theme().mono_font_family.clone())
+                                            .child(format!("Rover {id}")),
+                                    )
+                                    .children(callout.tag.map(callout_tag)),
+                            )
+                            .child(
+                                div()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(callout.state),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.focus.focus(window, cx);
+                        this.select(id);
+                        cx.notify();
+                    })),
+            ),
+    )
+}
+
+/// Rovers whose position is outside the current view. Choosing one centers
+/// the map on it and selects it.
+fn offscreen_tabs(
+    field: &[(u64, Option<Point<Pixels>>, console::Callout)],
+    selected: Option<u64>,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    v_flex()
+        .absolute()
+        .right_3()
+        .bottom_3()
+        .items_end()
+        .gap_2()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(
+            field
+                .iter()
+                .filter(|(_, at, _)| at.is_none())
+                .map(|(id, _, callout)| {
+                    let id = *id;
+                    Button::new(("offscreen", id))
+                        .outline()
+                        .small()
+                        .bg(cx.theme().popover)
+                        .selected(selected == Some(id))
+                        .tooltip("Off screen. Centers the map on this rover and selects it.")
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(format!("Rover {id}"))
+                                .children(callout.tag.map(callout_tag))
+                                .child(
+                                    div()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(callout.state.clone()),
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.focus.focus(window, cx);
+                            if let Some(mark) = this.marks.iter().find(|mark| mark.id == id)
+                                && let Err(error) =
+                                    this.map.show_lat_lon(mark.latitude, mark.longitude)
+                            {
+                                this.note = error.to_string();
+                            }
+                            this.select(id);
+                            cx.notify();
+                        }))
+                }),
+        )
+}
+
+/// The selected rover's state and the commands that act on it. Arm, levels,
+/// navigation source, and drive limits stay in the sidebar for now.
+fn rover_inspector(
+    mark: &RoverMark,
+    stopped: bool,
+    driving: bool,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let id = mark.id;
+    let callout = console::callout(mark, stopped, driving);
+    let manual = mark.requested_level.as_deref() == Some("teleop");
+    let primary = if stopped {
+        Button::new(("inspector-reset", id))
+            .label("Reset stop")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.reset_safety(id);
+                this.focus.focus(window, cx);
+                cx.notify();
+            }))
+    } else if driving {
+        Button::new(("inspector-leave", id))
+            .label("Leave drive")
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.stop_drive();
+                this.note = "Drive off. Zero twist sent.".into();
+                this.focus.focus(window, cx);
+                cx.notify();
+            }))
+    } else {
+        Button::new(("inspector-drive", id))
+            .label(if manual { "Drive" } else { "Take over" })
+            .tooltip(if manual {
+                "Hold W/A/S/D in this window to drive. Release stops."
+            } else {
+                "Requests L0 manual control. Drive is available once the rover confirms."
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.begin_drive(window, cx);
+                cx.notify();
+            }))
+    };
+    v_flex()
+        .absolute()
+        .top_3()
+        .right_3()
+        .w_80()
+        .p_4()
+        .gap_3()
+        .popover_style(cx)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            h_flex()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(format!("Rover {id}")),
+                )
+                .children(callout.tag.map(callout_tag)),
+        )
+        .child(div().text_base().font_medium().child(callout.state))
+        .child(
+            DescriptionList::horizontal()
+                .columns(1)
+                .bordered(false)
+                .label_width(rems(6.))
+                .children(
+                    console::trace(mark, stopped)
+                        .into_iter()
+                        .map(|(label, value)| DescriptionItem::new(label).value(value)),
+                ),
+        )
+        .child(
+            h_flex().gap_2().child(primary.outline().small()).child(
+                Button::new(("inspector-stop", id))
+                    .danger()
+                    .small()
+                    .label("Stop")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.stop_rover(id);
+                        this.focus.focus(window, cx);
+                        cx.notify();
+                    })),
+            ),
+        )
+}
+
 fn drive_key(key: &str) -> Option<&'static str> {
     match key {
         "w" | "up" => Some("w"),
@@ -1608,13 +1944,14 @@ fn main() {
                         }
                         .into(),
                     ),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(12.), px(12.))),
+                    ..TitleBar::title_bar_options()
                 }),
-                ..Default::default()
+                ..TitleBar::window_options()
             },
             cx,
             |window, cx| {
+                // The field and every console surface are drawn for a dark room.
+                Theme::change(ThemeMode::Dark, Some(window), cx);
                 let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);

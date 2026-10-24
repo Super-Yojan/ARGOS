@@ -5,6 +5,7 @@ The library receives fleet telemetry; the executable renders it and handles oper
 | File | Responsibility |
 | --- | --- |
 | `src/main.rs` | Dashboard state, telemetry synchronization, control actions, and panel composition |
+| `src/console.rs` | C3 console presentation: each rover's field callout, attention, and inspector trace |
 | `src/fleet.rs` | Connection configuration, fleet observations, and outgoing commands |
 | `src/interaction.rs` | Rover pickup, goal preview, release, cancellation, and navigation admission |
 | `src/local_map.rs` | Local occupancy grid, routes, and grid coordinate conversion |
