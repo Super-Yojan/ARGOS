@@ -1011,16 +1011,19 @@ fn fpv_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoEle
         .border_l_1()
         .border_color(rgb(palette::BORDER))
         .child(div().text_size(px(16.)).child("FPV"))
-        .child(div().text_size(px(12.)).text_color(rgb(palette::MUTED)).child(
-            match (selected, watching) {
-                (Some(id), Some(active)) if id != active => {
-                    format!("Selected rover {id}. Video is rover {active}.")
-                }
-                (Some(id), _) => format!("Selected rover {id}"),
-                (None, Some(active)) => format!("Video is rover {active}"),
-                (None, None) => "Select a rover, then start video.".into(),
-            },
-        ))
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(palette::MUTED))
+                .child(match (selected, watching) {
+                    (Some(id), Some(active)) if id != active => {
+                        format!("Selected rover {id}. Video is rover {active}.")
+                    }
+                    (Some(id), _) => format!("Selected rover {id}"),
+                    (None, Some(active)) => format!("Video is rover {active}"),
+                    (None, None) => "Select a rover, then start video.".into(),
+                }),
+        )
         .child(
             div()
                 .w_full()
@@ -1150,7 +1153,11 @@ fn navigation_toggle(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl Into
                     .rounded_md()
                     .text_size(px(11.))
                     .cursor_pointer()
-                    .bg(rgb(if current { palette::ACTIVE } else { palette::CONTROL }))
+                    .bg(rgb(if current {
+                        palette::ACTIVE
+                    } else {
+                        palette::CONTROL
+                    }))
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.selected == Some(id) {
@@ -1326,7 +1333,11 @@ fn rover_panel(
                                 .rounded_md()
                                 .text_size(px(11.))
                                 .cursor_pointer()
-                                .bg(rgb(if current { palette::ACTIVE } else { palette::CONTROL }))
+                                .bg(rgb(if current {
+                                    palette::ACTIVE
+                                } else {
+                                    palette::CONTROL
+                                }))
                                 .child(*label)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     if this.selected == Some(id) {
@@ -1361,9 +1372,12 @@ fn rover_panel(
                 && mark.route.len() > 1,
             |panel| {
                 panel.child(
-                    div().text_size(px(11.)).text_color(rgb(palette::MUTED)).child(
-                        "Path direction is provisional until a segment velocity is published.",
-                    ),
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(palette::MUTED))
+                        .child(
+                            "Path direction is provisional until a segment velocity is published.",
+                        ),
                 )
             },
         )
@@ -1419,7 +1433,11 @@ fn rover_panel(
                             .rounded_md()
                             .text_size(px(11.))
                             .cursor_pointer()
-                            .bg(rgb(if chosen { palette::ACTIVE } else { palette::CONTROL }))
+                            .bg(rgb(if chosen {
+                                palette::ACTIVE
+                            } else {
+                                palette::CONTROL
+                            }))
                             .child(format!("{speed:.1} m/s"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Err(error) = this.feed.set_linear(speed) {
@@ -1442,9 +1460,12 @@ fn rover_panel(
         )
         .child(turning_row(limits, cx))
         .child(
-            div().text_size(px(11.)).text_color(rgb(palette::MUTED)).child(
-                "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
-            ),
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(palette::MUTED))
+                .child(
+                    "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
+                ),
         )
         .child(drive_pad(driving, cx))
         .child(
@@ -1586,7 +1607,11 @@ fn drive_pad(driving: bool, cx: &mut Context<Dashboard>) -> impl IntoElement {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(if driving { palette::ACTIVE } else { palette::CONTROL }))
+            .bg(rgb(if driving {
+                palette::ACTIVE
+            } else {
+                palette::CONTROL
+            }))
             .text_size(px(12.))
             .child(label)
             .on_mouse_down(
