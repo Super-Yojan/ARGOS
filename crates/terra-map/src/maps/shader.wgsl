@@ -27,7 +27,7 @@ struct Varying {
     if uniforms.opaque > 0.5 { color.a = 1.0; }
     if uniforms.survey > 0.5 {
         let luminance = dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let toned = vec3<f32>(0.012, 0.025, 0.038) + vec3<f32>(0.22, 0.31, 0.36) * pow(max(luminance, 0.0), 0.7);
+        let toned = vec3<f32>(0.16, 0.21, 0.24) + vec3<f32>(0.46, 0.48, 0.50) * pow(max(luminance, 0.0), 0.7);
         color = vec4<f32>(toned, color.a);
     }
     color = vec4<f32>(mix(color.rgb, uniforms.highlight.rgb, uniforms.highlight.a * 0.85), color.a);

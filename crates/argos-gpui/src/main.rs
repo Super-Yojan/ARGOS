@@ -13,6 +13,7 @@
 mod interaction;
 mod local_map;
 mod map_overlay;
+mod palette;
 
 use interaction::{geographic_gate, goal_geo, gps_point};
 use local_map::local_grid;
@@ -2040,8 +2041,26 @@ fn main() {
             },
             cx,
             |window, cx| {
-                // The field and every console surface are drawn for a dark room.
-                Theme::change(ThemeMode::Dark, Some(window), cx);
+                // Kit widgets follow the light theme on the console background.
+                // The status colors are darkened so they read as text too.
+                Theme::change(ThemeMode::Light, Some(window), cx);
+                Theme::update(cx, |theme| {
+                    theme.background = rgb(palette::BACKGROUND).into();
+                    theme.title_bar = rgb(palette::BACKGROUND).into();
+                    theme.foreground = rgb(palette::TEXT).into();
+                    theme.muted_foreground = rgb(palette::MUTED).into();
+                    let status = |color: u32| {
+                        let color: Hsla = rgb(color).into();
+                        (color, color.opacity(0.9), color.opacity(0.8))
+                    };
+                    (theme.warning, theme.warning_hover, theme.warning_active) =
+                        status(palette::WARNING);
+                    (theme.success, theme.success_hover, theme.success_active) =
+                        status(palette::SUCCESS);
+                    (theme.danger, theme.danger_hover, theme.danger_active) =
+                        status(palette::DANGER);
+                    theme.warning_foreground = gpui::white();
+                });
                 let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
