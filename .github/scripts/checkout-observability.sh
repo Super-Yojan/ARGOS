@@ -1,7 +1,7 @@
 #!/bin/bash
 # The shared crate is not published; fetch the reviewed sibling source explicitly.
 set -euo pipefail
-revision=47b7694c9fbdddb0108ab6001382475f3bd93fd4
+revision=15a667d2ed19d7714a980705d2f0e6551dcbac84
 if [[ -e ../Terra ]]; then
     [[ $(git -C ../Terra rev-parse HEAD) == "$revision" ]] || { echo 'Existing sibling Terra differs from the reviewed observability source' >&2; exit 1; }
 else
