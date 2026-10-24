@@ -279,6 +279,80 @@ pub fn encode_teleop(
     .map_err(|error| crate::Error(error.to_string()))
 }
 
+/// CrabTrapBot body length and width in metres, from its CAD bounds
+/// (Zorvane `crab_trap_bot_sim.glb`: 0.601 m long, 0.607 m wide), rounded up.
+pub const CRAB_TRAP_BOT_LENGTH: f64 = 0.61;
+pub const CRAB_TRAP_BOT_WIDTH: f64 = 0.61;
+
+/// Planner settings ARGOS changes on Terra. Everything else is copied from
+/// the rover's published `navigation.parameters`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavigationEdit {
+    /// Terra `turning.allow_in_place`: let autonomy spin in place instead of
+    /// planning a multi-point turn.
+    pub allow_in_place: bool,
+    /// Body length and width, metres. Terra validates 0.1..=3.
+    pub length: f64,
+    pub width: f64,
+}
+impl NavigationEdit {
+    /// CrabTrapBot's body with the given in-place turning choice.
+    pub fn crab_trap_bot(allow_in_place: bool) -> Self {
+        Self {
+            allow_in_place,
+            length: CRAB_TRAP_BOT_LENGTH,
+            width: CRAB_TRAP_BOT_WIDTH,
+        }
+    }
+}
+
+/// In-place turning as Terra last reported it, if its navigation status says.
+pub fn navigation_allows_in_place(navigation: &Value) -> Option<bool> {
+    navigation["parameters"]["turning"]["allow_in_place"].as_bool()
+}
+
+/// Terra `navigation/settings` request. Terra replaces all parameters at once,
+/// so this starts from the rover's published `navigation` status and changes
+/// only the fields in `edit`.
+pub fn encode_navigation_settings(
+    navigation: &Value,
+    edit: NavigationEdit,
+    token: &str,
+    run_id: &str,
+    authority_revision: u64,
+) -> Result<Vec<u8>> {
+    let Some(settings_revision) = navigation["revision"].as_u64() else {
+        return Err(invalid("rover has not reported navigation settings"));
+    };
+    if navigation["schema_version"] != 1
+        || !navigation["parameters"].is_object()
+        || !navigation["parameters"]["turning"].is_object()
+    {
+        return Err(invalid("rover has not reported navigation settings"));
+    }
+    if ![edit.length, edit.width]
+        .iter()
+        .all(|v| v.is_finite() && (0.1..=3.).contains(v))
+    {
+        return Err(invalid("body length and width must be 0.1 to 3 m"));
+    }
+    if !valid_token(token) || run_id.is_empty() {
+        return Err(invalid("invalid navigation settings request"));
+    }
+    let mut parameters = navigation["parameters"].clone();
+    parameters["turning"]["allow_in_place"] = json!(edit.allow_in_place);
+    parameters["length"] = json!(edit.length);
+    parameters["width"] = json!(edit.width);
+    serde_json::to_vec(&json!({
+        "token": token,
+        "run_id": run_id,
+        "authority_revision": authority_revision,
+        "settings_revision": settings_revision,
+        "parameters": parameters,
+    }))
+    .map_err(|error| crate::Error(error.to_string()))
+}
+
 fn wrap_angle(angle: f64) -> f64 {
     (angle + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }

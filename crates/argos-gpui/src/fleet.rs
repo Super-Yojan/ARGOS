@@ -5,11 +5,11 @@
 
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
-    HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport,
-    Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal,
-    classify_cell, decode_autonomy_value, decode_raw_gps, drive_block, encode_source_request,
-    fallback_degrade_reason, goal_blocked, local_map, map_heading_degrees, reported_outdoor,
-    reported_pose_quality, source_change_refusal,
+    HardwareObservation, LocalFrame, LocalMap, NavigationEdit, OccupancyGrid, OutdoorAdmission,
+    OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
+    admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_raw_gps, drive_block,
+    encode_navigation_settings, encode_source_request, fallback_degrade_reason, goal_blocked,
+    local_map, map_heading_degrees, reported_outdoor, reported_pose_quality, source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -403,6 +403,8 @@ pub struct RoverMark {
     pub safety: String,
     pub run_id: String,
     pub navigation_revision: u64,
+    /// Terra's planner settings status (`authority.navigation`); `Null` until reported.
+    pub navigation_settings: Value,
     pub outdoor: Option<OutdoorReport>,
     pub raw_gps: Option<RawGps>,
     pub pose_available: bool,
@@ -726,6 +728,7 @@ pub fn fleet_marks(
                     .as_ref()
                     .map(|report| report.navigation_revision)
                     .unwrap_or(0),
+                navigation_settings: authority["navigation"].clone(),
                 mission_active: outdoor
                     .as_ref()
                     .is_some_and(|report| report.mission_active()),
@@ -1178,6 +1181,57 @@ impl FleetFeed {
                     .operator_command(id, "navigation/source", &payload)
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(format!("Requested {source} navigation"))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Ask Terra to allow (or forbid) autonomous in-place turns, and set
+    /// CrabTrapBot's body size. Terra applies it only with neutral hardware,
+    /// no active goal, and current authority.
+    pub fn configure_navigation(&self, id: u64, allow_in_place: bool) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let (navigation, run_id, authority_revision) = {
+                    let current = picture.lock().unwrap();
+                    let mark = current
+                        .marks
+                        .iter()
+                        .find(|mark| mark.id == id)
+                        .ok_or("Select a rover that is in the fleet")?;
+                    if !mark.hardware.ready_and_neutral() {
+                        return Err("Settings need ready hardware with neutral output".into());
+                    }
+                    if mark.goal_active {
+                        return Err("Cancel the active goal before changing settings".into());
+                    }
+                    (
+                        mark.navigation_settings.clone(),
+                        mark.run_id.clone(),
+                        mark.authority_revision,
+                    )
+                };
+                let token = format!("nav-{id}-{}", unix_millis());
+                let bytes = encode_navigation_settings(
+                    &navigation,
+                    NavigationEdit::crab_trap_bot(allow_in_place),
+                    &token,
+                    &run_id,
+                    authority_revision,
+                )
+                .map_err(|error| error.to_string())?;
+                let payload =
+                    String::from_utf8(bytes).map_err(|_| "navigation settings".to_string())?;
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client
+                    .operator_command(id, "navigation/settings", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!(
+                    "Requested autonomy in-place turns {} with CrabTrapBot size",
+                    if allow_in_place { "on" } else { "off" }
+                ))
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });

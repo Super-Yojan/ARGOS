@@ -45,6 +45,7 @@ fn mark(id: u64) -> RoverMark {
         app_update_required: false,
         mission_active: false,
         goal_active: false,
+        navigation_settings: serde_json::Value::Null,
     }
 }
 

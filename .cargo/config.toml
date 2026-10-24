@@ -1,0 +1,5 @@
+# Homebrew on Apple Silicon installs libvpx (and other FPV codec libraries)
+# here, outside the linker's default search path. Not forced, so a
+# LIBRARY_PATH already set in the environment (for example in CI) wins.
+[env]
+LIBRARY_PATH = "/opt/homebrew/lib"

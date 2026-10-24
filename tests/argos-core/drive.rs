@@ -187,3 +187,84 @@ fn reverse_uses_the_same_radius_cap_and_quality_replaces_the_heuristic() {
     assert!(report.pose_quality.is_some_and(|quality| !quality.degraded));
     assert!(pose_warning_text(report.origin, true, "tracking lost").is_none());
 }
+
+/// Terra's default `navigation` status, as `terra_runtime::navigation::State::status` publishes it.
+fn terra_navigation_status() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "revision": 3,
+        "parameters": {
+            "turning": {
+                "max_yaw_rate": 0.5,
+                "angular_acceleration": 0.5,
+                "angular_deceleration": 0.8,
+                "min_turn_radius": 0.5,
+                "allow_in_place": false
+            },
+            "max_reverse": 0.15,
+            "reverse_penalty": 0.05,
+            "length": 0.85,
+            "width": 0.85,
+            "clearance": 0.04896,
+            "max_linear": 2.0,
+            "max_angular": 2.0,
+            "horizon": 2.0
+        },
+        "footprint_radius": 0.65,
+        "token": null,
+        "result": null
+    })
+}
+
+#[test]
+fn navigation_settings_change_only_turning_and_body_size() {
+    let status = terra_navigation_status();
+    assert_eq!(navigation_allows_in_place(&status), Some(false));
+    let bytes = encode_navigation_settings(
+        &status,
+        NavigationEdit::crab_trap_bot(true),
+        "nav-1",
+        "run-7",
+        12,
+    )
+    .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let mut expected = status["parameters"].clone();
+    expected["turning"]["allow_in_place"] = true.into();
+    expected["length"] = CRAB_TRAP_BOT_LENGTH.into();
+    expected["width"] = CRAB_TRAP_BOT_WIDTH.into();
+    assert_eq!(
+        request,
+        serde_json::json!({
+            "token": "nav-1",
+            "run_id": "run-7",
+            "authority_revision": 12,
+            "settings_revision": 3,
+            "parameters": expected,
+        })
+    );
+}
+
+#[test]
+fn navigation_settings_need_reported_status_and_valid_inputs() {
+    let status = terra_navigation_status();
+    let edit = NavigationEdit::crab_trap_bot(true);
+    for missing in [
+        serde_json::Value::Null,
+        serde_json::json!({"schema_version": 2, "revision": 1, "parameters": status["parameters"]}),
+        serde_json::json!({"schema_version": 1, "parameters": status["parameters"]}),
+        serde_json::json!({"schema_version": 1, "revision": 1, "parameters": {"length": 0.85}}),
+    ] {
+        assert!(encode_navigation_settings(&missing, edit, "nav-1", "run-7", 1).is_err());
+    }
+    for (length, width) in [(0.05, 0.6), (0.6, 3.5), (f64::NAN, 0.6)] {
+        let edit = NavigationEdit {
+            allow_in_place: true,
+            length,
+            width,
+        };
+        assert!(encode_navigation_settings(&status, edit, "nav-1", "run-7", 1).is_err());
+    }
+    assert!(encode_navigation_settings(&status, edit, "bad token", "run-7", 1).is_err());
+    assert!(encode_navigation_settings(&status, edit, "nav-1", "", 1).is_err());
+}

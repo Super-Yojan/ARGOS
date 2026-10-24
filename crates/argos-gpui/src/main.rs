@@ -1698,6 +1698,7 @@ fn drive_section(
             },
         )
         .child(turning_row(limits, cx))
+        .child(autonomy_turning_row(mark, cx))
         .child(hint(
             "Hold W/A/S/D to drive. Release to stop. Reverse uses the same turning radius.",
             cx,
@@ -1755,6 +1756,42 @@ fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) ->
                     cx.notify();
                 })),
         )
+}
+
+/// Terra's planner turning, which governs autonomous goals. Teleop spin above
+/// only shapes the operator's own commands. Sending also sets CrabTrapBot's size.
+fn autonomy_turning_row(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let id = mark.id;
+    let reported = argos_core::navigation_allows_in_place(&mark.navigation_settings);
+    let footprint = mark.navigation_settings["footprint_radius"].as_f64();
+    h_flex()
+        .flex_wrap()
+        .items_center()
+        .gap_1()
+        .child(
+            Button::new("autonomy-spin")
+                .outline()
+                .small()
+                .selected(reported == Some(true))
+                .label(match reported {
+                    Some(true) => "Autonomy spin on",
+                    Some(false) => "Autonomy spin off",
+                    None => "Autonomy spin unknown",
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.feed.configure_navigation(id, reported != Some(true));
+                    cx.notify();
+                })),
+        )
+        .child(hint(
+            format!(
+                "{}sets CrabTrapBot {:.2} × {:.2} m",
+                footprint.map_or(String::new(), |r| format!("Footprint {r:.2} m · ")),
+                argos_core::CRAB_TRAP_BOT_LENGTH,
+                argos_core::CRAB_TRAP_BOT_WIDTH,
+            ),
+            cx,
+        ))
 }
 
 /// A drive limit that steps to its next preset on each click.
