@@ -1,7 +1,9 @@
 //! Background Zenoh subscription and the commands the selected rover may receive.
 //!
 //! Connect and snapshot polling run on a thread named `argos-fleet`. Publishing
-//! stays on that client and is idle until the window selects a rover.
+//! stays on that client and is idle until the window selects a rover. Only the
+//! selected rover's occupancy grid, point cloud, and depth are subscribed; the
+//! rest of the fleet sends pose and status only.
 
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, ExplorationReport, GoalRequest,
@@ -988,6 +990,8 @@ pub struct FleetFeed {
     client: Arc<Mutex<Option<Arc<Client>>>>,
     limits: Arc<Mutex<TeleopLimits>>,
     origin: LocalFrame,
+    /// The rover whose heavy topics the poll loop keeps subscribed.
+    focus: Arc<Mutex<Option<u64>>>,
 }
 impl FleetFeed {
     pub fn start(config: DashboardConfig) -> Self {
@@ -1005,6 +1009,7 @@ impl FleetFeed {
                 client: Arc::new(Mutex::new(None)),
                 limits,
                 origin: config.origin,
+                focus: Arc::new(Mutex::new(None)),
             };
         }
         let origin = config.origin;
@@ -1017,18 +1022,26 @@ impl FleetFeed {
             observed_at: std::time::Instant::now(),
         }));
         let client = Arc::new(Mutex::new(None));
+        let focus = Arc::new(Mutex::new(None));
         let shared = picture.clone();
         let slot = client.clone();
+        let wanted = focus.clone();
         std::thread::Builder::new()
             .name("argos-fleet".into())
-            .spawn(move || run(config, shared, slot))
+            .spawn(move || run(config, shared, slot, wanted))
             .expect("argos-fleet thread");
         Self {
             picture,
             client,
             limits,
             origin,
+            focus,
         }
+    }
+    /// Keep this rover's occupancy grid, point cloud, and depth subscribed,
+    /// or none. Applied on the next poll and again after a reconnect.
+    pub fn focus(&self, id: Option<u64>) {
+        *self.focus.lock().unwrap() = id;
     }
     pub fn origin(&self) -> LocalFrame {
         self.origin
@@ -1419,6 +1432,7 @@ fn run(
     config: DashboardConfig,
     picture: Arc<Mutex<FleetPicture>>,
     slot: Arc<Mutex<Option<Arc<Client>>>>,
+    focus: Arc<Mutex<Option<u64>>>,
 ) {
     let mut history = LocalizationHistory::default();
     let started = std::time::Instant::now();
@@ -1431,7 +1445,7 @@ fn run(
             Ok(client) => {
                 let client = Arc::new(client);
                 *slot.lock().unwrap() = Some(client.clone());
-                poll(&client, &config, &picture, &mut history, started);
+                poll(&client, &config, &picture, &focus, &mut history, started);
                 mark_disconnected(&picture);
                 *slot.lock().unwrap() = None;
             }
@@ -1470,6 +1484,7 @@ fn poll(
     client: &Client,
     config: &DashboardConfig,
     picture: &Mutex<FleetPicture>,
+    focus: &Mutex<Option<u64>>,
     history: &mut LocalizationHistory,
     started: std::time::Instant,
 ) {
@@ -1477,6 +1492,8 @@ fn poll(
     let issued_after_ms = unix_millis();
     let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
     loop {
+        // A failed declare is retried on the next pass.
+        let _ = client.focus(*focus.lock().unwrap());
         let mut snapshot = client.snapshot();
         if snapshot.link == "failed" || snapshot.link == "disconnected" {
             break;

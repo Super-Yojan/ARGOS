@@ -168,6 +168,8 @@ Updated Terra and Zorvane publishers send full occupancy/cloud payloads when the
 
 ARGOS retains compatibility with full-payload publishers. Deploy updated clients alongside change-driven publishers: older receivers that do not understand these heartbeats will mark unchanged maps stale between recovery baselines. Zorvane currently publishes occupancy and depth/RGB, not a separate point-cloud stream.
 
+ARGOS subscribes to heavy topics only for the rover that is selected. Every rover's pose, localization, goal and autonomy status, hardware, pose quality, outdoor navigation and search state are always subscribed, each on its own key. `map/occupancy`, `pointcloud`, their heartbeats, and `camera/depth` are subscribed for the selected rover alone, and dropped (with its cached grid and cloud) when the selection moves or clears. So the map grid shows only the selected rover's cells. Terra and Zorvane keep publishing as before; the router stops forwarding a rover's grid to ARGOS once nothing subscribes to it, and the next full baseline (at most 2 s) fills a newly selected rover's grid. FPV video was already on demand.
+
 When updated Terra hardware reports `watchdog_paused`, the GPUI dashboard shows
 **Armed · motion paused** and blocks drive/goal dispatch. Hold **Resume motion**
 to request the existing safe-frame/ARM recovery handshake; the pending action

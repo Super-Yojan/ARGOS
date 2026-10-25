@@ -40,6 +40,7 @@ fn content_heartbeats_refresh_only_received_baselines_and_reconnect_recovers() {
         .unwrap();
     let peer = zenoh::open(config).wait().unwrap();
     let client = Client::connect(&endpoint, "events").unwrap();
+    client.focus(Some(8)).unwrap();
     let map_heartbeat = r#"{"schema_version":1,"rover_id":8,"run_id":"run","sequence":2}"#;
     let cloud_heartbeat = r#"{"version":1,"rover_id":8,"frameID":"frame","sequence":3}"#;
     let grid = serde_json::json!({
@@ -129,6 +130,7 @@ fn content_heartbeats_refresh_only_received_baselines_and_reconnect_recovers() {
     client.disconnect();
 
     let reconnected = Client::connect(&endpoint, "events").unwrap();
+    reconnected.focus(Some(8)).unwrap();
     wait_for(|| {
         publish_fleet();
         reconnected.snapshot().link == "healthy"
@@ -144,6 +146,92 @@ fn content_heartbeats_refresh_only_received_baselines_and_reconnect_recovers() {
                 .contains("\"frameID\":\"frame\"")
     });
     reconnected.disconnect();
+}
+
+#[test]
+fn occupancy_is_subscribed_only_for_the_focused_rover() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let endpoint = format!("tcp/127.0.0.1:{port}");
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let peer = zenoh::open(config).wait().unwrap();
+    let client = Client::connect(&endpoint, "focus").unwrap();
+    let grid = |id: u64| {
+        serde_json::json!({
+            "schema_version": 1, "rover_id": id, "run_id": "run", "sequence": 1,
+            "width": 1, "height": 1, "resolution": 1, "origin_x": 0, "origin_y": 0,
+            "occupancy": [100],
+        })
+        .to_string()
+    };
+    let publish = || {
+        peer.put(
+            "focus/fleet/state",
+            br#"{"count":2,"max_count":32,"ids":[3,4]}"#.as_slice(),
+        )
+        .wait()
+        .unwrap();
+        for id in [3, 4] {
+            peer.put(
+                format!("focus/{id}/pose"),
+                format!(r#"{{"rover_id":{id},"sequence":1,"x":1,"y":2,"yaw":0}}"#),
+            )
+            .wait()
+            .unwrap();
+            peer.put(format!("focus/{id}/map/occupancy"), grid(id))
+                .wait()
+                .unwrap();
+        }
+    };
+    // Unfocused: every rover's pose arrives, no grid does.
+    wait_for(|| {
+        publish();
+        let snapshot = client.snapshot();
+        snapshot.rovers.len() == 2 && snapshot.rovers.iter().all(|r| r.pose.is_some())
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(client.occupancy_snapshot(), "{}");
+    assert!(client.focused().is_empty());
+
+    client.focus(Some(3)).unwrap();
+    client.focus(Some(3)).unwrap();
+    assert_eq!(client.focused(), vec![3]);
+    wait_for(|| {
+        publish();
+        client.occupancy_grid(3).is_some()
+    });
+    assert!(client.occupancy_grid(4).is_none());
+
+    // Moving the focus drops rover 3's grid and stops refilling it.
+    client.focus(Some(4)).unwrap();
+    wait_for(|| {
+        publish();
+        client.occupancy_grid(4).is_some()
+    });
+    publish();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(client.occupancy_grid(3).is_none());
+
+    client.focus(None).unwrap();
+    assert!(client.occupancy_grid(4).is_none());
+    publish();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(client.occupancy_snapshot(), "{}");
+    // A set keeps several rovers' grids, as the Unity bridge does for the fleet.
+    client.focus([3, 4]).unwrap();
+    wait_for(|| {
+        publish();
+        client.occupancy_grid(3).is_some() && client.occupancy_grid(4).is_some()
+    });
+    client.disconnect();
+    assert!(client.focused().is_empty());
 }
 
 #[test]
@@ -165,6 +253,7 @@ fn receives_fleet_and_publishes_one_correlated_goal() {
         .wait()
         .unwrap();
     let client = Client::connect(&endpoint, "terra/rover").unwrap();
+    client.focus(Some(8)).unwrap();
     wait_for(|| {
         peer.put(
             "terra/rover/fleet/state",
@@ -364,6 +453,7 @@ fn receives_phone_pose_without_depth_pixels() {
         .unwrap();
     let router = zenoh::open(config).wait().unwrap();
     let client = Client::connect(&endpoint, "phone-test").unwrap();
+    client.focus(Some(7)).unwrap();
     wait_for(|| {
         router
             .put(

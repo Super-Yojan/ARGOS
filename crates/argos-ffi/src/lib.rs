@@ -125,7 +125,15 @@ impl ArgosClient {
         })?;
         Ok(client.cancel_goal(rover_id)?)
     }
-    /// Return the current observed grids as JSON for the native map renderer.
+    /// Subscribe to one rover's occupancy grid, point cloud, and depth, or none.
+    pub fn focus_rover(&self, rover_id: Option<u64>) -> Result<(), ClientError> {
+        let slot = self.client.lock().unwrap();
+        let client = slot.as_ref().ok_or_else(|| ClientError::Operation {
+            message: "Disconnected".into(),
+        })?;
+        Ok(client.focus(rover_id)?)
+    }
+    /// Return the observed grid of the focused rover as JSON for the native map renderer.
     pub fn occupancy_snapshot(&self) -> String {
         self.client
             .lock()

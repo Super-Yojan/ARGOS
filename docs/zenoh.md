@@ -50,10 +50,15 @@ sequenceDiagram
 | --- | --- |
 | `<prefix>/fleet/state` | `count`, `max_count`, `ids` |
 | `<prefix>/*/goal/status` | `idle` / `active` / `arrived`, distance, target `x`/`y`, token |
-| `<prefix>/*/camera/depth` | `body` pose from the header. Pixels are dropped |
 | `<prefix>/*/pose` | JSON pose when the phone runtime publishes it |
-| `<prefix>/*/map/occupancy` | Grid, schema 1, cells −1…100 |
-| `<prefix>/*/**` | Authority/hardware, proposals, mission/experiment, search reports, point clouds and matching content heartbeats |
+| `<prefix>/*/localization` | Frame and placement report |
+| `<prefix>/*/{autonomy/status,goal/proposal,mission/status,experiment/status}` | Authority, proposals, mission/experiment |
+| `<prefix>/*/{hardware/status,pose/quality,navigation/outdoor,search/report,search/status}` | Hardware, pose quality, outdoor navigation, search |
+| `<prefix>/<selected>/map/occupancy` | Grid, schema 1, cells −1…100. Selected rover only |
+| `<prefix>/<selected>/{map/occupancy/heartbeat,pointcloud,pointcloud/heartbeat}` | Point cloud and content heartbeats. Selected rover only |
+| `<prefix>/<selected>/camera/depth` | `body` pose from the header. Pixels are dropped. Selected rover only |
+
+Each key is declared on its own, with no `<prefix>/*/**` wildcard, so the router forwards only what ARGOS reads. `Client::focus` moves the selected-rover subscriptions; the dashboard calls it from the selection.
 
 Fleet supervision and waypoint submission use a 90-second receipt-age horizon. Manual and hardware controls use stricter limits (0.5 seconds); occupancy display fades after 2.5 seconds. A content heartbeat refreshes only its matching cached visualization and never renews control authority.
 
@@ -84,7 +89,7 @@ Zorvane still has these. This client leaves them alone.
 | `<prefix>/<id>/camera/rgb` | Frame viewers. ARGOS never decodes RGB |
 | `<prefix>/fleet/size` | Live resize. ARGOS only reads `fleet/state` |
 
-Depth frames still arrive whole, so the bandwidth is on the link. Point-cloud telemetry is a separate topic; depth pixels are discarded by this client. Native/Unity visualizations and the browser occupancy overlay are distinct consumers.
+Depth frames for the selected rover still arrive whole, so that bandwidth is on the link. Point-cloud telemetry is a separate topic; depth pixels are discarded by this client. Native/Unity visualizations and the browser occupancy overlay are distinct consumers.
 
 ## Session log
 

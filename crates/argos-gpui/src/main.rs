@@ -194,6 +194,8 @@ impl Dashboard {
             self.selected = None;
             self.drag = None;
         }
+        // Only the selected rover's grid is drawn, so only it is subscribed.
+        self.feed.focus(self.selected);
         if self.driving
             && let Some(id) = self.selected
             && !self.held.is_empty()
@@ -988,7 +990,7 @@ fn console_bar(
                         .small()
                         .selected(dashboard.show_occupancy)
                         .label("Map grid")
-                        .tooltip("Show each rover's occupancy grid on the map")
+                        .tooltip("Show the selected rover's occupancy grid on the map")
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_occupancy = !this.show_occupancy;
                             this.focus.focus(window, cx);
