@@ -162,7 +162,7 @@ Visual, then the Zenoh source under `terra/rover/<id>/` unless noted, then wheth
 | Vehicle position and heading | `camera/depth` header `body` pose (Zorvane); `pose` JSON (phone runtime) | Exists |
 | Which vehicles exist | `terra/rover/fleet/state` (`count`, `max_count`, `ids`). `fleet/size` is the resize command; ARGOS only reads `fleet/state` | Exists |
 | Connectivity glyph | ARGOS freshness (2.5 s) on pose, goal status, membership | Exists (derived) |
-| Autonomy badge | `autonomy/status` `requested_level`, `effective_level`, `assigned_level`, `active_source` | Exists. `explore` is in [Terra PR #33](https://github.com/Super-Yojan/Terra/pull/33); ARGOS does not accept `explore` yet |
+| Autonomy badge | `autonomy/status` `requested_level`, `effective_level`, `assigned_level`, `active_source` | Exists. `explore` is in [Terra PR #33](https://github.com/Super-Yojan/Terra/pull/33); ARGOS offers it as L4 Explore with a budget |
 | Navigation status | `goal/status`: `idle` / `active` / `arrived`, `distance`, target `x`/`y`, `token` | Exists |
 | Waypoint marker | `goal` (what ARGOS sent) and `goal/status` target | Exists |
 | Proposed goal (amber) | `goal/proposal`; decision on `goal/decision` | Exists |

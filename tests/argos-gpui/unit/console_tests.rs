@@ -45,6 +45,7 @@ fn mark(id: u64) -> RoverMark {
         app_update_required: false,
         mission_active: false,
         goal_active: false,
+        exploration: None,
     }
 }
 
@@ -287,6 +288,11 @@ fn level_group_selects_the_requested_level_not_the_effective_one() {
     rover.effective_level = Some("waypoint".into());
     assert_eq!(level_index(&rover), Some(0));
     assert_eq!(OPERATOR_LEVELS[level_index(&rover).unwrap()].1, "L0 Manual");
+    rover.requested_level = Some("explore".into());
+    assert_eq!(
+        OPERATOR_LEVELS[level_index(&rover).unwrap()].1,
+        "L4 Explore"
+    );
     rover.requested_level = Some("not_a_level".into());
     assert_eq!(level_index(&rover), None);
     rover.requested_level = None;
@@ -404,4 +410,36 @@ fn field_notices_show_the_link_reason_only_while_unhealthy() {
     );
     assert!(field_notices("healthy", "2 rovers", None).is_empty());
     assert!(field_notices("connecting", "", None).is_empty());
+}
+
+#[test]
+fn callout_names_the_exploration_state_instead_of_idle() {
+    let mut rover = mark(1);
+    rover.requested_level = Some("explore".into());
+    rover.effective_level = Some("explore".into());
+    let report =
+        |phase: &str, end: Option<&str>, reason: Option<&str>| argos_core::ExplorationReport {
+            phase: phase.into(),
+            elapsed_s: 60.,
+            remaining_s: 120.,
+            budget_s: 180.,
+            target: Some((1., 2.)),
+            coverage_m2: 10.,
+            explored_ratio: 0.2,
+            end_reason: end.map(Into::into),
+            frontiers_attempted: 1,
+            blacklisted: 0,
+            reason: reason.map(Into::into),
+        };
+    rover.exploration = Some(report("running", None, Some("frontier_retry")));
+    let running = callout(&rover, false, false);
+    assert_eq!(running.tag, Some(CalloutTag::Goal));
+    assert_eq!(
+        running.state,
+        "Stuck · retrying another frontier · 2 min left"
+    );
+    rover.exploration = Some(report("ended", Some("no_frontiers_left"), None));
+    let ended = callout(&rover, false, false);
+    assert_eq!(ended.tag, None);
+    assert_eq!(ended.state, "Done · no frontiers left");
 }

@@ -4,12 +4,12 @@
 //! stays on that client and is idle until the window selects a rover.
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, GoalRequest, GoalState,
-    HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission, OutdoorReport,
-    Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics, admit_outdoor_goal,
-    classify_cell, decode_autonomy_value, decode_raw_gps, drive_block, encode_source_request,
-    fallback_degrade_reason, goal_blocked, local_map, map_heading_degrees, reported_outdoor,
-    reported_pose_quality, source_change_refusal,
+    APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, ExplorationReport, GoalRequest,
+    GoalState, HardwareObservation, LocalFrame, LocalMap, OccupancyGrid, OutdoorAdmission,
+    OutdoorReport, Pose, PoseWatch, RawGps, RouteSample, Snapshot, TeleopLimits, Topics,
+    admit_outdoor_goal, classify_cell, decode_autonomy_value, decode_exploration, decode_raw_gps,
+    drive_block, encode_source_request, fallback_degrade_reason, goal_blocked, local_map,
+    map_heading_degrees, reported_outdoor, reported_pose_quality, source_change_refusal,
 };
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -411,6 +411,8 @@ pub struct RoverMark {
     pub app_update_required: bool,
     pub mission_active: bool,
     pub goal_active: bool,
+    /// Terra's L4 run status while exploring or after a run ends.
+    pub exploration: Option<ExplorationReport>,
 }
 impl RoverMark {
     /// L0 uses direct operator effort; a missing camera pose is only a map warning.
@@ -743,6 +745,7 @@ pub fn fleet_marks(
                 .gps_display_freshness_seconds,
                 gps_source_fresh: localization.is_none_or(|report| report["gpsFresh"] != false),
                 outdoor,
+                exploration: report.as_ref().and_then(|_| decode_exploration(authority)),
             })
         })
         .collect()
@@ -1065,6 +1068,30 @@ impl FleetFeed {
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(format!(
                     "Requested {level} for rover {id} · waiting for vehicle acknowledgement"
+                ))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Start L4 frontier exploration for `budget_seconds`. Terra picks and
+    /// drives the frontiers; this only sends the level with its budget.
+    pub fn publish_explore(&self, id: u64, budget_seconds: f64) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                let token = format!("gpui-{id}-{}", unix_millis());
+                let bytes = argos_core::encode_explore_request(&token, budget_seconds)
+                    .map_err(|error| error.to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| "level payload".to_string())?;
+                client
+                    .operator_command(id, "autonomy", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!(
+                    "Requested L4 Explore for {:.0} min on rover {id} · waiting for vehicle acknowledgement",
+                    budget_seconds / 60.
                 ))
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);

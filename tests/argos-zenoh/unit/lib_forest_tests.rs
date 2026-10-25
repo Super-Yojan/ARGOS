@@ -195,6 +195,18 @@ fn waypoint_mode_accepts_delayed_reports_but_manual_mode_does_not() {
             )
             .is_err()
     );
+    // L4 Explore is refused before sending unless it carries a valid budget.
+    for payload in [
+        r#"{"level":"explore","token":"explore-none"}"#,
+        r#"{"level":"explore","token":"explore-zero","budget_seconds":0}"#,
+        r#"{"level":"explore","token":"explore-long","budget_seconds":7200}"#,
+    ] {
+        let error = client
+            .operator_command(8, "autonomy", payload)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("budget"), "{payload}: {error}");
+    }
     client.disconnect();
     router.stop().unwrap();
 }
