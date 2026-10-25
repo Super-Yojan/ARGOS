@@ -21,7 +21,7 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                 });
             }
             for mark in &marks {
-                let Some(origin) = mark.map_frame else {
+                let Some(origin) = mark.overlay_frame else {
                     continue;
                 };
                 let mut previous: Option<Point<Pixels>> = None;
@@ -118,11 +118,12 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
     .size_full()
 }
 
-/// Local occupancy draped through the localization origin. Cells stay in the
-/// rover frame; the overlay does not claim a geographic obstacle location.
+/// Local occupancy draped under each rover through its overlay frame: the
+/// localization origin, or the GPS fix and fused heading outdoors. Cells stay
+/// in the rover frame and are only as well placed as that fix and heading.
 fn paint_occupancy(window: &mut Window, map: &MapView, marks: &[RoverMark]) {
     for mark in marks {
-        let Some(origin) = mark.map_frame else {
+        let Some(origin) = mark.overlay_frame else {
             continue;
         };
         let Some(grid) = &mark.grid else {

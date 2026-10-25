@@ -368,6 +368,41 @@ fn local_phone_gps_places_rover_without_inventing_geographic_alignment() {
 }
 
 #[test]
+fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
+    let origin = LocalFrame::origin(DEFAULT_START_LATITUDE, DEFAULT_START_LONGITUDE).unwrap();
+    // Local yaw 0 (+x) is facing true east.
+    let snapshot = Snapshot {
+        link: "healthy".into(),
+        fleet_age: Some(0.1),
+        notice: None,
+        rovers: vec![rover(3, "online", Some(pose(2., 4., 0.)), Some(0.1))],
+    };
+    let report = serde_json::json!({"3":{"version":1,"mode":"gps",
+        "gpsLatitude":38.98205,"gpsLongitude":-77.52052,"gpsAccuracy":4.6,"gpsFixAge":0.2}});
+    let operator = serde_json::json!({"3":{"outdoor":{"schema_version":1,
+        "capability":"outdoor_gps","supported":true,"source":"outdoor_gps","run_id":"run",
+        "navigation_revision":1,"heading_deg":90.0,"heading_accuracy_deg":6.0}}});
+    let marks = fleet_marks(&snapshot, &report, &operator, |_| None, origin);
+    assert!(marks[0].map_frame.is_none());
+    let frame = marks[0].overlay_frame.unwrap();
+    let (latitude, longitude) = frame.geographic(2., 4.).unwrap();
+    assert!((latitude - 38.98205).abs() < 1e-9 && (longitude + 77.52052).abs() < 1e-9);
+    // One metre ahead of the rover is one metre east of the fix.
+    let (latitude, longitude) = frame.geographic(3., 4.).unwrap();
+    assert!((latitude - 38.98205).abs() < 1e-7);
+    assert!(longitude > -77.52052);
+    let east = argos_core::geodesic_metres(38.98205, -77.52052, latitude, longitude);
+    assert!((east - 1.).abs() < 0.01, "{east}");
+    assert!((marks[0].heading - 90.).abs() < 1e-9);
+
+    // No heading yet: the grid turns with the marker's yaw instead.
+    let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin);
+    let frame = marks[0].overlay_frame.unwrap();
+    assert_eq!(frame.rotation, 0.);
+    assert_eq!(marks[0].heading, map_heading_degrees(0.));
+}
+
+#[test]
 fn camera_reframes_when_existing_rover_gets_its_geographic_location() {
     let origin = LocalFrame::origin(0., 0.).unwrap();
     let snapshot = Snapshot {
