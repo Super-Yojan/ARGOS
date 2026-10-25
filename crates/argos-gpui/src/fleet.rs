@@ -18,6 +18,7 @@ use argos_zenoh::Client;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -983,7 +984,7 @@ pub fn reframing_target(
     }
 }
 
-/// Process-lifetime subscriber. Drop does not stop the thread.
+/// Fleet subscriber. Drop does not stop the thread; [`FleetFeed::shutdown`] does.
 #[derive(Clone)]
 pub struct FleetFeed {
     picture: Arc<Mutex<FleetPicture>>,
@@ -992,6 +993,8 @@ pub struct FleetFeed {
     origin: LocalFrame,
     /// The rover whose heavy topics the poll loop keeps subscribed.
     focus: Arc<Mutex<Option<u64>>>,
+    /// Set by `shutdown`; the thread closes its session and exits.
+    stopped: Arc<AtomicBool>,
 }
 impl FleetFeed {
     pub fn start(config: DashboardConfig) -> Self {
@@ -1010,6 +1013,7 @@ impl FleetFeed {
                 limits,
                 origin: config.origin,
                 focus: Arc::new(Mutex::new(None)),
+                stopped: Arc::new(AtomicBool::new(false)),
             };
         }
         let origin = config.origin;
@@ -1026,9 +1030,11 @@ impl FleetFeed {
         let shared = picture.clone();
         let slot = client.clone();
         let wanted = focus.clone();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
         std::thread::Builder::new()
             .name("argos-fleet".into())
-            .spawn(move || run(config, shared, slot, wanted))
+            .spawn(move || run(config, shared, slot, wanted, stop))
             .expect("argos-fleet thread");
         Self {
             picture,
@@ -1036,7 +1042,16 @@ impl FleetFeed {
             limits,
             origin,
             focus,
+            stopped,
         }
+    }
+    /// Zero any held drive input, then close the session in the background.
+    /// Commands fail with "Not connected" from here on. Used when the window
+    /// switches between simulation and the real fleet.
+    pub fn shutdown(&self) {
+        self.end_drive();
+        self.stopped.store(true, Ordering::Release);
+        self.client.lock().unwrap().take();
     }
     /// Keep this rover's occupancy grid, point cloud, and depth subscribed,
     /// or none. Applied on the next poll and again after a reconnect.
@@ -1433,10 +1448,11 @@ fn run(
     picture: Arc<Mutex<FleetPicture>>,
     slot: Arc<Mutex<Option<Arc<Client>>>>,
     focus: Arc<Mutex<Option<u64>>>,
+    stopped: Arc<AtomicBool>,
 ) {
     let mut history = LocalizationHistory::default();
     let started = std::time::Instant::now();
-    loop {
+    while !stopped.load(Ordering::Acquire) {
         let credentials = config
             .credentials
             .as_ref()
@@ -1444,8 +1460,25 @@ fn run(
         match Client::connect_authenticated(&config.endpoint, &config.prefix, credentials) {
             Ok(client) => {
                 let client = Arc::new(client);
+                if stopped.load(Ordering::Acquire) {
+                    client.disconnect();
+                    return;
+                }
                 *slot.lock().unwrap() = Some(client.clone());
-                poll(&client, &config, &picture, &focus, &mut history, started);
+                poll(
+                    &client,
+                    &config,
+                    &picture,
+                    &focus,
+                    &mut history,
+                    started,
+                    &stopped,
+                );
+                if stopped.load(Ordering::Acquire) {
+                    *slot.lock().unwrap() = None;
+                    client.disconnect();
+                    return;
+                }
                 mark_disconnected(&picture);
                 *slot.lock().unwrap() = None;
             }
@@ -1487,11 +1520,12 @@ fn poll(
     focus: &Mutex<Option<u64>>,
     history: &mut LocalizationHistory,
     started: std::time::Instant,
+    stopped: &AtomicBool,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
     let issued_after_ms = unix_millis();
     let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
-    loop {
+    while !stopped.load(Ordering::Acquire) {
         // A failed declare is retried on the next pass.
         let _ = client.focus(*focus.lock().unwrap());
         let mut snapshot = client.snapshot();

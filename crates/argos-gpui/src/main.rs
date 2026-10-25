@@ -24,8 +24,8 @@ use argos_core::{
 };
 use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
-    DashboardConfig, FleetFeed, FpvController, FpvPhase, RoverMark, RoverPresence, model_position,
-    position_label, reframing_target,
+    DashboardConfig, FleetFeed, FpvController, FpvPhase, LaunchMode, RoverMark, RoverPresence,
+    model_position, position_label, reframing_target,
 };
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
@@ -94,6 +94,9 @@ struct Dashboard {
     /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
     explore_budget: usize,
     fpv: FpvController,
+    /// Which fleet `feed` and `fpv` are connected to. The console toggle
+    /// replaces both.
+    fleet_mode: LaunchMode,
     _poll: Task<()>,
 }
 impl Dashboard {
@@ -102,6 +105,7 @@ impl Dashboard {
         feed: FleetFeed,
         fpv: FpvController,
         maps_notice: Option<String>,
+        fleet_mode: LaunchMode,
         cx: &mut Context<Self>,
     ) -> Self {
         let model =
@@ -174,6 +178,7 @@ impl Dashboard {
             latched: BTreeSet::new(),
             explore_budget: 1,
             fpv,
+            fleet_mode,
             _poll: poll,
         }
     }
@@ -557,6 +562,42 @@ impl Dashboard {
         } else {
             format!("Stop not sent to {}", failed.join(", "))
         };
+    }
+    /// Reconnect this window to the simulator or the real fleet. Drive input
+    /// is zeroed and control released first. Rovers keep whatever level and
+    /// goal they had; this only changes which bus the window talks to.
+    fn switch_fleet(&mut self, mode: LaunchMode, window: &mut Window) {
+        if mode == self.fleet_mode {
+            return;
+        }
+        let config = match DashboardConfig::from_env_mode(mode) {
+            Ok(config) => config,
+            Err(error) => {
+                self.note = format!("Stayed on {}: {error}", self.fleet_mode.label());
+                return;
+            }
+        };
+        self.stop_drive();
+        self.drag = None;
+        self.selected = None;
+        self.claim.release();
+        self.latched.clear();
+        self.framed.clear();
+        self.framed_center = None;
+        self.feed.shutdown();
+        self.feed = FleetFeed::start(config.clone());
+        // Dropping the old controller ends its video call.
+        self.fpv = FpvController::start(config);
+        self.fleet_mode = mode;
+        // The next sync drops markers for rovers the new fleet does not have.
+        self.marks.clear();
+        self.presence.clear();
+        let picture = self.feed.picture();
+        self.link = picture.link;
+        self.detail = picture.detail;
+        self.command.clear();
+        self.note = format!("Switched to {} · {}", mode.label(), self.detail);
+        window.set_window_title(mode.title());
     }
     fn set_map_mode(&mut self, mode: MapMode) {
         self.map_mode = mode;
@@ -943,6 +984,7 @@ fn console_bar(
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let mode = dashboard.map_mode;
+    let fleet = dashboard.fleet_mode;
     let held = dashboard.claim.held(dashboard.now);
     let detail: SharedString = format!("{} · {}", dashboard.link, dashboard.detail).into();
     let status: SharedString = status.into();
@@ -960,6 +1002,35 @@ fn console_bar(
                 .flex_1()
                 .min_w_0()
                 .child(div().text_sm().font_semibold().child("ARGOS"))
+                .child(
+                    ButtonGroup::new("fleet-mode")
+                        .outline()
+                        .small()
+                        .child(
+                            Button::new("fleet-sim")
+                                .label("Sim")
+                                .selected(fleet == LaunchMode::Sim)
+                                .tooltip("Local Zorvane simulator at tcp/127.0.0.1:7447"),
+                        )
+                        .child(
+                            Button::new("fleet-real")
+                                .label("Real")
+                                .selected(fleet == LaunchMode::Real)
+                                .tooltip("Real fleet from the environment and .env"),
+                        )
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, window, cx| {
+                            this.switch_fleet(
+                                if clicks.contains(&0) {
+                                    LaunchMode::Sim
+                                } else {
+                                    LaunchMode::Real
+                                },
+                                window,
+                            );
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
                 .child(
                     ButtonGroup::new("map-mode")
                         .outline()
@@ -2176,7 +2247,7 @@ fn drive_key(key: &str) -> Option<&'static str> {
 }
 
 fn main() {
-    let mode = match argos_gpui::LaunchMode::parse(std::env::args().skip(1)) {
+    let mode = match LaunchMode::parse(std::env::args().skip(1)) {
         Ok(Some(mode)) => mode,
         Ok(None) => {
             print!("{}", argos_gpui::LAUNCH_HELP);
@@ -2215,13 +2286,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(720.), px(480.))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(
-                        match mode {
-                            argos_gpui::LaunchMode::Sim => "ARGOS · Simulation",
-                            argos_gpui::LaunchMode::Real => "ARGOS · Real fleet",
-                        }
-                        .into(),
-                    ),
+                    title: Some(mode.title().into()),
                     ..TitleBar::title_bar_options()
                 }),
                 ..TitleBar::window_options()
@@ -2248,7 +2313,7 @@ fn main() {
                         status(palette::DANGER);
                     theme.warning_foreground = gpui::white();
                 });
-                let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, cx));
+                let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, mode, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
                 view
