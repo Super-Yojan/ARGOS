@@ -739,3 +739,92 @@ fn managed_router_routes_two_clients_and_reconnect_does_not_replay_goal() {
     phone.close().wait().unwrap();
     router.stop().unwrap();
 }
+
+#[test]
+fn point_capture_requests_collects_and_saves_ply() {
+    use argos_core::point_capture::*;
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let endpoint = format!("tcp/127.0.0.1:{port}");
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let peer = zenoh::open(config).wait().unwrap();
+    let requests = peer
+        .declare_subscriber("cap/8/pointcloud/request")
+        .wait()
+        .unwrap();
+    let client = Client::connect(&endpoint, "cap").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let directory = std::env::temp_dir().join(format!("argos-capture-{port}"));
+    let request_id = client.start_point_capture(8, directory.clone()).unwrap();
+    let sample = requests
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap()
+        .expect("request not sent");
+    let request = CaptureRequest::decode(&sample.payload().to_bytes()).unwrap();
+    assert_eq!(request.request_id, request_id);
+    assert_eq!(request.frame_count(), 10);
+    std::thread::sleep(Duration::from_millis(200));
+    for index in 0..2u16 {
+        let frame = CaptureFrame {
+            rover_id: 8,
+            request_id: request_id.clone(),
+            index,
+            count: 10,
+            timestamp: index as f64,
+            width: 2,
+            height: 1,
+            camera_position: [0.0; 3],
+            camera_orientation: [0.0, 0.0, 0.0, 1.0],
+            intrinsics: [1.0, 1.0, 0.5, 0.0],
+            classifier: CaptureClassifier::HorizonBand {
+                half_angle: 0.17,
+                max_range: 3.4,
+            },
+            min_obstacle_height: 0.15,
+            max_obstacle_height: 2.0,
+            max_range: 15.0,
+            points: vec![
+                CapturePoint {
+                    position: [1.0, 0.0, 0.0],
+                    label: PointLabel::Obstacle,
+                },
+                CapturePoint {
+                    position: [1.0, 1.0, -0.4],
+                    label: PointLabel::OutsideBand,
+                },
+            ],
+        };
+        peer.put("cap/8/pointcloud/full", frame.encode().unwrap())
+            .wait()
+            .unwrap();
+    }
+    peer.put(
+        "cap/8/pointcloud/capture",
+        serde_json::json!({"version":1,"rover_id":8,"request_id":request_id,"state":"done",
+            "frames_sent":2,"frames_total":10,"detail":"no_depth"})
+        .to_string(),
+    )
+    .wait()
+    .unwrap();
+    let mut status = None;
+    wait_for(|| {
+        status = client.point_capture(8);
+        status.as_ref().is_some_and(|s| s.saved.is_some())
+    });
+    let status = status.unwrap();
+    assert!(status.finished);
+    assert_eq!((status.received, status.detail.as_str()), (2, "no_depth"));
+    assert_eq!(status.label_counts[PointLabel::Obstacle as usize], 2);
+    let path = status.saved.unwrap().unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(b"ply\n"));
+    assert!(String::from_utf8_lossy(&bytes).contains("element vertex 4\n"));
+    let _ = std::fs::remove_dir_all(directory);
+}

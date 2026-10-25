@@ -40,3 +40,4 @@ pub use hardware::*;
 pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};
 mod runtime;
 pub use runtime::*;
+pub mod point_capture;

@@ -76,3 +76,9 @@ The autonomy buttons ask the rover to change level. The inspector shows the leve
 ## The map grid
 
 **Map grid** draws the selected rover's occupancy grid under it, semi-transparent. A cell at 65 or above is occupied, 0 to 64 is free, and a negative cell is unknown. Only the selected rover's grid is fetched, so selecting another rover fills in its grid within about two seconds.
+
+## 3D capture
+
+When the grid shows obstacles where the floor is clear, select the rover and press **Capture 3D** in the inspector. The rover records every pixel of its depth camera for 10 seconds at 1 frame per second and labels each point the way its mapper classifies it. ARGOS saves the result as a PLY file, coloured by label: free green, obstacle red, overhead blue, out of range grey, outside band yellow. The file also keeps the label number and frame index for each point. Open it in MeshLab, CloudCompare or Blender.
+
+Files go to `Documents/ARGOS Captures` in your home folder, or to `ARGOS_CAPTURE_DIR` if you set it. Each frame is about 640 KB, so a capture sends about 6 MB over the link. The rover sends nothing until you ask, and on a busy link it drops frames instead of slowing the controls. The inspector shows how many frames arrived and the point count for each label.

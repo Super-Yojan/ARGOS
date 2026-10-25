@@ -1787,11 +1787,55 @@ fn overview_tab(
                 ),
         )
         .child(goal_section(dashboard, mark, facts, cx))
+        .child(capture_section(dashboard, id, cx))
         .when(driving, |tab| tab.child(drive_section(dashboard, mark, facts.limits, cx)))
         .child(hint(
             "Click the map to place a destination, then Send goal in the popup. The rover stays at its live position. Outdoor GPS sends WGS84. Esc or Cancel sends nothing. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
             cx,
         ))
+}
+
+/// Capture 3D: a full-resolution point cloud labelled by the rover's mapper,
+/// saved as a colour-coded PLY file to debug false obstacles.
+fn capture_section(
+    dashboard: &Dashboard,
+    id: u64,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let status = dashboard.feed.point_capture(id);
+    let running = status.as_ref().is_some_and(|s| !s.finished);
+    let lines = status.as_ref().map(argos_gpui::capture_lines);
+    section("3D capture", cx)
+        .child(
+            h_flex().gap_2().child(
+                Button::new(("capture-3d", id))
+                    .outline()
+                    .small()
+                    .label(if running { "Capturing…" } else { "Capture 3D" })
+                    .tooltip(
+                        "Records every depth pixel for 10 s at 1 Hz, labelled the way the rover's map classifies it, and saves a PLY file",
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let busy = this.feed.point_capture(id).is_some_and(|s| !s.finished);
+                        if this.selected == Some(id) && !busy {
+                            this.feed.capture_3d(id);
+                        }
+                        cx.notify();
+                    })),
+            ),
+        )
+        .map(|section| match lines {
+            Some((progress, counts)) => section
+                .child(div().text_sm().child(progress))
+                .when_some(counts, |section, counts| section.child(hint(counts, cx))),
+            None => section.child(hint(
+                format!(
+                    "Colours: free green, obstacle red, overhead blue, out of range grey, outside band yellow. Files go to {}.",
+                    argos_gpui::capture_dir().display()
+                ),
+                cx,
+            )),
+        })
 }
 
 /// One row of the autonomy picker over `OPERATOR_LEVELS[range]`; the

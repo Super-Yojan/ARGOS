@@ -1439,6 +1439,27 @@ impl FleetFeed {
         self.picture.lock().unwrap().command = format!("Stop sent to rover {id}");
         Ok(())
     }
+    /// Ask the rover for a full labelled point capture (10 s at 1 Hz) and save
+    /// it as PLY under [`capture_dir`] once it is complete.
+    pub fn capture_3d(&self, id: u64) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                client
+                    .start_point_capture(id, capture_dir())
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!("Capturing 3D from rover {id} · 10 s at 1 Hz"))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// The rover's latest point capture; also finishes and saves a complete one.
+    pub fn point_capture(&self, id: u64) -> Option<argos_zenoh::CaptureStatus> {
+        self.connected().ok()?.point_capture(id)
+    }
     fn connected(&self) -> Result<Arc<Client>, String> {
         self.client
             .lock()
@@ -1446,6 +1467,56 @@ impl FleetFeed {
             .clone()
             .ok_or_else(|| "Not connected".to_string())
     }
+}
+/// Where Capture 3D saves PLY files: `ARGOS_CAPTURE_DIR`, else
+/// `Documents/ARGOS Captures` in the home folder, else the temp folder.
+pub fn capture_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ARGOS_CAPTURE_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| PathBuf::from(home).join("Documents").join("ARGOS Captures"))
+        .unwrap_or_else(std::env::temp_dir)
+}
+/// Inspector lines for a capture: progress or the saved file, then the label counts.
+pub fn capture_lines(status: &argos_zenoh::CaptureStatus) -> (String, Option<String>) {
+    let missing = match status.detail.as_str() {
+        "" | "cancelled" => String::new(),
+        "no_depth" => " · no depth frames for some slots".into(),
+        "link_busy" => " · link too busy for some frames".into(),
+        other => format!(" · {other}"),
+    };
+    let progress = match (&status.saved, status.finished) {
+        (Some(Ok(path)), _) => format!(
+            "Saved {} of {} frames{missing} · {}",
+            status.received,
+            status.expected,
+            path.display()
+        ),
+        (Some(Err(error)), _) => format!("Capture not saved: {error}"),
+        (None, true) => "Writing PLY…".into(),
+        (None, false) => format!(
+            "Capturing · {} of {} frames{missing}",
+            status.received, status.expected
+        ),
+    };
+    let total: usize = status.label_counts.iter().sum();
+    let counts = (total > 0).then(|| {
+        argos_core::point_capture::PointLabel::ALL
+            .iter()
+            .filter(|label| **label != argos_core::point_capture::PointLabel::NoReturn)
+            .map(|label| {
+                format!(
+                    "{} {}",
+                    label.name().replace('_', " "),
+                    status.label_counts[*label as usize]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    });
+    (progress, counts)
 }
 fn unix_millis() -> u128 {
     std::time::SystemTime::now()
