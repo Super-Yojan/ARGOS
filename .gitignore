@@ -1,5 +1,4 @@
 /target/
-/site/
 /.worktrees/
 .DS_Store
 *.xcuserstate
@@ -30,3 +29,6 @@ xcuserdata/
 
 # Python deployment test caches.
 __pycache__/
+docs/node_modules/
+docs/dist/
+docs/.astro/

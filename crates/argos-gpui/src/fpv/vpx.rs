@@ -83,7 +83,7 @@ pub struct VpxImage {
     pub fb_priv: *mut c_void,
 }
 
-#[link(name = "vpx")]
+// build.rs links libvpx: shared by default, static for release packages.
 unsafe extern "C" {
     fn vpx_codec_vp8_dx() -> *const VpxIface;
     fn vpx_codec_dec_init_ver(

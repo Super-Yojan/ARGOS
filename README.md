@@ -4,6 +4,17 @@ ARGOS (Adaptive Robotic Group Operator System) is the fleet operator system for 
 
 As of October 19, 2026, new dashboard work targets `crates/argos-gpui` and `crates/terra-map`. The React app and the SwiftUI apps have been removed. The Unity experiment remains under `spikes/` as historical prototype work. TerraPhone's native vehicle runtime is a separate application and remains in use. The window subscribes to Zenoh and draws each rover's position and heading. For a selected rover it can publish an autonomy level, a drag-to-goal waypoint, and held teleop. Terra still owns sensing, planning, and the motor limits.
 
+## Download
+
+Builds for macOS (Apple Silicon), Windows and Linux are on the [releases page](https://github.com/Super-Yojan/ARGOS/releases). The user guide is at [super-yojan.dev/ARGOS](https://super-yojan.dev/ARGOS/). A downloaded build reads `.env` from beside the app or from the per-user config folder (`~/Library/Application Support/ARGOS`, `%APPDATA%\ARGOS`, `~/.config/argos`).
+
+To publish a release, push a `v*` tag. `.github/workflows/release.yml` builds and zips all three platforms with `scripts/package.py` and opens a draft release; publish the draft by hand. The macOS app is signed and notarized only when the `APPLE_*` secrets are set, and ad-hoc signed otherwise.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## Start the dashboard
 
 Install stable Rust (edition 2024) and a C toolchain. Linux also needs the GPUI and Vulkan development packages (`libwayland`, `libxkbcommon`, `libxkbcommon-x11`, `libvulkan`, and X11/XCB headers). No API key or fleet password is stored in this repository.

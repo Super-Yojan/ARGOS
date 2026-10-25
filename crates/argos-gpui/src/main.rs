@@ -104,8 +104,7 @@ impl Dashboard {
         maps_notice: Option<String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terra-map/src/assets/robot.glb");
+        let model = argos_gpui::robot_model();
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
         let focus = cx.focus_handle();
         let poll = cx.spawn(async |this, cx| {

@@ -302,11 +302,21 @@ fn number(values: &BTreeMap<String, String>, key: &str) -> Result<Option<f64>, S
     }
     Ok(Some(value))
 }
+/// Lowest priority first: the installed app's folders, then the workspace
+/// root for `cargo run`, then the current directory.
 fn dotenv_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    let exe = std::env::current_exe().ok();
+    let mut paths: Vec<PathBuf> =
+        crate::install::install_env_dirs(exe.as_deref(), crate::install::user_config_dir())
+            .into_iter()
+            .map(|dir| dir.join(".env"))
+            .collect();
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(root) = manifest.parent().and_then(Path::parent) {
-        paths.push(root.join(".env"));
+        let path = root.join(".env");
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
     }
     if let Ok(cwd) = std::env::current_dir() {
         let path = cwd.join(".env");

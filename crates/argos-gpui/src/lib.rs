@@ -8,6 +8,9 @@
 mod fleet;
 pub use fleet::*;
 
+mod install;
+pub use install::{robot_model, user_config_dir};
+
 mod launch;
 pub use launch::{LAUNCH_HELP, LaunchMode};
 
