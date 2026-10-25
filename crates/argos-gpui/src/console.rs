@@ -90,6 +90,23 @@ pub fn callout(mark: &RoverMark, stopped: bool, driving: bool) -> Callout {
             Some(CalloutTag::Goal),
             format!("{}{remaining}", phase_label(&report.phase)),
         )
+    } else if let Some(report) = mark
+        .exploration
+        .as_ref()
+        .filter(|_| mark.requested_level.as_deref() == Some("explore"))
+    {
+        // An exploration hold or end cancels the follower goal; say why
+        // rather than reporting the rover as idle.
+        let state = if report.running() {
+            format!(
+                "{} · {:.0} min left",
+                report.state_label(),
+                (report.remaining_s / 60.).ceil()
+            )
+        } else {
+            report.state_label()
+        };
+        (report.running().then_some(CalloutTag::Goal), state)
     } else if mark.goal_active {
         (Some(CalloutTag::Goal), "Going to goal".into())
     } else {
