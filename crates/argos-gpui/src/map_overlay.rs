@@ -114,7 +114,11 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             ));
         },
     )
+    // Pin to the map's corner. Without an inset it lays out below the map
+    // view, and the occupancy content mask then clips every cell.
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 
