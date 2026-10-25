@@ -795,9 +795,16 @@ impl Client {
                     | "waypoint_direct"
                     | "supervised"
                     | "target_search"
+                    | "explore"
             )
         ) {
             return Err(invalid("unsupported autonomy level"));
+        } else if value["level"] == "explore"
+            && value["budget_seconds"]
+                .as_f64()
+                .is_none_or(|seconds| !argos_core::valid_explore_budget(seconds))
+        {
+            return Err(invalid("explore needs a budget"));
         }
         // Neutral may still be sent during telemetry loss; moving commands require fresh fleet and pose.
         let neutral = kind == "search/report/ack"

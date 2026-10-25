@@ -1,8 +1,8 @@
 //! Terra autonomy levels on `<prefix>/<id>/autonomy` and `autonomy/status`.
 //!
 //! The wire names match Terra's `Level` and the levels `operator_command` accepts.
-//! `explore` is a Terra level this station does not offer, because that command
-//! gate rejects it. `assigned_level` on the status is the recommendation field.
+//! `explore` needs a budget, so it is sent with [`crate::encode_explore_request`].
+//! `assigned_level` on the status is the recommendation field.
 //! There is no separate recommended topic.
 
 use crate::{Result, invalid, valid_token};
@@ -11,13 +11,14 @@ use serde_json::{Value, json};
 /// Levels the operator station can publish. Wire values are Terra's `Level`.
 ///
 /// L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct` (no avoidance),
-/// L3 `waypoint` (local planner). Supervised and target search stay on the
-/// same contract. `explore` is not offered.
+/// L3 `waypoint` (local planner), L4 `explore` (frontier exploration on a time
+/// budget). Supervised and target search stay on the same contract.
 pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("teleop", "L0 Manual"),
     ("assisted_teleop", "L1 Assisted"),
     ("waypoint_direct", "L2 Direct"),
     ("waypoint", "L3 Waypoint"),
+    ("explore", "L4 Explore"),
     ("supervised", "Supervised"),
     ("target_search", "Search"),
 ];
@@ -27,11 +28,15 @@ pub fn level_label(level: &str) -> &str {
         .iter()
         .find(|(wire, _)| *wire == level)
         .map(|(_, label)| *label)
-        .unwrap_or(if level == "explore" { "Explore" } else { level })
+        .unwrap_or(level)
 }
 
 /// `{"level","token"}` with no budget. Terra's `decode_level` accepts this.
+/// `explore` is refused here because it needs a budget.
 pub fn encode_level_request(level: &str, token: &str) -> Result<Vec<u8>> {
+    if level == "explore" {
+        return Err(invalid("explore needs a budget"));
+    }
     if !OPERATOR_LEVELS.iter().any(|(wire, _)| *wire == level) {
         return Err(invalid("unsupported autonomy level"));
     }

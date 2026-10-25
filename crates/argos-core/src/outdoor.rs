@@ -22,6 +22,7 @@
 //!   "gps_accuracy_m": 4.0,
 //!   "heading_age_s": 0.2,
 //!   "heading_accuracy_deg": 8.0,
+//!   "heading_deg": 72.5,
 //!   "arrival_radius_m": 5.0,
 //!   "destination": {"latitude": 38.83, "longitude": -77.31},
 //!   "remaining_m": 12.0,
@@ -85,6 +86,9 @@ pub struct OutdoorReport {
     pub gps_accuracy_m: Option<f64>,
     pub heading_age_s: Option<f64>,
     pub heading_accuracy_deg: Option<f64>,
+    /// Fused true heading, degrees clockwise from north, for the pose of the
+    /// same report. Terra omits it while it has no estimate.
+    pub heading_deg: Option<f64>,
     pub arrival_radius_m: f64,
     pub destination_latitude: Option<f64>,
     pub destination_longitude: Option<f64>,
@@ -197,6 +201,11 @@ impl OutdoorReport {
             gps_accuracy_m: finite_nonneg(value, "gps_accuracy_m"),
             heading_age_s: finite_nonneg(value, "heading_age_s"),
             heading_accuracy_deg: finite_nonneg(value, "heading_accuracy_deg"),
+            heading_deg: value
+                .get("heading_deg")
+                .and_then(Value::as_f64)
+                .filter(|degrees| degrees.is_finite())
+                .map(|degrees| degrees.rem_euclid(360.)),
             arrival_radius_m: finite_nonneg(value, "arrival_radius_m")
                 .unwrap_or(ARRIVAL_RADIUS_DEFAULT_M),
             destination_latitude,

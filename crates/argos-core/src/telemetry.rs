@@ -194,6 +194,32 @@ impl LocalFrame {
         }
         .geographic(north, west)
     }
+    /// Frame that places local `(x, y)` at a geographic fix and turns local
+    /// `yaw` (radians, counter-clockwise) to true bearing `heading_deg`
+    /// (clockwise from north). For drawing rover-frame data under a GPS marker;
+    /// it is only as good as that fix and heading.
+    pub fn pinned(
+        latitude: f64,
+        longitude: f64,
+        x: f64,
+        y: f64,
+        yaw: f64,
+        heading_deg: f64,
+    ) -> Result<Self> {
+        let frame = Self {
+            latitude,
+            longitude,
+            anchor_x: x,
+            anchor_y: y,
+            rotation: -heading_deg.to_radians() - yaw,
+        };
+        frame.validate()?;
+        Ok(frame)
+    }
+    /// Map heading, degrees clockwise from north, of local `yaw` in this frame.
+    pub fn heading_degrees(&self, yaw: f64) -> f64 {
+        (-(self.rotation + yaw).to_degrees()).rem_euclid(360.)
+    }
     /// Geographic alignment from a localization report.
     ///
     /// Returns a frame only for schema version 1 in `geographic` mode with an
