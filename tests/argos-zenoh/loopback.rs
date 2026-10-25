@@ -828,3 +828,109 @@ fn point_capture_requests_collects_and_saves_ply() {
     assert!(String::from_utf8_lossy(&bytes).contains("element vertex 4\n"));
     let _ = std::fs::remove_dir_all(directory);
 }
+
+#[test]
+fn live_points_stream_renews_draws_and_stops() {
+    use argos_core::point_capture::*;
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let endpoint = format!("tcp/127.0.0.1:{port}");
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let peer = zenoh::open(config).wait().unwrap();
+    let requests = peer
+        .declare_subscriber("live/8/pointcloud/request")
+        .wait()
+        .unwrap();
+    let client = Client::connect(&endpoint, "live").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    client.start_live_points(8).unwrap();
+    let next = || {
+        let sample = requests
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .expect("request not sent");
+        CaptureRequest::decode(&sample.payload().to_bytes()).unwrap()
+    };
+    let request = next();
+    assert!(request.live && !request.cancel);
+    assert_eq!(
+        (request.rate_hz, request.stride),
+        (argos_zenoh::LIVE_RATE_HZ, argos_zenoh::LIVE_STRIDE)
+    );
+    // The lease is renewed with the same request.
+    assert_eq!(next(), request);
+    let frame = CaptureFrame {
+        rover_id: 8,
+        request_id: request.request_id.clone(),
+        index: 0,
+        count: 0,
+        timestamp: 1.0,
+        width: 2,
+        height: 1,
+        camera_position: [0.0, 0.0, 0.5],
+        camera_orientation: [0.0, 0.0, 0.0, 1.0],
+        intrinsics: [1.0, 1.0, 0.5, 0.0],
+        classifier: CaptureClassifier::GroundPlane {
+            normal: [0.0, 0.0, 1.0],
+            offset: 0.0,
+        },
+        min_obstacle_height: 0.15,
+        max_obstacle_height: 2.0,
+        max_range: 15.0,
+        points: vec![
+            CapturePoint {
+                position: [1.0, 0.0, 0.3],
+                label: PointLabel::Obstacle,
+            },
+            CapturePoint {
+                position: [f32::NAN; 3],
+                label: PointLabel::NoReturn,
+            },
+        ],
+    };
+    peer.put("live/8/pointcloud/full", frame.encode().unwrap())
+        .wait()
+        .unwrap();
+    wait_for(|| client.live_points(8).is_some_and(|s| s.cloud.is_some()));
+    let status = client.live_points(8).unwrap();
+    let (cloud, _) = status.cloud.unwrap();
+    assert_eq!((status.frames, cloud.points.len()), (1, 1));
+    assert_eq!(cloud.ground_z, 0.0);
+
+    // Once the rover ends the stream, renewals stop rather than restarting it.
+    peer.put(
+        "live/8/pointcloud/capture",
+        serde_json::json!({"version":1,"rover_id":8,"request_id":request.request_id,
+            "state":"cancelled","frames_sent":1,"frames_total":0,"detail":"replaced"})
+        .to_string(),
+    )
+    .wait()
+    .unwrap();
+    wait_for(|| {
+        client
+            .live_points(8)
+            .is_some_and(|s| s.ended.as_deref() == Some("replaced"))
+    });
+    while requests.try_recv().unwrap().is_some() {}
+    assert!(
+        requests
+            .recv_timeout(Duration::from_millis(2600))
+            .unwrap()
+            .is_none()
+    );
+
+    client.stop_live_points(8).unwrap();
+    let cancel = next();
+    assert!(cancel.cancel);
+    assert_eq!(cancel.request_id, request.request_id);
+    assert!(client.live_points(8).is_none());
+    client.disconnect();
+    peer.close().wait().unwrap();
+}

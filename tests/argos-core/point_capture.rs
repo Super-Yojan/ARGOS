@@ -102,3 +102,26 @@ fn ply_lists_labelled_points() {
         1
     );
 }
+
+/// A live frame keeps only returns, and its ground level comes from the
+/// classifier's plane under the camera, or the low returns without one.
+#[test]
+fn live_cloud_keeps_returns_and_finds_ground() {
+    let mut decoded = CaptureFrame::decode(&frame(0, "live")).unwrap();
+    decoded.camera_position = [2.0, 0.0, 0.5];
+    decoded.classifier = CaptureClassifier::GroundPlane {
+        // z = 0.1·x - 0.1: tilted, 0.1 m up under the camera at x = 2.
+        normal: [-0.1, 0.0, 1.0],
+        offset: -0.1,
+    };
+    let cloud = LiveCloud::from_frame(&decoded);
+    assert_eq!(cloud.points.len(), 2);
+    assert_eq!(cloud.label_counts[PointLabel::NoReturn as usize], 1);
+    assert!((cloud.ground_z - 0.1).abs() < 1e-9);
+
+    decoded.classifier = CaptureClassifier::HorizonBand {
+        half_angle: 0.1,
+        max_range: 5.0,
+    };
+    assert_eq!(LiveCloud::from_frame(&decoded).ground_z, 0.0);
+}
