@@ -32,6 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (id, rover) in rovers {
                 let a = &rover["authority"];
                 if let Ok(id) = id.parse::<u64>() {
+                    // Grids are subscribed per rover; Terra sends a full one within 2 s.
+                    client.focus(Some(id))?;
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
                     let grid = client.occupancy_grid(id);
                     println!(
                         "{}",

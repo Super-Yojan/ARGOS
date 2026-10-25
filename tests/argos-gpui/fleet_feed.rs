@@ -32,6 +32,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
         .unwrap();
     let router = zenoh::open(config).wait().unwrap();
     let client = Client::connect(&endpoint, "terra/rover").unwrap();
+    client.focus(Some(3)).unwrap();
     let origin = LocalFrame::origin(0., 0.).unwrap();
     wait_for(|| {
         router
@@ -231,6 +232,8 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
     )
     .unwrap();
     let feed = FleetFeed::start(dashboard);
+    // The window selects the rover; only then is its grid subscribed.
+    feed.focus(Some(3));
     wait_for(|| {
         let picture = feed.picture();
         picture.link == "healthy"

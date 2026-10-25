@@ -293,6 +293,14 @@ pub extern "C" fn argos_bridge_poll(buf: *mut c_char, cap: usize) -> i32 {
         return -1;
     };
     let snapshot = client.snapshot();
+    // The spike draws every rover's grid, so it focuses the whole fleet.
+    let _ = client.focus(
+        snapshot
+            .rovers
+            .iter()
+            .filter(|rover| rover.membership != "absent")
+            .map(|rover| rover.id),
+    );
     let operator = serde_json::from_str::<serde_json::Value>(&client.operator_snapshot())
         .unwrap_or_else(|_| serde_json::json!({}));
     let json = fleet_json(&snapshot, &operator, unix_now());

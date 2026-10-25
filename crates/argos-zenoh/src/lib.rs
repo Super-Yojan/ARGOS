@@ -1,6 +1,10 @@
 //! Zenoh fleet client, telemetry subscriptions, and operator commands.
 //!
 //! [`Client::connect`] installs subscribers and starts the held-input worker.
+//! Every rover's pose and small status topics are subscribed on connect. The
+//! heavy ones (occupancy grid, point cloud, depth frames) are subscribed only
+//! for the rovers passed to [`Client::focus`], so an idle dashboard does not
+//! pull every rover's maps over the link.
 //! The client keeps bounded latest-state caches and checks freshness and authority
 //! before issuing commands. `router` manages the local router; `session_log`
 //! writes session evidence off the command path. [`Client::disconnect`] retires
@@ -17,6 +21,48 @@ use zenoh::Wait;
 type SharedMaps = Arc<Mutex<std::collections::BTreeMap<u64, (OccupancyGrid, f64, Option<String>)>>>;
 type SharedTelemetry =
     Arc<Mutex<std::collections::BTreeMap<(u64, String), (serde_json::Value, Instant)>>>;
+type Handler = Arc<dyn Fn(zenoh::sample::Sample) + Send + Sync>;
+/// Authority and run state, kept for every rover.
+const AUTHORITY_TOPICS: [&str; 4] = [
+    "autonomy/status",
+    "goal/proposal",
+    "mission/status",
+    "experiment/status",
+];
+/// Small operator telemetry, kept for every rover.
+const STATE_TOPICS: [&str; 6] = [
+    "hardware/status",
+    "autonomy/status",
+    "pose/quality",
+    "navigation/outdoor",
+    "search/report",
+    "search/status",
+];
+/// Visualization topics routed through the state handler, focused rover only.
+/// `map/occupancy` and `camera/depth` have their own handlers.
+const DETAIL_TOPICS: [&str; 3] = [
+    "map/occupancy/heartbeat",
+    "pointcloud",
+    "pointcloud/heartbeat",
+];
+/// Handlers for the focused rover's heavy topics, declared on demand.
+struct DetailHandlers {
+    occupancy: Handler,
+    depth: Handler,
+    state: Handler,
+}
+fn listen(
+    session: &zenoh::Session,
+    key: String,
+    handler: &Handler,
+) -> Result<zenoh::pubsub::Subscriber<()>> {
+    let handler = handler.clone();
+    session
+        .declare_subscriber(key)
+        .callback(move |sample| handler(sample))
+        .wait()
+        .map_err(|e| Error(e.to_string()))
+}
 /// Held keys belong to one rover and the authority generation that admitted them.
 #[derive(Default)]
 struct InputState {
@@ -33,6 +79,9 @@ struct InputState {
 pub struct Client {
     session: Arc<Mutex<Option<zenoh::Session>>>,
     subscribers: Mutex<Vec<zenoh::pubsub::Subscriber<()>>>,
+    /// Focused rovers and their heavy-topic subscribers.
+    detail: Mutex<std::collections::BTreeMap<u64, Vec<zenoh::pubsub::Subscriber<()>>>>,
+    detail_handlers: DetailHandlers,
     cache: Arc<Mutex<FleetCache>>,
     maps: SharedMaps,
     localizations: Arc<Mutex<std::collections::BTreeMap<u64, (serde_json::Value, Instant)>>>,
@@ -138,31 +187,27 @@ impl Client {
         let fleet_cache = cache.clone();
         let subscribed_topics = topics.clone();
         let depth_tracking = tracking.clone();
-        let depth = session
-            .declare_subscriber(topics.depth())
-            .callback(move |sample| {
-                let Some(id) =
-                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/camera/depth")
-                else {
-                    return;
-                };
-                let payload = sample.payload().to_bytes();
-                let flag = serde_json::from_slice::<serde_json::Value>(&payload)
-                    .ok()
-                    .as_ref()
-                    .and_then(pose_tracking_flag);
-                let mut cache = fleet_cache.lock().unwrap();
-                match decode_pose(&payload) {
-                    Ok(Some(p)) => {
-                        depth_tracking.lock().unwrap().insert(id, flag);
-                        cache.pose(id, p, start.elapsed().as_secs_f64());
-                    }
-                    Ok(None) => {}
-                    Err(e) => cache.notice(e.to_string()),
+        let depth: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
+            let Some(id) =
+                subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/camera/depth")
+            else {
+                return;
+            };
+            let payload = sample.payload().to_bytes();
+            let flag = serde_json::from_slice::<serde_json::Value>(&payload)
+                .ok()
+                .as_ref()
+                .and_then(pose_tracking_flag);
+            let mut cache = fleet_cache.lock().unwrap();
+            match decode_pose(&payload) {
+                Ok(Some(p)) => {
+                    depth_tracking.lock().unwrap().insert(id, flag);
+                    cache.pose(id, p, start.elapsed().as_secs_f64());
                 }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+                Ok(None) => {}
+                Err(e) => cache.notice(e.to_string()),
+            }
+        });
         let direct_cache = cache.clone();
         let direct_topics = topics.clone();
         let pose_tracking = tracking.clone();
@@ -197,39 +242,34 @@ impl Client {
         >::new()));
         let grids = maps.clone();
         let map_topics = topics.clone();
-        let occupancy = session
-            .declare_subscriber(format!("{}/*/map/occupancy", topics.prefix))
-            .callback(move |sample| {
-                let Some(id) =
-                    map_topics.rover_from_key(sample.key_expr().as_str(), "/map/occupancy")
-                else {
-                    return;
-                };
-                let Ok(grid) = decode_occupancy(&sample.payload().to_bytes()) else {
-                    return;
-                };
-                if grid.rover_id != id {
-                    return;
-                }
-                let frames = map_frames.lock().unwrap();
-                let frame_id = frames
-                    .get(&id)
-                    .and_then(|(v, _)| v["frameID"].as_str())
-                    .map(String::from);
-                let mut maps = grids.lock().unwrap();
-                if maps.get(&id).is_some_and(|(old, _, _)| {
-                    old.run_id == grid.run_id && old.sequence >= grid.sequence
-                }) {
-                    return;
-                }
-                // Keep memory bounded even if an endpoint publishes unlisted IDs.
-                if !maps.contains_key(&id) && maps.len() >= 256 {
-                    return;
-                }
-                maps.insert(id, (grid, start.elapsed().as_secs_f64(), frame_id));
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+        let occupancy: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
+            let Some(id) = map_topics.rover_from_key(sample.key_expr().as_str(), "/map/occupancy")
+            else {
+                return;
+            };
+            let Ok(grid) = decode_occupancy(&sample.payload().to_bytes()) else {
+                return;
+            };
+            if grid.rover_id != id {
+                return;
+            }
+            let frames = map_frames.lock().unwrap();
+            let frame_id = frames
+                .get(&id)
+                .and_then(|(v, _)| v["frameID"].as_str())
+                .map(String::from);
+            let mut maps = grids.lock().unwrap();
+            if maps.get(&id).is_some_and(|(old, _, _)| {
+                old.run_id == grid.run_id && old.sequence >= grid.sequence
+            }) {
+                return;
+            }
+            // Keep memory bounded even if an endpoint publishes unlisted IDs.
+            if !maps.contains_key(&id) && maps.len() >= 256 {
+                return;
+            }
+            maps.insert(id, (grid, start.elapsed().as_secs_f64(), frame_id));
+        });
         let operator = Arc::new(Mutex::new(OperatorCache::default()));
         let held = Arc::new(Mutex::new(InputState::default()));
         let restart_input = held.clone();
@@ -253,62 +293,53 @@ impl Client {
         let subscribed_topics = topics.clone();
         let fleet_cache = cache.clone();
         let callback_session_id = session_id.clone();
-        let authority = session
-            .declare_subscriber(format!("{}/*/**", topics.prefix))
-            .callback(move |sample| {
-                for kind in [
-                    "autonomy/status",
-                    "goal/proposal",
-                    "mission/status",
-                    "experiment/status",
-                ] {
-                    let Some(id) = subscribed_topics
-                        .rover_from_key(sample.key_expr().as_str(), &format!("/{kind}"))
-                    else {
-                        continue;
-                    };
-                    if !fleet_cache
-                        .lock()
-                        .unwrap()
-                        .snapshot(start.elapsed().as_secs_f64())
-                        .rovers
-                        .iter()
-                        .any(|r| r.id == id && r.membership != "absent")
-                    {
-                        return;
-                    }
-                    let bytes = sample.payload().to_bytes();
-                    let now = start.elapsed().as_secs_f64();
-                    let (ok, changed) = {
-                        let mut state = authority_cache.lock().unwrap();
-                        let previous = state.run_id(id);
-                        let ok = state.apply(id, kind, &bytes, now).is_ok();
-                        (ok, previous != state.run_id(id))
-                    };
-                    if changed {
-                        let mut input = restart_input.lock().unwrap();
-                        if input.rover_id == Some(id) {
-                            input.rover_id = None;
-                            input.keys.clear();
-                            input.authority_generation = None;
-                        }
-                    }
-                    if ok {
-                        let _ = log.record(serde_json::json!({
-                            "kind": "state_observed",
-                            "topic": kind,
-                            "rover_id": id,
-                            "time": now,
-                            "utc": utc(),
-                            "session_id": callback_session_id,
-                            "payload": serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-                        }));
-                    }
+        let authority: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
+            for kind in AUTHORITY_TOPICS {
+                let Some(id) = subscribed_topics
+                    .rover_from_key(sample.key_expr().as_str(), &format!("/{kind}"))
+                else {
+                    continue;
+                };
+                if !fleet_cache
+                    .lock()
+                    .unwrap()
+                    .snapshot(start.elapsed().as_secs_f64())
+                    .rovers
+                    .iter()
+                    .any(|r| r.id == id && r.membership != "absent")
+                {
                     return;
                 }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+                let bytes = sample.payload().to_bytes();
+                let now = start.elapsed().as_secs_f64();
+                let (ok, changed) = {
+                    let mut state = authority_cache.lock().unwrap();
+                    let previous = state.run_id(id);
+                    let ok = state.apply(id, kind, &bytes, now).is_ok();
+                    (ok, previous != state.run_id(id))
+                };
+                if changed {
+                    let mut input = restart_input.lock().unwrap();
+                    if input.rover_id == Some(id) {
+                        input.rover_id = None;
+                        input.keys.clear();
+                        input.authority_generation = None;
+                    }
+                }
+                if ok {
+                    let _ = log.record(serde_json::json!({
+                        "kind": "state_observed",
+                        "topic": kind,
+                        "rover_id": id,
+                        "time": now,
+                        "utc": utc(),
+                        "session_id": callback_session_id,
+                        "payload": serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+                    }));
+                }
+                return;
+            }
+        });
         let l = localizations.clone();
         let frame_grids = maps.clone();
         let subscribed_topics = topics.clone();
@@ -351,128 +382,139 @@ impl Client {
         let subscribed_topics = topics.clone();
         let search_log = recorder.clone();
         let search_session = session_id.clone();
-        let operator_feed = session
-            .declare_subscriber(format!("{}/*/**", topics.prefix))
-            .callback(move |sample| {
-                let key = sample.key_expr().as_str();
-                let suffix = if key.ends_with("/map/occupancy/heartbeat") {
-                    "/map/occupancy/heartbeat"
-                } else if key.ends_with("/pointcloud/heartbeat") {
-                    "/pointcloud/heartbeat"
-                } else if key.ends_with("/hardware/status") {
-                    "/hardware/status"
-                } else if key.ends_with("/pointcloud") {
-                    "/pointcloud"
-                } else if key.ends_with("/autonomy/status") {
-                    "/autonomy/status"
-                } else if key.ends_with("/pose/quality") {
-                    "/pose/quality"
-                } else if key.ends_with("/navigation/outdoor") {
-                    "/navigation/outdoor"
-                } else if key.ends_with("/search/report") {
-                    "/search/report"
-                } else if key.ends_with("/search/status") {
-                    "/search/status"
-                } else {
-                    return;
-                };
-                let Some(id) = subscribed_topics.rover_from_key(key, suffix) else {
-                    return;
-                };
-                let bytes = sample.payload().to_bytes();
-                if suffix == "/map/occupancy/heartbeat" {
-                    if let Some(heartbeat) = content_heartbeat::occupancy_identity(&bytes, id)
-                        && let Some(cached) = heartbeat_maps.lock().unwrap().get_mut(&id)
-                    {
-                        content_heartbeat::refresh_grid(
-                            cached,
-                            &heartbeat,
-                            start.elapsed().as_secs_f64(),
-                        );
-                    }
-                    return;
-                }
-                if suffix == "/pointcloud/heartbeat" {
-                    if let Some(heartbeat) = content_heartbeat::cloud_identity(&bytes, id)
-                        && let Some(cached) = telemetry_cache
-                            .lock()
-                            .unwrap()
-                            .get_mut(&(id, "cloud".into()))
-                    {
-                        content_heartbeat::refresh_cloud(cached, &heartbeat, Instant::now());
-                    }
-                    return;
-                }
-                if bytes.len() > 262144 {
-                    return;
-                }
-                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                    return;
-                };
-                if !value.is_object() {
-                    return;
-                }
-                if matches!(
-                    suffix,
-                    "/search/status" | "/search/report" | "/hardware/status"
-                ) {
-                    let _ = search_log.record(serde_json::json!({
-                        "kind": "state_observed",
-                        "topic": suffix.trim_start_matches('/'),
-                        "rover_id": id,
-                        "time": start.elapsed().as_secs_f64(),
-                        "utc": utc(),
-                        "session_id": search_session,
-                        "payload": value,
-                    }));
-                }
-                let kind = if suffix == "/search/report" {
-                    let Some(search) = value["search_id"].as_str() else {
-                        return;
-                    };
-                    if !valid_token(search) {
-                        return;
-                    }
-                    // Each search retains one report; batches replay on the canonical topic.
-                    let kind = format!("search_report:{search}");
-                    let mut entries = telemetry_cache.lock().unwrap();
-                    entries.retain(|_, (_, at)| at.elapsed().as_secs_f64() < 2.5);
-                    if entries.len() < 4096 || entries.contains_key(&(id, kind.clone())) {
-                        entries.insert((id, kind), (value, Instant::now()));
-                    }
-                    return;
-                } else if suffix == "/search/status" {
-                    "search"
-                } else if suffix == "/hardware/status" {
-                    "hardware"
-                } else if suffix == "/pointcloud" {
-                    "cloud"
-                } else if suffix == "/map/occupancy" {
-                    "occupancy"
-                } else if suffix == "/pose/quality" {
-                    "pose_quality"
-                } else if suffix == "/navigation/outdoor" {
-                    "outdoor"
-                } else {
-                    "authority"
-                };
-                let mut entries = telemetry_cache.lock().unwrap();
-                entries.retain(|_, (_, at): &mut (serde_json::Value, Instant)| {
-                    at.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
-                });
-                if kind == "cloud"
-                    && entries
-                        .get(&(id, kind.into()))
-                        .is_some_and(|(old, _)| !content_heartbeat::accepts_cloud(old, &value))
+        let operator_feed: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
+            let key = sample.key_expr().as_str();
+            let suffix = if key.ends_with("/map/occupancy/heartbeat") {
+                "/map/occupancy/heartbeat"
+            } else if key.ends_with("/pointcloud/heartbeat") {
+                "/pointcloud/heartbeat"
+            } else if key.ends_with("/hardware/status") {
+                "/hardware/status"
+            } else if key.ends_with("/pointcloud") {
+                "/pointcloud"
+            } else if key.ends_with("/autonomy/status") {
+                "/autonomy/status"
+            } else if key.ends_with("/pose/quality") {
+                "/pose/quality"
+            } else if key.ends_with("/navigation/outdoor") {
+                "/navigation/outdoor"
+            } else if key.ends_with("/search/report") {
+                "/search/report"
+            } else if key.ends_with("/search/status") {
+                "/search/status"
+            } else {
+                return;
+            };
+            let Some(id) = subscribed_topics.rover_from_key(key, suffix) else {
+                return;
+            };
+            let bytes = sample.payload().to_bytes();
+            if suffix == "/map/occupancy/heartbeat" {
+                if let Some(heartbeat) = content_heartbeat::occupancy_identity(&bytes, id)
+                    && let Some(cached) = heartbeat_maps.lock().unwrap().get_mut(&id)
                 {
+                    content_heartbeat::refresh_grid(
+                        cached,
+                        &heartbeat,
+                        start.elapsed().as_secs_f64(),
+                    );
+                }
+                return;
+            }
+            if suffix == "/pointcloud/heartbeat" {
+                if let Some(heartbeat) = content_heartbeat::cloud_identity(&bytes, id)
+                    && let Some(cached) = telemetry_cache
+                        .lock()
+                        .unwrap()
+                        .get_mut(&(id, "cloud".into()))
+                {
+                    content_heartbeat::refresh_cloud(cached, &heartbeat, Instant::now());
+                }
+                return;
+            }
+            if bytes.len() > 262144 {
+                return;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                return;
+            };
+            if !value.is_object() {
+                return;
+            }
+            if matches!(
+                suffix,
+                "/search/status" | "/search/report" | "/hardware/status"
+            ) {
+                let _ = search_log.record(serde_json::json!({
+                    "kind": "state_observed",
+                    "topic": suffix.trim_start_matches('/'),
+                    "rover_id": id,
+                    "time": start.elapsed().as_secs_f64(),
+                    "utc": utc(),
+                    "session_id": search_session,
+                    "payload": value,
+                }));
+            }
+            let kind = if suffix == "/search/report" {
+                let Some(search) = value["search_id"].as_str() else {
+                    return;
+                };
+                if !valid_token(search) {
                     return;
                 }
-                if entries.len() < 4096 || entries.contains_key(&(id, kind.into())) {
-                    entries.insert((id, kind.into()), (value, Instant::now()));
+                // Each search retains one report; batches replay on the canonical topic.
+                let kind = format!("search_report:{search}");
+                let mut entries = telemetry_cache.lock().unwrap();
+                entries.retain(|_, (_, at)| at.elapsed().as_secs_f64() < 2.5);
+                if entries.len() < 4096 || entries.contains_key(&(id, kind.clone())) {
+                    entries.insert((id, kind), (value, Instant::now()));
                 }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+                return;
+            } else if suffix == "/search/status" {
+                "search"
+            } else if suffix == "/hardware/status" {
+                "hardware"
+            } else if suffix == "/pointcloud" {
+                "cloud"
+            } else if suffix == "/map/occupancy" {
+                "occupancy"
+            } else if suffix == "/pose/quality" {
+                "pose_quality"
+            } else if suffix == "/navigation/outdoor" {
+                "outdoor"
+            } else {
+                "authority"
+            };
+            let mut entries = telemetry_cache.lock().unwrap();
+            entries.retain(|_, (_, at): &mut (serde_json::Value, Instant)| {
+                at.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
+            });
+            if kind == "cloud"
+                && entries
+                    .get(&(id, kind.into()))
+                    .is_some_and(|(old, _)| !content_heartbeat::accepts_cloud(old, &value))
+            {
+                return;
+            }
+            if entries.len() < 4096 || entries.contains_key(&(id, kind.into())) {
+                entries.insert((id, kind.into()), (value, Instant::now()));
+            }
+        });
+        let mut subscribers = vec![fleet, status, direct_pose, localization];
+        for topic in AUTHORITY_TOPICS {
+            subscribers.push(listen(
+                &session,
+                format!("{}/*/{topic}", topics.prefix),
+                &authority,
+            )?);
+        }
+        for topic in STATE_TOPICS {
+            subscribers.push(listen(
+                &session,
+                format!("{}/*/{topic}", topics.prefix),
+                &operator_feed,
+            )?);
+        }
         let session = Arc::new(Mutex::new(Some(session)));
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let teleop_sequence = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -584,16 +626,13 @@ impl Client {
         };
         Ok(Self {
             session,
-            subscribers: Mutex::new(vec![
-                fleet,
-                status,
-                depth,
-                authority,
-                direct_pose,
+            subscribers: Mutex::new(subscribers),
+            detail: Mutex::new(std::collections::BTreeMap::new()),
+            detail_handlers: DetailHandlers {
                 occupancy,
-                localization,
-                operator_feed,
-            ]),
+                depth,
+                state: operator_feed,
+            },
             cache,
             maps,
             localizations,
@@ -612,6 +651,59 @@ impl Client {
             teleop_sequence,
             tracking,
         })
+    }
+    /// Subscribe to these rovers' occupancy grids, point clouds, and depth
+    /// frames, and drop every other rover's. An empty set leaves the whole
+    /// fleet on pose and status only; the dashboard passes its selection. A
+    /// dropped rover's grid and cloud are cleared so a stale map is not drawn.
+    /// Rovers already focused keep their subscriptions. Terra sends a full
+    /// grid at least every two seconds, so a new focus fills quickly.
+    pub fn focus(&self, ids: impl IntoIterator<Item = u64>) -> Result<()> {
+        let wanted: std::collections::BTreeSet<u64> = ids.into_iter().collect();
+        let mut detail = self.detail.lock().unwrap();
+        let dropped: Vec<u64> = detail
+            .keys()
+            .filter(|id| !wanted.contains(id))
+            .copied()
+            .collect();
+        for id in dropped {
+            detail.remove(&id);
+            self.maps.lock().unwrap().remove(&id);
+            self.operator_states
+                .lock()
+                .unwrap()
+                .remove(&(id, "cloud".to_string()));
+        }
+        let added: Vec<u64> = wanted
+            .into_iter()
+            .filter(|id| !detail.contains_key(id))
+            .collect();
+        if added.is_empty() {
+            return Ok(());
+        }
+        let session = self.session.lock().unwrap();
+        let session = session.as_ref().ok_or_else(|| invalid("disconnected"))?;
+        let handlers = &self.detail_handlers;
+        for id in added {
+            let base = format!("{}/{id}", self.topics.prefix);
+            let mut subscribers = vec![
+                listen(
+                    session,
+                    format!("{base}/map/occupancy"),
+                    &handlers.occupancy,
+                )?,
+                listen(session, format!("{base}/camera/depth"), &handlers.depth)?,
+            ];
+            for topic in DETAIL_TOPICS {
+                subscribers.push(listen(session, format!("{base}/{topic}"), &handlers.state)?);
+            }
+            detail.insert(id, subscribers);
+        }
+        Ok(())
+    }
+    /// The rovers whose heavy topics are subscribed.
+    pub fn focused(&self) -> Vec<u64> {
+        self.detail.lock().unwrap().keys().copied().collect()
     }
     pub fn operator_state_snapshot(&self) -> String {
         let mut result = self.legacy_operator_snapshot_value();
@@ -1385,6 +1477,7 @@ impl Client {
             let _ = w.join();
         }
         self.subscribers.lock().unwrap().clear();
+        self.detail.lock().unwrap().clear();
         let _ = self.recorder.close();
         if let Some(session) = self.session.lock().unwrap().take() {
             let _ = session.close().wait();
