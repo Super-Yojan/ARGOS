@@ -1,0 +1,185 @@
+name: Release
+
+# A v* tag builds every platform and opens a draft GitHub Release with the
+# zips attached; publish the draft by hand. Run it manually, or change the
+# packaging in a pull request, to build the packages as workflow artifacts
+# without making a release.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml", "scripts/package.py", "crates/argos-gpui/build.rs"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: argos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-14
+            binary: target/release/argos-gpui
+          - platform: windows-x64
+            os: windows-latest
+            binary: target/release/argos-gpui.exe
+          - platform: linux-x64
+            # The oldest supported runner, for the widest glibc reach.
+            os: ubuntu-22.04
+            binary: target/release/argos-gpui
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shared Terra source
+        run: bash .github/scripts/checkout-observability.sh
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # libvpx is linked statically (ARGOS_VPX_STATIC) so the download does
+      # not depend on the soname the build machine happened to have.
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev libvulkan-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libasound2-dev \
+            libfontconfig-dev libvpx-dev nasm
+          echo "ARGOS_VPX_STATIC=/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
+
+      - name: System packages (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libvpx nasm
+          echo "ARGOS_VPX_STATIC=$(brew --prefix libvpx)/lib" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+
+      - name: System packages (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          vcpkg install libvpx:x64-windows-static-md
+          echo "ARGOS_VPX_STATIC=$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/lib" >> "$GITHUB_ENV"
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: cargo build --release --locked -p argos-gpui --bin argos-gpui
+
+      - name: Package
+        id: package
+        run: >
+          ${{ runner.os == 'Windows' && 'python' || 'python3' }} scripts/package.py --binary "${{ matrix.binary }}"
+          --platform "${{ matrix.platform }}" --version "${{ steps.version.outputs.version }}"
+          --out dist
+
+      # Signing and notarization run only when the Apple secrets are set;
+      # without them the app ships unsigned and Gatekeeper asks once.
+      - name: Sign and notarize
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          stage="${{ steps.package.outputs.stage }}"
+          app="$stage/ARGOS.app"
+          archive="dist/${{ steps.package.outputs.name }}.zip"
+          # Nothing from Homebrew may be loaded at runtime.
+          if otool -L "$app/Contents/MacOS/argos" | grep -E '/opt/homebrew|/usr/local'; then
+            echo "::error::The app links a Homebrew library."
+            exit 1
+          fi
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            echo "::warning::No Apple signing secrets; the macOS app is unsigned."
+            # Apple Silicon refuses to run an unsigned binary; ad-hoc sign it.
+            codesign --force --sign - "$app"
+            ditto -c -k --keepParent "$stage" "$archive"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          read -ra keychains <<< "$(security list-keychains -d user | tr -d '"')"
+          security list-keychains -d user -s "$keychain" "${keychains[@]}"
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple "$app"
+          ditto -c -k --keepParent "$stage" "$archive"
+
+      - name: Check the Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if ldd "${{ matrix.binary }}" | grep -E 'libvpx|not found'; then
+            echo "::error::The binary needs a library the download does not carry."
+            exit 1
+          fi
+          "${{ matrix.binary }}" --help
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/${{ steps.package.outputs.name }}.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*.zip
+          --repo "$GITHUB_REPOSITORY" --draft --generate-notes
+          --title "ARGOS ${GITHUB_REF_NAME#v}"

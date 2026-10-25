@@ -41,10 +41,13 @@ GPU tests stay ignored unless you pass `--ignored` on a machine with a GPU. Tran
 
 ## Documentation site
 
+The user guide is an Astro site in `docs/src/pages`, styled like the Zorvane docs:
+
 ```sh
-python3 -m pip install -r requirements-docs.txt
-mkdocs serve
-mkdocs build --strict
+cd docs
+npm ci
+npm run dev
+npm run build
 ```
 
-The site is published at [super-yojan.dev/ARGOS](https://super-yojan.dev/ARGOS/).
+It is published at [super-yojan.dev/ARGOS](https://super-yojan.dev/ARGOS/). The other Markdown files under `docs/` are design and evidence records; they are read on GitHub and are not part of the site.

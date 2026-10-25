@@ -1,0 +1,137 @@
+---
+import { Code } from "astro:components";
+import codeTheme from "../styles/shiki-pitch.json";
+import ProjectPage from "../layouts/ProjectPage.astro";
+import { href, pages } from "../consts";
+
+const releases = "https://github.com/Super-Yojan/ARGOS/releases";
+const zorvane = "https://super-yojan.dev/Zorvane/";
+---
+
+<ProjectPage
+    title="ARGOS"
+    description="The operator dashboard for Terra rovers and the Zorvane simulator. Download it, point it at a simulator or the real fleet, and drive."
+    lede="One map for every rover. Practise against the simulator, then drive the real fleet from the same window."
+    figureLabel="Fig. 01 — ARGOS concept"
+    figureAlt="Concept art for ARGOS: rovers on a 3D terrain map, one selected with its status card open."
+    poster={href("/media/argos-concept.jpg")}
+    posterWidth={1280}
+    posterHeight={853}
+    figureNote="Concept"
+    primary={{ href: "#quick-start", label: "Get Started" }}
+    secondary={{ href: releases, label: "Download" }}
+    aboutTitle="The operator's window on the fleet."
+    sectionId="quick-start"
+    sectionTitle="Quick start."
+    sectionLede="Download the dashboard, start the simulator, and drive. The guides below cover each step in full."
+    links={pages.map((page) => ({ href: href(page.path), label: page.label }))}
+>
+    <Fragment slot="prose">
+        <p>
+            ARGOS (Adaptive Robotic Group Operator System) is a native desktop
+            dashboard. It draws every rover on a 3D map, built from Google
+            Photorealistic 3D Tiles, with its occupancy grid, its planned path
+            and its goal.
+        </p>
+        <p>
+            Select a rover to see its state, take control, and drive it with
+            the keyboard. You can also send it to a goal, choose an
+            autonomy level from teleop to frontier exploration, or watch its
+            front camera.
+        </p>
+        <p>
+            ARGOS talks Zenoh, the same topics a real Terra rover and the
+            Zorvane simulator both speak. The rover keeps the final say. Terra
+            owns sensing, planning, motor limits and watchdogs, and ARGOS only
+            asks.
+        </p>
+    </Fragment>
+    <Fragment slot="facts">
+        <div>
+            <dt class="t-label">Platforms</dt>
+            <dd>macOS (Apple Silicon), Windows x64, Linux x64</dd>
+        </div>
+        <div>
+            <dt class="t-label">Simulation</dt>
+            <dd><code>tcp/127.0.0.1:7447</code>, prefix <code>terra/rover</code></dd>
+        </div>
+        <div>
+            <dt class="t-label">Real fleet</dt>
+            <dd>Hosted TLS router, prefix <code>terra/phone</code></dd>
+        </div>
+        <div>
+            <dt class="t-label">Autonomy</dt>
+            <dd>L0 teleop to L4 explore</dd>
+        </div>
+        <div>
+            <dt class="t-label">Video</dt>
+            <dd>WebRTC, H.264 or VP8, receive only</dd>
+        </div>
+        <div>
+            <dt class="t-label">Built with</dt>
+            <dd>Rust, GPUI and wgpu</dd>
+        </div>
+    </Fragment>
+    <Fragment slot="steps">
+        <li>
+            <p class="t-label">01</p>
+            <div class="prose">
+                <h3>Download and open</h3>
+                <p>
+                    Get the zip for macOS, Windows or Linux from the
+                    <a href={releases}>releases page</a>, unzip it, and open
+                    <code>ARGOS.app</code>, <code>argos.exe</code> or
+                    <code>argos</code>.
+                </p>
+                <p>
+                    <a href={href("/running")}>Download and run</a> has the
+                    first-launch prompts and the build from source.
+                </p>
+            </div>
+        </li>
+        <li>
+            <p class="t-label">02</p>
+            <div class="prose">
+                <h3>Start the simulator</h3>
+                <p>
+                    Download <a href={zorvane}>Zorvane</a> and start a match.
+                    Then press <strong>Sim</strong> in the ARGOS console bar,
+                    or open it in simulation mode:
+                </p>
+                <Code code="./argos --sim" lang="bash" theme={codeTheme} wrap={false} />
+                <p>
+                    The window title reads <strong>ARGOS · Simulation</strong>.
+                    <a href={href("/modes")}>Simulation or real</a> covers both
+                    connections.
+                </p>
+            </div>
+        </li>
+        <li>
+            <p class="t-label">03</p>
+            <div class="prose">
+                <h3>Take control and drive</h3>
+                <p>
+                    Press <strong>Take control</strong>, click a rover, then
+                    <strong>Take over</strong> and <strong>Drive</strong>, and
+                    hold W A S D. Space stops it. On L2 or L3, click the map to
+                    send it a goal.
+                </p>
+                <p>
+                    <a href={href("/operating")}>Operate a rover</a> walks
+                    through each control and autonomy level.
+                </p>
+            </div>
+        </li>
+        <li>
+            <p class="t-label">04</p>
+            <div class="prose">
+                <h3>Go real</h3>
+                <p>
+                    Put the fleet password in a <code>.env</code> file beside
+                    the app and press <strong>Real</strong>. The same controls
+                    now drive the real rovers.
+                </p>
+            </div>
+        </li>
+    </Fragment>
+</ProjectPage>

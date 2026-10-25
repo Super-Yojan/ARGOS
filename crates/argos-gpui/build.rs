@@ -1,5 +1,18 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // Release packages set ARGOS_VPX_STATIC to the folder holding libvpx.a
+    // (vpx.lib on Windows), so the download does not need a libvpx with the
+    // same soname as the build machine.
+    println!("cargo:rerun-if-env-changed=ARGOS_VPX_STATIC");
+    if let Some(dir) = std::env::var_os("ARGOS_VPX_STATIC").filter(|dir| !dir.is_empty()) {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            std::path::Path::new(&dir).display()
+        );
+        println!("cargo:rustc-link-lib=static=vpx");
+    } else {
+        println!("cargo:rustc-link-lib=vpx");
+    }
     // rust-lld does not search GCC's private directory, where the unversioned
     // libstdc++ symlink lives. OpenH264 needs that library.
     if let Some(dir) = stdcxx_dir() {
