@@ -3,12 +3,11 @@
 //! The camera starts at `ARGOS_MAP_START_LAT` / `ARGOS_MAP_START_LON` until rover
 //! positions arrive, then recenters on the fleet. `MAPS_DEMO=1` still draws the
 //! offline fixture. Clicking a rover selects it and takes local control.
-//! Control-dragging its body or marker previews a goal; release sends it.
-//! Esc, or dropping the ghost back on the rover, sends nothing. An acknowledged
-//! outdoor GPS rover uses the same gesture on the map: the ghost shows the
-//! arrival radius and GPS distance, and release publishes the WGS84 point.
-//! That release is the explicit operator action. The outdoor GPS spec's
-//! separate confirm step is not used.
+//! With a rover selected, clicking the map proposes a destination there and
+//! opens a small popup at the click; Send goal publishes it. Esc, Cancel, or a
+//! point on the rover sends nothing. An acknowledged outdoor GPS rover uses the
+//! same click: the ghost shows the arrival radius and GPS distance, and Send
+//! goal publishes the WGS84 point as the explicit operator action.
 
 mod interaction;
 mod local_map;
@@ -21,8 +20,8 @@ use map_overlay::map_paint;
 
 use argos_core::{
     APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, EXPLORE_BUDGETS_MIN,
-    GoalDrag, OPERATOR_LEVELS, PlanarPoint, drag_disabled_reason, drive_block, explore_refusal,
-    level_label, phase_label,
+    GoalDrag, HEADING_MAX_AGE_S, HEADING_MAX_UNCERTAINTY_DEG, OPERATOR_LEVELS, OutdoorReport,
+    PlanarPoint, drag_disabled_reason, drive_block, explore_refusal, level_label, phase_label,
 };
 use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
@@ -52,7 +51,6 @@ const ROVER_AXIS_SCALE: [f64; 3] = [0.889 / 2.45, 0.889 / 2.5, 0.889 / 2.5];
 struct ActiveDrag {
     goal: GoalDrag,
     from_map: bool,
-    grab_offset: Option<Point<Pixels>>,
 }
 
 struct Dashboard {
@@ -70,6 +68,9 @@ struct Dashboard {
     selected: Option<u64>,
     map_mode: MapMode,
     drag: Option<ActiveDrag>,
+    /// Where the left button went down on the map, to tell a click from an
+    /// orbit or pan.
+    press: Option<Point<Pixels>>,
     grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// The map area and the inspector, measured at prepaint for rover card
     /// placement.
@@ -153,6 +154,7 @@ impl Dashboard {
             selected: None,
             map_mode: MapMode::default(),
             drag: None,
+            press: None,
             grid_frame: Arc::new(Mutex::new(None)),
             field_frame: Arc::new(Mutex::new(None)),
             inspector_frame: Arc::new(Mutex::new(None)),
@@ -334,7 +336,6 @@ impl Dashboard {
         self.drag = Some(ActiveDrag {
             goal,
             from_map: geographic,
-            grab_offset: None,
         });
         self.preview_done = true;
         self.close_preview = true;
@@ -436,6 +437,22 @@ impl Dashboard {
                 let _ = self.map.clear_illumination(object);
             }
         }
+    }
+    /// Field position of a proposed destination, so its popup follows the
+    /// point when the camera moves.
+    fn proposal_at(&self, active: &ActiveDrag, cx: &App) -> Option<Point<Pixels>> {
+        let goal = &active.goal;
+        let (latitude, longitude) = match goal.space {
+            DragSpace::Geographic => (goal.cursor.x, goal.cursor.y),
+            DragSpace::Local => self
+                .marks
+                .iter()
+                .find(|mark| mark.id == goal.id)?
+                .map_frame?
+                .geographic(goal.cursor.x, goal.cursor.y)
+                .ok()?,
+        };
+        self.view.read(cx).project_local(latitude, longitude)
     }
     fn selected_mark(&self) -> Option<&RoverMark> {
         self.selected
@@ -584,7 +601,14 @@ impl Dashboard {
                 } else {
                     self.held.remove(key);
                 }
-                self.note.clear();
+                // Clearing the note would show the last background command
+                // instead, such as an old "Cancel sent", while driving.
+                self.note = if self.held.is_empty() {
+                    format!("Driving rover {id} · hold W/A/S/D")
+                } else {
+                    let keys: Vec<_> = self.held.iter().map(|key| key.to_uppercase()).collect();
+                    format!("Driving rover {id} · {}", keys.join(" "))
+                };
             }
             Err(error) => {
                 self.held.remove(key);
@@ -657,6 +681,10 @@ impl Render for Dashboard {
             })
             .collect();
         let overlay = map_paint(self);
+        let confirm = self.drag.as_ref().and_then(|active| {
+            let at = self.proposal_at(active, cx)?;
+            Some(goal_popup(&active.goal, at, cx).into_any_element())
+        });
         let field: Vec<(u64, Option<Point<Pixels>>, console::Callout)> = {
             let map = self.view.read(cx);
             self.marks
@@ -748,30 +776,6 @@ impl Render for Dashboard {
                     cx.stop_propagation();
                 }
             }))
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                if this.drag.is_some() {
-                    this.move_drag(event.position, cx);
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if this.drag.is_some() {
-                        this.release_drag();
-                        cx.notify();
-                    }
-                }),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if this.drag.is_some() {
-                        this.release_drag();
-                        cx.notify();
-                    }
-                }),
-            )
             .size_full()
             .flex()
             .flex_col()
@@ -785,6 +789,32 @@ impl Render for Dashboard {
                     .flex_1()
                     .min_h_0()
                     .w_full()
+                    // Bubbles up from the map; cards, tabs, the inspector,
+                    // and the popup stop it first.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, _| {
+                            this.press = Some(event.position);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                            let Some(press) = this.press.take() else {
+                                return;
+                            };
+                            let moved = f32::from(event.position.x - press.x)
+                                .hypot(f32::from(event.position.y - press.y));
+                            if moved <= CLICK_SLOP_PX {
+                                this.click_map(event.position, cx);
+                                cx.notify();
+                            }
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.press = None),
+                    )
                     .child(self.view.clone())
                     .child(overlay)
                     .children(model_handles.into_iter().map(|(id, bounds)| {
@@ -798,9 +828,9 @@ impl Render for Dashboard {
                             .cursor_pointer()
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     this.focus.focus(window, cx);
-                                    this.pick_model(id, event, cx);
+                                    this.select(id);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -831,14 +861,9 @@ impl Render for Dashboard {
                             )
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     this.focus.focus(window, cx);
-                                    if anchor == DragAnchor::Rover {
-                                        this.pick_model(id, event, cx);
-                                    } else {
-                                        this.select(id);
-                                        this.begin_drag(id, anchor, true);
-                                    }
+                                    this.select(id);
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -877,6 +902,7 @@ impl Render for Dashboard {
                         )
                     })
                     .child(offscreen_tabs(&field, &unlocated, selected, cx))
+                    .children(confirm)
                     .children(inspector),
             )
     }
@@ -1015,6 +1041,10 @@ fn console_bar(
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.claim.held(this.now) {
                                 this.claim.release();
+                                // Releasing control also closes the rover panel.
+                                this.stop_drive();
+                                this.drag = None;
+                                this.selected = None;
                                 this.note = "Control released".into();
                             } else {
                                 this.claim.take(this.now);
@@ -1056,6 +1086,98 @@ fn callout_tag(tag: CalloutTag) -> Tag {
     }
     .small()
     .child(tag.label())
+}
+
+/// Heading uncertainty and age as the rover reports them, against the limits
+/// outdoor goals need.
+fn heading_line(report: &OutdoorReport) -> String {
+    let uncertainty = report.heading_accuracy_deg.map_or_else(
+        || "uncertainty not reported".into(),
+        |degrees| format!("±{degrees:.0}°"),
+    );
+    let age = report.heading_age_s.map_or_else(
+        || "age not reported".into(),
+        |age| format!("{age:.1} s old"),
+    );
+    format!(
+        "{uncertainty} · {age} · limit ±{HEADING_MAX_UNCERTAINTY_DEG:.0}°, {HEADING_MAX_AGE_S:.0} s"
+    )
+}
+
+/// How far the pointer may move between press and release and still count
+/// as a click rather than a camera orbit or pan.
+const CLICK_SLOP_PX: f32 = 4.;
+
+/// The proposed destination's popup, anchored just above the clicked point.
+fn goal_popup(goal: &GoalDrag, at: Point<Pixels>, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let distance = match goal.arrival_radius_m {
+        Some(radius) => format!(
+            "{:.1} m GPS · arrival radius {radius:.0} m",
+            goal.distance_m()
+        ),
+        None => format!("{:.1} m from rover {}", goal.distance_m(), goal.id),
+    };
+    div()
+        .absolute()
+        .left(at.x)
+        .top(at.y)
+        .size_0()
+        .child(
+            v_flex()
+                .id("goal-confirm")
+                .absolute()
+                .bottom_3()
+                .left(px(-96.))
+                .w(px(192.))
+                .p_2()
+                .gap_2()
+                .popover_style(cx)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    v_flex()
+                        .child(div().text_sm().child("Send goal here?"))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(distance),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new("goal-cancel")
+                                .ghost()
+                                .small()
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cancel_drag();
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("goal-send")
+                                .primary()
+                                .small()
+                                .label("Send goal")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.release_drag();
+                                    cx.notify();
+                                })),
+                        ),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(-4.))
+                .top(px(-4.))
+                .size_2()
+                .rounded_full()
+                .bg(cx.theme().success),
+        )
 }
 
 /// Widest a rover card draws, so placement can keep it clear of the
@@ -1491,6 +1613,7 @@ fn overview_tab(
         navigation.push(("Position", position_label(mark)));
     }
     if let Some(report) = mark.outdoor.as_ref() {
+        navigation.push(("Heading", heading_line(report)));
         navigation.push(("Phase", phase_label(&report.phase)));
         if let Some(metres) = report.remaining_m {
             navigation.push(("Remaining", format!("{metres:.0} m")));
@@ -1567,8 +1690,15 @@ fn overview_tab(
                     section.child(caution(APP_UPDATE_REQUIRED, cx))
                 })
                 .when_some(
-                    mark.outdoor.as_ref().and_then(|report| report.hold_label()),
-                    |section, label| section.child(caution(label.to_owned(), cx)),
+                    mark.outdoor.as_ref().and_then(|report| {
+                        let label = report.hold_label()?;
+                        Some(if label == "Heading uncertain" {
+                            format!("{label} · {}", heading_line(report))
+                        } else {
+                            label.to_owned()
+                        })
+                    }),
+                    |section, label| section.child(caution(label, cx)),
                 )
                 .child(rows(navigation))
                 .when(
@@ -1594,7 +1724,7 @@ fn overview_tab(
         .child(goal_section(dashboard, mark, facts, cx))
         .when(driving, |tab| tab.child(drive_section(dashboard, mark, facts.limits, cx)))
         .child(hint(
-            "Control-drag a 3D rover to place its destination; release to send. The ground marker stays at its live position. Outdoor GPS sends WGS84. Esc cancels. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
+            "Click the map to place a destination, then Send goal in the popup. The rover stays at its live position. Outdoor GPS sends WGS84. Esc or Cancel sends nothing. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
             cx,
         ))
 }
