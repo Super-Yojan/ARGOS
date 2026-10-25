@@ -1,7 +1,8 @@
 //! Geographic occupancy, route, and destination overlays on the 3D map.
 use super::Dashboard;
 use super::local_map::{cell_color, stroke};
-use argos_core::{CellClass, DragSpace, Travel, geodesic_metres};
+use argos_core::point_capture::{LiveCloud, PointLabel, label_color};
+use argos_core::{CellClass, DragSpace, LocalFrame, Travel, geodesic_metres};
 use argos_gpui::{RoverMark, occupancy_runs};
 use gpui_kit::{prelude::*, *};
 use terra_map::MapView;
@@ -11,6 +12,15 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
     let drag = dashboard.drag.as_ref().map(|active| active.goal.clone());
     let marks = dashboard.marks.clone();
     let show_occupancy = dashboard.show_occupancy;
+    let live: Vec<_> = marks
+        .iter()
+        .filter_map(|mark| {
+            let status = dashboard.feed.live_points(mark.id)?;
+            let frame = mark.overlay_frame?;
+            let (cloud, _) = status.cloud.filter(|_| status.ended.is_none())?;
+            Some(((mark.latitude, mark.longitude), frame, cloud))
+        })
+        .collect();
     canvas(
         |bounds, _, _| bounds,
         move |_bounds, _, window, cx| {
@@ -20,6 +30,11 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                     paint_occupancy(window, map, &marks);
                 });
             }
+            window.with_content_mask(Some(gpui::ContentMask { bounds: _bounds }), |window| {
+                for (anchor, frame, cloud) in &live {
+                    paint_live_cloud(window, map, *anchor, frame, cloud);
+                }
+            });
             for mark in &marks {
                 let Some(origin) = mark.overlay_frame else {
                     continue;
@@ -176,6 +191,50 @@ fn paint_occupancy(window: &mut Window, map: &MapView, marks: &[RoverMark]) {
                 window.paint_path(path, color);
             }
         }
+    }
+}
+
+/// A rover's newest live frame as dots coloured by the mapper's label,
+/// placed through its overlay frame and raised by height above the ground
+/// under the camera, so obstacles stand up in the 3D view.
+fn paint_live_cloud(
+    window: &mut Window,
+    map: &MapView,
+    anchor: (f64, f64),
+    frame: &LocalFrame,
+    cloud: &LiveCloud,
+) {
+    let ground = cloud.ground_z;
+    let placed = map.project_above(
+        anchor,
+        cloud.points.iter().map(|(p, _)| {
+            let (latitude, longitude) = frame
+                .geographic(f64::from(p[0]), f64::from(p[1]))
+                .unwrap_or((f64::NAN, f64::NAN));
+            (latitude, longitude, f64::from(p[2]) - ground)
+        }),
+    );
+    for (at, (_, label)) in placed.into_iter().zip(&cloud.points) {
+        let Some(at) = at else {
+            continue;
+        };
+        let [r, g, b] = label_color(*label);
+        let mut color = rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b));
+        color.a = match label {
+            PointLabel::OutOfRange | PointLabel::OutsideBand => 0.35,
+            _ => 0.9,
+        };
+        window.paint_quad(quad(
+            Bounds {
+                origin: point(at.x - px(1.5), at.y - px(1.5)),
+                size: size(px(3.), px(3.)),
+            },
+            Corners::default(),
+            color,
+            Edges::default(),
+            transparent_black(),
+            BorderStyle::default(),
+        ));
     }
 }
 

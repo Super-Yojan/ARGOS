@@ -5,6 +5,7 @@
 //! selected rover's occupancy grid, point cloud, and depth are subscribed; the
 //! rest of the fleet sends pose and status only.
 
+use argos_core::point_capture::PointLabel;
 use argos_core::{
     APP_UPDATE_REQUIRED, CellClass, CommandOrigin, DegradeLimits, ExplorationReport, GoalRequest,
     GoalState, HardwareObservation, LocalFrame, LocalMap, NavigationEdit, OccupancyGrid,
@@ -1448,6 +1449,8 @@ impl FleetFeed {
             let message = (|| {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
+                // The rover runs one capture at a time; a recording replaces live.
+                let _ = client.stop_live_points(id);
                 client
                     .start_point_capture(id, capture_dir())
                     .map_err(|error| error.to_string())?;
@@ -1455,6 +1458,37 @@ impl FleetFeed {
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
+    }
+    /// Turn rover `id`'s live labelled point stream on or off.
+    pub fn set_live_points(&self, id: u64, on: bool) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                if on {
+                    client
+                        .start_live_points(id)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(format!(
+                        "Live 3D from rover {id} · {} Hz, every {}th pixel",
+                        argos_zenoh::LIVE_RATE_HZ,
+                        argos_zenoh::LIVE_STRIDE
+                    ))
+                } else {
+                    client
+                        .stop_live_points(id)
+                        .map_err(|error| error.to_string())?;
+                    Ok(format!("Live 3D from rover {id} stopped"))
+                }
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Rover `id`'s live point stream, while one is wanted.
+    pub fn live_points(&self, id: u64) -> Option<argos_zenoh::LiveStatus> {
+        self.connected().ok()?.live_points(id)
     }
     /// The rover's latest point capture; also finishes and saves a complete one.
     pub fn point_capture(&self, id: u64) -> Option<argos_zenoh::CaptureStatus> {
@@ -1478,6 +1512,37 @@ pub fn capture_dir() -> PathBuf {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| PathBuf::from(home).join("Documents").join("ARGOS Captures"))
         .unwrap_or_else(std::env::temp_dir)
+}
+/// Inspector line for a live stream: frame age and rate, or why it ended.
+pub fn live_line(status: &argos_zenoh::LiveStatus) -> String {
+    if let Some(reason) = &status.ended {
+        return match reason.as_str() {
+            "replaced" => "Live 3D ended: another capture replaced it".into(),
+            "lease_expired" => "Live 3D ended: the rover stopped hearing ARGOS".into(),
+            other => format!("Live 3D ended: {}", other.replace('_', " ")),
+        };
+    }
+    match &status.cloud {
+        None if status.elapsed > 4. => {
+            "Live 3D · no frames yet; the rover needs scene depth and a running map".into()
+        }
+        None => "Live 3D · waiting for the first frame…".into(),
+        Some((cloud, at)) => {
+            let age = at.elapsed().as_secs_f64();
+            let total: usize = cloud.label_counts.iter().sum();
+            let returns = total - cloud.label_counts[PointLabel::NoReturn as usize];
+            let shown = |label: PointLabel| cloud.label_counts[label as usize];
+            format!(
+                "Live 3D · {} frames · last {age:.1} s ago · {returns} returns: free {} · obstacle {} · overhead {} · out of range {} · outside band {}",
+                status.frames,
+                shown(PointLabel::Free),
+                shown(PointLabel::Obstacle),
+                shown(PointLabel::Overhead),
+                shown(PointLabel::OutOfRange),
+                shown(PointLabel::OutsideBand),
+            )
+        }
+    }
 }
 /// Inspector lines for a capture: progress or the saved file, then the label counts.
 pub fn capture_lines(status: &argos_zenoh::CaptureStatus) -> (String, Option<String>) {

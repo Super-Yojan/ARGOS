@@ -175,6 +175,33 @@ impl Camera {
             (1. - ndc_y) * 0.5 * f64::from(height),
         ))
     }
+    /// Pixels of many `(latitude, longitude, altitude)` points with one view,
+    /// `None` for points behind the camera or outside the viewport.
+    pub fn project_points(
+        &self,
+        width: u32,
+        height: u32,
+        points: impl IntoIterator<Item = (f64, f64, f64)>,
+    ) -> Vec<Option<(f64, f64)>> {
+        if width == 0 || height == 0 {
+            return Vec::new();
+        }
+        let view = self.view(width, height);
+        let (w, h) = (f64::from(width), f64::from(height));
+        points
+            .into_iter()
+            .map(|(latitude, longitude, altitude)| {
+                let world = ecef(latitude, longitude, altitude);
+                let clip = view.view_projection * (world - view.origin).extend(1.);
+                if clip.w <= 1e-6 || !clip.x.is_finite() || !clip.y.is_finite() {
+                    return None;
+                }
+                let x = (clip.x / clip.w + 1.) * 0.5 * w;
+                let y = (1. - clip.y / clip.w) * 0.5 * h;
+                (x >= 0. && x <= w && y >= 0. && y <= h).then_some((x, y))
+            })
+            .collect()
+    }
     /// Screen bounds of a transformed model box, clipped to the viewport.
     pub fn project_box(
         &self,

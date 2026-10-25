@@ -100,6 +100,71 @@ impl CaptureCollector {
     }
 }
 
+/// Most points a live cloud keeps for drawing; denser frames are thinned evenly.
+pub const MAX_LIVE_POINTS: usize = 12_000;
+
+/// One live frame reduced for drawing: the points with a return, and the
+/// ground height under the camera so they can stand on the map surface.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveCloud {
+    pub rover_id: u64,
+    pub request_id: String,
+    /// Wrapping frame index from the rover.
+    pub index: u16,
+    /// Depth exposure time, rover monotonic seconds.
+    pub timestamp: f64,
+    /// Camera optical origin, world metres.
+    pub camera: [f64; 3],
+    /// World z of the ground under the camera: the classifier's plane there,
+    /// or a low percentile of the returns before a plane is found. Heights
+    /// are drawn relative to this one level, so a tilted plane stays visible.
+    pub ground_z: f64,
+    /// World position and label of each drawn point.
+    pub points: Vec<([f32; 3], PointLabel)>,
+    /// Points per label in the whole frame, in [`PointLabel`] wire order.
+    pub label_counts: [usize; 6],
+}
+impl LiveCloud {
+    pub fn from_frame(frame: &CaptureFrame) -> Self {
+        let mut label_counts = [0; 6];
+        for point in &frame.points {
+            label_counts[point.label as usize] += 1;
+        }
+        let returns: Vec<_> = frame
+            .points
+            .iter()
+            .filter(|p| p.label != PointLabel::NoReturn && p.position.iter().all(|v| v.is_finite()))
+            .map(|p| (p.position, p.label))
+            .collect();
+        let step = returns.len().div_ceil(MAX_LIVE_POINTS).max(1);
+        let points: Vec<_> = returns.into_iter().step_by(step).collect();
+        let [x, y, _] = frame.camera_position;
+        let plane = match frame.classifier {
+            CaptureClassifier::GroundPlane { normal, offset } if normal[2].abs() > 0.1 => {
+                Some((offset - normal[0] * x - normal[1] * y) / normal[2])
+            }
+            _ => None,
+        };
+        let ground_z = plane.filter(|z| z.is_finite()).unwrap_or_else(|| {
+            let mut heights: Vec<f32> = points.iter().map(|(p, _)| p[2]).collect();
+            heights.sort_by(f32::total_cmp);
+            heights
+                .get(heights.len() / 20)
+                .map_or(frame.camera_position[2], |z| f64::from(*z))
+        });
+        Self {
+            rover_id: frame.rover_id,
+            request_id: frame.request_id.clone(),
+            index: frame.index,
+            timestamp: frame.timestamp,
+            camera: frame.camera_position,
+            ground_z,
+            points,
+            label_counts,
+        }
+    }
+}
+
 /// Write every point with a return as binary little-endian PLY: `x y z`
 /// (float, world metres), `red green blue` from [`label_color`], `label`
 /// (the wire byte) and `frame` (index within the capture). Points without a

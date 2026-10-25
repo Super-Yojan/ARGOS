@@ -306,6 +306,35 @@ impl MapView {
             frame.origin.y + px(y as f32),
         ))
     }
+    /// Window positions of points given as `(latitude, longitude, metres)`,
+    /// the metres measured above the map surface at `anchor`. One surface
+    /// lookup and one view serve every point, for dense clouds near a rover.
+    pub fn project_above(
+        &self,
+        anchor: (f64, f64),
+        points: impl IntoIterator<Item = (f64, f64, f64)>,
+    ) -> Vec<Option<Point<Pixels>>> {
+        let Some(frame) = self.frame else {
+            return Vec::new();
+        };
+        let surface = self
+            .controller
+            .surface_altitude(anchor.0, anchor.1)
+            .unwrap_or(self.camera.altitude);
+        self.camera
+            .project_points(
+                f32::from(frame.size.width).max(1.) as u32,
+                f32::from(frame.size.height).max(1.) as u32,
+                points
+                    .into_iter()
+                    .map(|(latitude, longitude, up)| (latitude, longitude, surface + up)),
+            )
+            .into_iter()
+            .map(|at| {
+                at.map(|(x, y)| point(frame.origin.x + px(x as f32), frame.origin.y + px(y as f32)))
+            })
+            .collect()
+    }
     /// Window position without viewport rejection, for clipped polygon painting.
     pub fn project_unclipped(&self, latitude: f64, longitude: f64) -> Option<Point<Pixels>> {
         let frame = self.frame?;

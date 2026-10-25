@@ -13,7 +13,7 @@
 mod content_heartbeat;
 pub mod observability;
 mod point_capture;
-pub use point_capture::CaptureStatus;
+pub use point_capture::{CaptureStatus, LIVE_RATE_HZ, LIVE_STRIDE, LiveStatus};
 pub mod router;
 mod session_log;
 use argos_core::*;
@@ -103,6 +103,8 @@ pub struct Client {
     tracking: SharedTracking,
     /// Latest point capture per rover; subscribed only while one runs.
     captures: point_capture::Captures,
+    /// Live point stream per rover; subscribed only while one is wanted.
+    lives: point_capture::Lives,
 }
 type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
 impl Client {
@@ -655,6 +657,7 @@ impl Client {
             teleop_sequence,
             tracking,
             captures: Default::default(),
+            lives: Default::default(),
         })
     }
     /// Subscribe to these rovers' occupancy grids, point clouds, and depth
@@ -1484,6 +1487,7 @@ impl Client {
         self.subscribers.lock().unwrap().clear();
         self.detail.lock().unwrap().clear();
         self.captures.lock().unwrap().clear();
+        self.lives.lock().unwrap().clear();
         let _ = self.recorder.close();
         if let Some(session) = self.session.lock().unwrap().take() {
             let _ = session.close().wait();

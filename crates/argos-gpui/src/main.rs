@@ -1805,9 +1805,33 @@ fn capture_section(
     let status = dashboard.feed.point_capture(id);
     let running = status.as_ref().is_some_and(|s| !s.finished);
     let lines = status.as_ref().map(argos_gpui::capture_lines);
+    let live = dashboard.feed.live_points(id);
+    let live_on = live.as_ref().is_some_and(|l| l.ended.is_none());
     section("3D capture", cx)
         .child(
-            h_flex().gap_2().child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new(("live-3d", id))
+                        .outline()
+                        .small()
+                        .selected(live_on)
+                        .label("Live 3D")
+                        .tooltip(
+                            "Streams the rover's depth labelled by its map rules and draws it on the map under the rover. Turn off to stop the stream",
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.selected == Some(id) {
+                                let on = this
+                                    .feed
+                                    .live_points(id)
+                                    .is_some_and(|l| l.ended.is_none());
+                                this.feed.set_live_points(id, !on);
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
                 Button::new(("capture-3d", id))
                     .outline()
                     .small()
@@ -1824,6 +1848,9 @@ fn capture_section(
                     })),
             ),
         )
+        .when_some(live.as_ref().map(argos_gpui::live_line), |section, line| {
+            section.child(div().text_sm().child(line))
+        })
         .map(|section| match lines {
             Some((progress, counts)) => section
                 .child(div().text_sm().child(progress))
