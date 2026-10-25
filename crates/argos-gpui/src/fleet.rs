@@ -373,6 +373,10 @@ pub struct RoverMark {
     pub longitude: f64,
     /// Geographic transform only when alignment is actually supplied (or no phone report exists).
     pub map_frame: Option<LocalFrame>,
+    /// Frame for drawing the rover's local map and route under its marker.
+    /// The localization frame when there is one; otherwise pinned to the GPS
+    /// fix and Terra's fused heading. Never used to place goals.
+    pub overlay_frame: Option<LocalFrame>,
     pub heading: f64,
     pub local_x: f64,
     pub local_y: f64,
@@ -668,13 +672,26 @@ pub fn fleet_marks(
             let hardware = HardwareObservation::from_status(hardware_value);
             let authority = &operator[&key]["authority"];
             let grid = occupancy(rover.id);
+            let overlay_frame = map_frame.or_else(|| {
+                // Without a heading, keep yaw as the marker draws it so the
+                // grid still lines up with the rover model.
+                let heading = outdoor
+                    .as_ref()
+                    .and_then(|report| report.heading_deg)
+                    .unwrap_or_else(|| map_heading_degrees(pose.yaw));
+                LocalFrame::pinned(latitude, longitude, pose.x, pose.y, pose.yaw, heading).ok()
+            });
 
             Some(RoverMark {
                 id: rover.id,
                 latitude,
                 longitude,
                 map_frame,
-                heading: map_heading_degrees(pose.yaw),
+                overlay_frame,
+                heading: overlay_frame.map_or_else(
+                    || map_heading_degrees(pose.yaw),
+                    |frame| frame.heading_degrees(pose.yaw),
+                ),
                 local_x: pose.x,
                 local_y: pose.y,
                 yaw: pose.yaw,
@@ -816,6 +833,7 @@ fn retain_geographic_markers(
         mark.raw_gps = Some(gps);
         mark.pose_available = false;
         mark.map_frame = None;
+        mark.overlay_frame = None;
         mark.status = "pose unavailable".into();
         mark.grid = None;
         mark.goal = None;
