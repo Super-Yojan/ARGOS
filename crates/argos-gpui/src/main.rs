@@ -1691,7 +1691,7 @@ fn overview_tab(
                 })
                 .when_some(
                     mark.outdoor.as_ref().and_then(|report| {
-                        let label = report.hold_label()?;
+                        let label = report.operator_hold_label()?;
                         Some(if label == "Heading uncertain" {
                             format!("{label} · {}", heading_line(report))
                         } else {

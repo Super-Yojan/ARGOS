@@ -134,6 +134,22 @@ fn outdoor_holds_and_missions_read_as_the_vehicle_reports_them() {
 }
 
 #[test]
+fn local_source_ignores_outdoor_gps_readiness() {
+    let mut rover = mark(4);
+    let mut report = outdoor("idle", Some("gps_stale"), None);
+    report.acknowledged = false;
+    report.source = "local".into();
+    rover.outdoor = Some(report.clone());
+    let local = callout(&rover, false, false);
+    assert_eq!(local.tag, None);
+    assert!(trace(&rover, false).contains(&("Attention", "Clear".into())));
+    report.acknowledged = true;
+    report.source = "outdoor_gps".into();
+    rover.outdoor = Some(report);
+    assert_eq!(callout(&rover, false, false).state, "GPS stale");
+}
+
+#[test]
 fn trace_separates_requested_from_effective_autonomy() {
     let mut rover = mark(5);
     rover.requested_level = Some("teleop".into());

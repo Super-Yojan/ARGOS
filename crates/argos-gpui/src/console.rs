@@ -410,7 +410,11 @@ fn attention(mark: &RoverMark) -> Option<String> {
     if mark.status == "pose stale" && mark.requested_level.as_deref() != Some("teleop") {
         return Some("Pose stale".into());
     }
-    if let Some(label) = mark.outdoor.as_ref().and_then(|report| report.hold_label()) {
+    if let Some(label) = mark
+        .outdoor
+        .as_ref()
+        .and_then(|report| report.operator_hold_label())
+    {
         return Some(label.into());
     }
     if mark.hold.as_deref() == Some(HEADING_HOLD) {
