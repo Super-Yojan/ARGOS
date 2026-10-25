@@ -22,15 +22,13 @@ pub const DRIVE_SPEEDS: [f64; 5] = [0.1, 0.2, 0.3, 0.4, 0.5];
 pub enum InspectorTab {
     #[default]
     Overview,
-    LocalMap,
     Video,
 }
 impl InspectorTab {
-    pub const ALL: [Self; 3] = [Self::Overview, Self::LocalMap, Self::Video];
+    pub const ALL: [Self; 2] = [Self::Overview, Self::Video];
     pub fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
-            Self::LocalMap => "Local map",
             Self::Video => "Video",
         }
     }

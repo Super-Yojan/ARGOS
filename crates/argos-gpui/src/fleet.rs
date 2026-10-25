@@ -374,9 +374,10 @@ pub struct RoverMark {
     pub longitude: f64,
     /// Geographic transform only when alignment is actually supplied (or no phone report exists).
     pub map_frame: Option<LocalFrame>,
-    /// Frame for drawing the rover's local map and route under its marker.
+    /// Frame for the rover's local map, route, and local goals on the main map.
     /// The localization frame when there is one; otherwise pinned to the GPS
-    /// fix and Terra's fused heading. Never used to place goals.
+    /// fix and Terra's fused heading. Map clicks convert through it, so a
+    /// local goal lands on the grid cell that was clicked.
     pub overlay_frame: Option<LocalFrame>,
     pub heading: f64,
     pub local_x: f64,
@@ -714,7 +715,17 @@ pub fn fleet_marks(
                     .as_ref()
                     .map(|report| report.route.clone())
                     .unwrap_or_default(),
-                goal: goal_mark(rover, localizations, origin),
+                goal: goal_mark(rover, localizations, origin).map(|mut goal| {
+                    // A local goal follows the grid it was picked on.
+                    if goal.latitude.is_none()
+                        && let Some(Ok((latitude, longitude))) =
+                            overlay_frame.map(|frame| frame.geographic(goal.x, goal.y))
+                    {
+                        goal.latitude = Some(latitude);
+                        goal.longitude = Some(longitude);
+                    }
+                    goal
+                }),
                 degraded: quality.as_ref().is_some_and(|quality| quality.degraded),
                 degrade_reason: quality
                     .as_ref()

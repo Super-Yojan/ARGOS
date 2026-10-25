@@ -42,10 +42,10 @@ impl Dashboard {
             return;
         }
         let geographic = from_map && mark.outdoor_gps;
-        if from_map && !geographic && mark.map_frame.is_none() {
-            self.note =
-                "GPS position only · use the local grid for local waypoints, or select Outdoor GPS"
-                    .into();
+        // A GPS-placed rover still takes local goals through the frame its
+        // grid is drawn in, so a click on that grid lands on the same cell.
+        if from_map && !geographic && mark.overlay_frame.is_none() {
+            self.note = "No local position yet · select Outdoor GPS to send a GPS goal".into();
             return;
         }
         if let Some(reason) = drive_block(&mark.hardware) {
@@ -148,7 +148,7 @@ impl Dashboard {
                 y: longitude,
             }
         } else {
-            let Some(frame) = self.selected_mark().and_then(|mark| mark.map_frame) else {
+            let Some(frame) = self.selected_mark().and_then(|mark| mark.overlay_frame) else {
                 return false;
             };
             let Ok((x, y)) = frame.local(latitude, longitude) else {
