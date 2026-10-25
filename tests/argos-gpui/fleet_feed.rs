@@ -432,3 +432,60 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     pump.join().unwrap();
 }
+
+#[test]
+fn shutdown_disconnects_so_a_replacement_feed_can_take_over() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{}", socket.local_addr().unwrap().port());
+    drop(socket);
+    let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"router\"").unwrap();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let router = zenoh::open(config).wait().unwrap();
+    let dashboard = DashboardConfig::parse(
+        Some(&endpoint),
+        Some("terra/rover"),
+        Some(""),
+        Some(""),
+        (Some("0"), Some("0")),
+        (None, None),
+    )
+    .unwrap();
+    let healthy = |feed: &FleetFeed| {
+        router
+            .put(
+                "terra/rover/fleet/state",
+                br#"{"count":1,"max_count":1,"ids":[3]}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        router
+            .put(
+                "terra/rover/3/pose",
+                br#"{"x":0,"y":0,"yaw":0,"sequence":1,"tracked":true}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        feed.picture().link == "healthy"
+    };
+    let old = FleetFeed::start(dashboard.clone());
+    wait_for(|| healthy(&old));
+    old.shutdown();
+    assert_eq!(old.safety_reset(3), Err("Not connected".to_string()));
+    let replacement = FleetFeed::start(dashboard);
+    wait_for(|| healthy(&replacement));
+    // Terra refuses the reset without authority, but the replacement has a session.
+    assert_ne!(
+        replacement.safety_reset(3),
+        Err("Not connected".to_string())
+    );
+    // The old feed stays disconnected after its thread has had time to exit.
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(old.safety_reset(3), Err("Not connected".to_string()));
+    replacement.shutdown();
+}

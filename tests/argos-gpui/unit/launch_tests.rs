@@ -34,3 +34,9 @@ fn sim_clears_hosted_auth_but_preserves_maps_and_real_preserves_settings() {
     assert_eq!(settings["ARGOS_ZENOH_PREFIX"], "terra/rover");
     assert_eq!(settings["GOOGLE_MAPS_API_KEY"], "test-map-key");
 }
+#[test]
+fn each_mode_names_its_window() {
+    assert_eq!(LaunchMode::Sim.title(), "ARGOS · Simulation");
+    assert_eq!(LaunchMode::Real.title(), "ARGOS · Real fleet");
+    assert_ne!(LaunchMode::Sim.label(), LaunchMode::Real.label());
+}

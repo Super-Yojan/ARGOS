@@ -91,6 +91,15 @@ when no argument is given. The window title identifies the selected mode.
 Neither mode automatically starts Zorvane or combines local and remote fleets.
 `--help` lists the options. The existing local launcher is a shortcut for sim mode.
 
+The flag only picks the starting mode. **Sim | Real** in the console bar, next to
+the ARGOS name, switches a running window between the two. Switching zeroes any
+held drive input, releases this window's control, closes the selected rover and
+its video, disconnects from the current bus, and connects with the same settings
+the flag would use. The window title follows. Rovers keep their level, goal, and
+arming; switching only changes which bus this window talks to. If the real fleet
+settings are invalid (for example a half-set user/password), the window stays on
+its current mode and shows the reason.
+
 For a separate local simulation session, start `scripts/run-argos-local.sh` in
 an adjacent Zorvane checkout, then run `scripts/run-zorvane.sh` here. This leaves
 the hosted `.env` settings intact and connects only this dashboard process to

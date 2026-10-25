@@ -41,6 +41,21 @@ impl LaunchMode {
         Ok(Some(mode.unwrap_or_default()))
     }
 
+    /// Window title, so the operator can tell which fleet this window drives.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Sim => "ARGOS · Simulation",
+            Self::Real => "ARGOS · Real fleet",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sim => "Simulation",
+            Self::Real => "Real fleet",
+        }
+    }
+
     pub(crate) fn apply(self, settings: &mut BTreeMap<String, String>) {
         if self == Self::Sim {
             for (key, value) in [
