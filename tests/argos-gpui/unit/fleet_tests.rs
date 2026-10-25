@@ -395,6 +395,26 @@ fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
     assert!((east - 1.).abs() < 0.01, "{east}");
     assert!((marks[0].heading - 90.).abs() < 1e-9);
 
+    // A local goal (picked on that grid) is drawn through the same frame.
+    let mut with_goal = snapshot.clone();
+    with_goal.rovers[0].goal = Some(argos_core::GoalStatus {
+        state: GoalState::Active,
+        goal_id: 1,
+        distance: 1.,
+        x: 3.,
+        y: 4.,
+        token: None,
+        yaw: None,
+        latitude: None,
+        longitude: None,
+    });
+    let marks = fleet_marks(&with_goal, &report, &operator, |_| None, origin);
+    let goal = marks[0].goal.as_ref().unwrap();
+    assert_eq!(
+        (goal.latitude.unwrap(), goal.longitude.unwrap()),
+        frame.geographic(3., 4.).unwrap()
+    );
+
     // No heading yet: the grid turns with the marker's yaw instead.
     let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin);
     let frame = marks[0].overlay_frame.unwrap();

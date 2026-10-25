@@ -59,7 +59,7 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             let cursor = match goal.space {
                 DragSpace::Geographic => Some((goal.cursor.x, goal.cursor.y)),
                 DragSpace::Local => mark
-                    .map_frame
+                    .overlay_frame
                     .and_then(|frame| frame.geographic(goal.cursor.x, goal.cursor.y).ok()),
             };
             let Some((latitude, longitude)) = cursor else {

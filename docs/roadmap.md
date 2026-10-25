@@ -13,7 +13,7 @@ The operator surface is the GPUI app in `crates/argos-gpui`. It opens a window a
 | Operator access | Fleet membership credentials; local desktop control claim; no HTTP roles or OAuth |
 | Vehicle commands | The GPUI window sends goal, cancel, autonomy, teleop, safety stop, safety reset, and the existing hardware arm/disarm payload. A one-second hold is required before arm. Reset does not arm |
 | Navigation tuning | Vehicle runtime owns navigation configuration and command admission |
-| Mapping | Rust client still validates occupancy run/frame and content heartbeats. The inspector's Local map tab draws the local grid. Occupied means 65 or higher |
+| Mapping | Rust client still validates occupancy run/frame and content heartbeats. The main map draws the local grid under each rover. Occupied means 65 or higher |
 | Hosting | GCP authenticated Zenoh router with Caddy certificate renewal; local router Docker image |
 | Removed UI | `apps/web` and `apps/apple` are gone. `argos-ffi` remains in the workspace |
 | Unity | Historical prototype under `spikes/`; not the dashboard platform |

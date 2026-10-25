@@ -15,7 +15,6 @@ mod map_overlay;
 mod palette;
 
 use interaction::{geographic_gate, goal_geo, gps_point};
-use local_map::local_grid;
 use map_overlay::map_paint;
 
 use argos_core::{
@@ -71,7 +70,6 @@ struct Dashboard {
     /// Where the left button went down on the map, to tell a click from an
     /// orbit or pan.
     press: Option<Point<Pixels>>,
-    grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// The map area and the inspector, measured at prepaint for rover card
     /// placement.
     field_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -155,7 +153,6 @@ impl Dashboard {
             map_mode: MapMode::default(),
             drag: None,
             press: None,
-            grid_frame: Arc::new(Mutex::new(None)),
             field_frame: Arc::new(Mutex::new(None)),
             inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
@@ -386,7 +383,7 @@ impl Dashboard {
                 let (latitude, longitude) = model_position(
                     mark.id,
                     (mark.latitude, mark.longitude),
-                    mark.map_frame,
+                    mark.overlay_frame,
                     preview,
                 );
                 let picked = preview
@@ -448,7 +445,7 @@ impl Dashboard {
                 .marks
                 .iter()
                 .find(|mark| mark.id == goal.id)?
-                .map_frame?
+                .overlay_frame?
                 .geographic(goal.cursor.x, goal.cursor.y)
                 .ok()?,
         };
@@ -637,7 +634,7 @@ impl Render for Dashboard {
                 DragSpace::Local => Some((goal.cursor.x, goal.cursor.y)),
                 DragSpace::Geographic => self
                     .selected_mark()
-                    .and_then(|mark| mark.map_frame)
+                    .and_then(|mark| mark.overlay_frame)
                     .and_then(|frame| frame.local(goal.cursor.x, goal.cursor.y).ok()),
             }?;
             Some((
@@ -651,7 +648,6 @@ impl Render for Dashboard {
         let status = console::status_line(&self.note, &self.command).to_owned();
         let unlocated = console::unlocated(&self.marks, &self.presence);
         let notices = console::field_notices(&self.link, &self.detail, self.maps_notice.as_deref());
-        let grid_frame = self.grid_frame.clone();
         let reversing_key = self.driving && self.held.contains("s");
         let handles: Vec<(u64, DragAnchor, Point<Pixels>)> = {
             let map = self.view.read(cx);
@@ -741,7 +737,6 @@ impl Render for Dashboard {
                     drag: drag_local,
                     limits,
                     reversing_key,
-                    grid_frame: grid_frame.clone(),
                 },
                 cx,
             )
@@ -1356,7 +1351,6 @@ struct Facts {
     drag: Option<(u64, f64, f64, f64, Option<f64>)>,
     limits: argos_core::TeleopLimits,
     reversing_key: bool,
-    grid_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
 }
 
 /// The selected rover: identity, state, and the commands that act on it on
@@ -1406,7 +1400,6 @@ fn rover_inspector(
     let reversing = mark.reversing || (facts.reversing_key && driving);
     let body = match tab {
         InspectorTab::Overview => overview_tab(dashboard, mark, &facts, cx).into_any_element(),
-        InspectorTab::LocalMap => local_map_tab(dashboard, mark, &facts, cx).into_any_element(),
         InspectorTab::Video => video_tab(dashboard, cx).into_any_element(),
     };
     v_flex()
@@ -2074,23 +2067,6 @@ fn drive_pad(held: &BTreeSet<String>, cx: &mut Context<Dashboard>) -> impl IntoE
                 .child(key("a", "A", cx))
                 .child(key("s", "S", cx))
                 .child(key("d", "D", cx)),
-        )
-}
-
-fn local_map_tab(
-    dashboard: &Dashboard,
-    mark: &RoverMark,
-    facts: &Facts,
-    cx: &mut Context<Dashboard>,
-) -> impl IntoElement {
-    v_flex()
-        .gap_3()
-        .child(hint(mark.occupancy.clone(), cx))
-        .child(local_grid(mark, facts.drag, facts.grid_frame.clone(), cx))
-        .child(
-            div()
-                .text_xs()
-                .child(goal_line(mark, facts.drag, &dashboard.link)),
         )
 }
 
