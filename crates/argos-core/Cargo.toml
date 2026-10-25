@@ -63,3 +63,7 @@ path = "../../tests/argos-core/state.rs"
 [[test]]
 name = "runtime"
 path = "../../tests/argos-core/runtime.rs"
+
+[[test]]
+name = "point_capture"
+path = "../../tests/argos-core/point_capture.rs"
