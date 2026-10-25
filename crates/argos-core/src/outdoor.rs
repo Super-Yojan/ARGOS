@@ -232,6 +232,17 @@ impl OutdoorReport {
         self.hold_reason.as_deref().and_then(hold_label)
     }
 
+    /// The hold an operator needs to see. Terra reports outdoor readiness
+    /// even under the local source, where GPS and heading gate nothing:
+    /// L1–L4 run on ARKit pose and the occupancy map alone.
+    pub fn operator_hold_label(&self) -> Option<&'static str> {
+        if self.acknowledged_outdoor() || self.mission_active() {
+            self.hold_label()
+        } else {
+            None
+        }
+    }
+
     pub fn mission_active(&self) -> bool {
         matches!(
             self.phase.as_str(),
