@@ -20,8 +20,9 @@ use local_map::local_grid;
 use map_overlay::map_paint;
 
 use argos_core::{
-    APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, GoalDrag, OPERATOR_LEVELS,
-    PlanarPoint, drag_disabled_reason, drive_block, level_label, phase_label,
+    APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, EXPLORE_BUDGETS_MIN,
+    GoalDrag, OPERATOR_LEVELS, PlanarPoint, drag_disabled_reason, drive_block, explore_refusal,
+    level_label, phase_label,
 };
 use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
@@ -91,6 +92,8 @@ struct Dashboard {
     now: f64,
     claim: ControlClaim,
     latched: BTreeSet<u64>,
+    /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
+    explore_budget: usize,
     fpv: FpvController,
     _poll: Task<()>,
 }
@@ -170,6 +173,7 @@ impl Dashboard {
             now: 0.,
             claim: ControlClaim::new(),
             latched: BTreeSet::new(),
+            explore_budget: 1,
             fpv,
             _poll: poll,
         }
@@ -544,6 +548,23 @@ impl Dashboard {
     }
     fn is_stopped(&self, mark: &RoverMark) -> bool {
         self.latched.contains(&mark.id) || mark.safety == "emergency_stop"
+    }
+    fn start_explore(&mut self, id: u64) {
+        let Some(mark) = self.marks.iter().find(|mark| mark.id == id) else {
+            self.note = "Select a rover that is in the fleet".into();
+            return;
+        };
+        if let Some(reason) = explore_refusal(self.is_stopped(mark), mark.outdoor_gps) {
+            self.note = reason.into();
+            return;
+        }
+        let minutes = EXPLORE_BUDGETS_MIN
+            .get(self.explore_budget)
+            .copied()
+            .unwrap_or(EXPLORE_BUDGETS_MIN[0]);
+        self.stop_drive();
+        self.feed.publish_explore(id, f64::from(minutes) * 60.);
+        self.note = format!("Sending L4 Explore · {minutes} min");
     }
     fn hold(&mut self, key: &str, down: bool) {
         let Some(id) = self.selected else {
@@ -1516,6 +1537,7 @@ fn overview_tab(
                 .child(level_group(id, level, 0..4, cx))
                 .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
         )
+        .child(explore_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)
                 .child(
@@ -1609,11 +1631,68 @@ fn level_group(
                 .first()
                 .and_then(|offset| OPERATOR_LEVELS.get(start + offset))
         {
-            this.feed.publish_level(id, wire);
-            this.note = format!("Sending {}", level_label(wire));
+            if *wire == "explore" {
+                this.start_explore(id);
+            } else {
+                this.feed.publish_level(id, wire);
+                this.note = format!("Sending {}", level_label(wire));
+            }
         }
         cx.notify();
     }))
+}
+
+/// L4 budget picker and Terra's run status. Terra chooses the frontiers; the
+/// target also shows as the rover's goal on the map.
+fn explore_section(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    stopped: bool,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let refusal = explore_refusal(stopped, mark.outdoor_gps);
+    let exploring = mark.requested_level.as_deref() == Some("explore");
+    section("Exploration · L4", cx)
+        .child(
+            ButtonGroup::new("explore-budget")
+                .outline()
+                .small()
+                .children(EXPLORE_BUDGETS_MIN.iter().enumerate().map(|(index, minutes)| {
+                    Button::new(("explore-budget", index as u64))
+                        .label(format!("{minutes} min"))
+                        .selected(dashboard.explore_budget == index)
+                }))
+                .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                    if let Some(index) = clicks
+                        .first()
+                        .filter(|index| **index < EXPLORE_BUDGETS_MIN.len())
+                    {
+                        this.explore_budget = *index;
+                    }
+                    cx.notify();
+                })),
+        )
+        .when_some(refusal.filter(|_| !exploring), |section, reason| {
+            section.child(caution(reason, cx))
+        })
+        .map(|section| match mark.exploration.as_ref() {
+            Some(report) => {
+                let stuck = report.running()
+                    && matches!(
+                        report.reason.as_deref(),
+                        Some("frontier_retry" | "obstacle_blocked")
+                    );
+                section
+                    .when(stuck, |section| {
+                        section.child(caution(report.state_label(), cx))
+                    })
+                    .child(rows(report.rows()))
+            }
+            None => section.child(hint(
+                "L4 Explore drives to unmapped frontiers on its own until the budget ends or no frontier is left. Stop, Cancel goal, or choosing another level ends the run.",
+                cx,
+            )),
+        })
 }
 
 fn goal_section(

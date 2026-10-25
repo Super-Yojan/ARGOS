@@ -262,11 +262,22 @@ pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec
                         | "waypoint_direct"
                         | "supervised"
                         | "target_search"
+                        | "explore"
                 )
             ) {
                 return Err(invalid("invalid level"));
             }
-            &["level"]
+            if value["level"] == "explore" {
+                if value["budget_seconds"]
+                    .as_f64()
+                    .is_none_or(|seconds| !valid_explore_budget(seconds))
+                {
+                    return Err(invalid("explore needs a budget"));
+                }
+                &["level", "budget_seconds"]
+            } else {
+                &["level"]
+            }
         }
         "safety" => {
             if !matches!(value["action"].as_str(), Some("stop" | "reset")) {

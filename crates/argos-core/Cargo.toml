@@ -25,6 +25,10 @@ name = "drag"
 path = "../../tests/argos-core/drag.rs"
 
 [[test]]
+name = "exploration"
+path = "../../tests/argos-core/exploration.rs"
+
+[[test]]
 name = "drive"
 path = "../../tests/argos-core/drive.rs"
 

@@ -45,6 +45,7 @@ fn mark(id: u64) -> RoverMark {
         app_update_required: false,
         mission_active: false,
         goal_active: false,
+        exploration: None,
     }
 }
 
@@ -287,6 +288,11 @@ fn level_group_selects_the_requested_level_not_the_effective_one() {
     rover.effective_level = Some("waypoint".into());
     assert_eq!(level_index(&rover), Some(0));
     assert_eq!(OPERATOR_LEVELS[level_index(&rover).unwrap()].1, "L0 Manual");
+    rover.requested_level = Some("explore".into());
+    assert_eq!(
+        OPERATOR_LEVELS[level_index(&rover).unwrap()].1,
+        "L4 Explore"
+    );
     rover.requested_level = Some("not_a_level".into());
     assert_eq!(level_index(&rover), None);
     rover.requested_level = None;

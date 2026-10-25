@@ -31,6 +31,9 @@ pub use outdoor::*;
 mod search;
 pub use search::*;
 
+mod exploration;
+pub use exploration::*;
+
 mod hardware;
 pub use hardware::*;
 
