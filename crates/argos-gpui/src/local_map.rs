@@ -221,24 +221,6 @@ fn local_pixel(
     local_to_bounds(&bounds, map, x, y)
 }
 
-pub(super) fn point_to_local(
-    frame: &Bounds<Pixels>,
-    map: &argos_core::LocalMap,
-    position: Point<Pixels>,
-) -> Option<(f64, f64)> {
-    let width = f32::from(frame.size.width);
-    let height = f32::from(frame.size.height);
-    if width <= 0. || height <= 0. {
-        return None;
-    }
-    let fx = (f32::from(position.x - frame.origin.x) / width).clamp(0., 1.) as f64;
-    let fy = (f32::from(position.y - frame.origin.y) / height).clamp(0., 1.) as f64;
-    Some((
-        map.origin_x + fx * map.span_x,
-        map.origin_y + (1. - fy) * map.span_y,
-    ))
-}
-
 fn paint_dot(window: &mut Window, at: Point<Pixels>, span: f32, color: Rgba) {
     window.paint_quad(quad(
         Bounds {
@@ -326,12 +308,4 @@ fn drag_handle_at(
         } else {
             cx.theme().warning
         })
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| {
-                this.begin_drag(id, anchor, on_map);
-                cx.stop_propagation();
-                cx.notify();
-            }),
-        )
 }
