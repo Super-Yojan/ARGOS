@@ -77,6 +77,12 @@ fn running_status_shows_target_progress_and_stuck() {
     assert_eq!(rows[3].1, "42 m² free · 31% of map seen");
     assert_eq!(rows[4].1, "4 tried · 1 skipped as stuck");
 
+    let mut scan = value.clone();
+    scan["reason"] = "exploration_scan".into();
+    assert_eq!(
+        decode_exploration(&scan).unwrap().state_label(),
+        "Looking around to map its blind zone"
+    );
     let mut stuck = value.clone();
     stuck["reason"] = "frontier_retry".into();
     assert_eq!(

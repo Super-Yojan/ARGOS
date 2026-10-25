@@ -79,6 +79,7 @@ impl ExplorationReport {
             return end_reason_label(reason).to_string();
         }
         match self.reason.as_deref() {
+            Some("exploration_scan") => "Looking around to map its blind zone".into(),
             Some("frontier_retry") => "Stuck · retrying another frontier".into(),
             Some("obstacle_blocked") => "Blocked by an obstacle".into(),
             Some("heading_requires_spin_or_replan") => crate::HEADING_HOLD_LABEL.into(),
