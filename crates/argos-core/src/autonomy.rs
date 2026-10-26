@@ -117,6 +117,8 @@ pub struct AutonomyReport {
     pub revision: Option<u64>,
     /// `heading_requires_spin_or_replan` when Terra reports that hold.
     pub hold: Option<String>,
+    /// Terra's machine-readable explanation of the current decision, such as `sensor_unhealthy`.
+    pub reason: Option<String>,
     pub commanded_linear: Option<f64>,
     pub pose_quality: Option<PoseQuality>,
     pub origin: CommandOrigin,
@@ -173,6 +175,7 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
         result: level("result"),
         revision: value["revision"].as_u64(),
         hold: hold_reason(value),
+        reason: level("reason"),
         commanded_linear: commanded_forward(value),
         pose_quality: value
             .get("pose_quality")

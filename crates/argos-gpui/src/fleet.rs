@@ -413,6 +413,8 @@ pub struct RoverMark {
     pub quality_reported: bool,
     pub reversing: bool,
     pub hold: Option<String>,
+    /// Terra's reason for the current decision; explains a hold when no level is in effect.
+    pub autonomy_reason: Option<String>,
     pub command_origin: CommandOrigin,
     /// Metres. Frozen from the reviewed outdoor report, otherwise the 10 m default.
     pub arrival_radius: f64,
@@ -754,6 +756,7 @@ pub fn fleet_marks(
                     .as_ref()
                     .is_some_and(|report| report.commanded_linear.is_some_and(|speed| speed < 0.)),
                 hold: report.as_ref().and_then(|report| report.hold.clone()),
+                autonomy_reason: report.as_ref().and_then(|report| report.reason.clone()),
                 command_origin: report
                     .as_ref()
                     .map(|report| report.origin)
