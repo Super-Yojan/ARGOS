@@ -20,7 +20,7 @@ use std::io::{BufRead, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const USAGE: &str = "usage: drive_distance --speed M_PER_S --distance M [--turn left|right] \
-[--rover ID] [--take NAME] [--settle S] [--yes]";
+[--rover ID] [--take NAME] [--settle S] [--yes]\n       drive_distance --still SECONDS --take NAME   (log a no-drive window, e.g. run A)";
 
 fn setting(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
@@ -50,10 +50,43 @@ fn pose(c: &Client, id: u64) -> Option<(f64, f64)> {
     rover.pose.as_ref().map(|p| (p.x, p.y))
 }
 
+/// Append one run to `drive_log.csv`; times are this computer's UTC seconds.
+#[allow(clippy::too_many_arguments)]
+fn append_log(
+    take: &str,
+    rover: u64,
+    speed: f64,
+    distance: f64,
+    turn: &str,
+    utc_start: f64,
+    utc_end: f64,
+    held: f64,
+    phone_distance: f64,
+    note: &str,
+) -> std::io::Result<()> {
+    let path = std::path::Path::new("drive_log.csv");
+    let new = !path.exists();
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    if new {
+        writeln!(
+            log,
+            "take,rover,speed,distance,turn,utc_start,utc_end,held_s,phone_distance_m,note"
+        )?;
+    }
+    writeln!(
+        log,
+        "{take},{rover},{speed},{distance},{turn},{utc_start:.3},{utc_end:.3},{held:.3},{phone_distance:.3},{note}"
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let (mut speed, mut distance, mut turn, mut rover, mut take, mut settle, mut yes) =
         (None, None, None, None, String::new(), 3.0, false);
+    let mut still: Option<f64> = None;
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(USAGE);
         match arg.as_str() {
@@ -64,8 +97,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--take" => take = value()?,
             "--settle" => settle = value()?.parse::<f64>()?,
             "--yes" => yes = true,
+            "--still" => still = Some(value()?.parse::<f64>()?),
             _ => return Err(USAGE.into()),
         }
+    }
+    if let Some(seconds) = still {
+        // No command is sent: this only marks a window on the recorder's clock.
+        if !(1.0..=3600.).contains(&seconds) {
+            return Err("--still takes 1..=3600 seconds".into());
+        }
+        if !yes {
+            print!("Keep the rover still for {seconds} s. Press Enter to start ");
+            std::io::stdout().flush()?;
+            std::io::stdin().lock().read_line(&mut String::new())?;
+        }
+        let utc_start = utc();
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        let utc_end = utc();
+        append_log(
+            &take,
+            0,
+            0.,
+            0.,
+            "still",
+            utc_start,
+            utc_end,
+            0.,
+            f64::NAN,
+            "",
+        )?;
+        println!("done");
+        return Ok(());
     }
     let (Some(speed), Some(distance)) = (speed, distance) else {
         return Err(USAGE.into());
@@ -200,23 +262,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          Do the sync jerks and stop the Motive take."
     );
 
-    let path = std::path::Path::new("drive_log.csv");
-    let new = !path.exists();
-    let mut log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    if new {
-        writeln!(
-            log,
-            "take,rover,speed,distance,turn,utc_start,utc_end,held_s,phone_distance_m,note"
-        )?;
-    }
-    writeln!(
-        log,
-        "{take},{id},{speed},{distance},{},{utc_start:.3},{utc_end:.3},{held:.3},{vio:.3},{}",
+    append_log(
+        &take,
+        id,
+        speed,
+        distance,
         turn.as_deref().unwrap_or("none"),
-        stopped_early.unwrap_or("")
+        utc_start,
+        utc_end,
+        held,
+        vio,
+        stopped_early.unwrap_or(""),
     )?;
     c.disconnect();
     Ok(())
