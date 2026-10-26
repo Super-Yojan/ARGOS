@@ -10,6 +10,9 @@ pub use terra_types::point_capture::{
     FRAME_TOPIC, PROGRESS_TOPIC, PointLabel, REQUEST_TOPIC,
 };
 
+/// Number of point labels; label counts are indexed by wire byte.
+pub const LABELS: usize = PointLabel::ALL.len();
+
 /// Seconds after the requested duration before the dashboard stops waiting.
 pub const CAPTURE_GRACE_SECONDS: f64 = 15.0;
 
@@ -22,6 +25,7 @@ pub fn label_color(label: PointLabel) -> [u8; 3] {
         PointLabel::OutOfRange => [140, 140, 140],
         PointLabel::OutsideBand => [230, 180, 34],
         PointLabel::NoReturn => [0, 0, 0],
+        PointLabel::FloorVeto => [32, 178, 170],
     }
 }
 
@@ -91,8 +95,8 @@ impl CaptureCollector {
             || elapsed > self.request.duration_seconds + CAPTURE_GRACE_SECONDS
     }
     /// Count of points per label across every frame.
-    pub fn label_counts(&self) -> [usize; 6] {
-        let mut counts = [0; 6];
+    pub fn label_counts(&self) -> [usize; LABELS] {
+        let mut counts = [0; LABELS];
         for point in self.frames.iter().flat_map(|f| &f.points) {
             counts[point.label as usize] += 1;
         }
@@ -122,11 +126,11 @@ pub struct LiveCloud {
     /// World position and label of each drawn point.
     pub points: Vec<([f32; 3], PointLabel)>,
     /// Points per label in the whole frame, in [`PointLabel`] wire order.
-    pub label_counts: [usize; 6],
+    pub label_counts: [usize; LABELS],
 }
 impl LiveCloud {
     pub fn from_frame(frame: &CaptureFrame) -> Self {
-        let mut label_counts = [0; 6];
+        let mut label_counts = [0; LABELS];
         for point in &frame.points {
             label_counts[point.label as usize] += 1;
         }

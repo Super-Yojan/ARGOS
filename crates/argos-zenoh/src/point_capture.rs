@@ -84,7 +84,7 @@ pub struct CaptureStatus {
     /// The saved PLY path, or why saving failed; `None` while writing.
     pub saved: Option<std::result::Result<PathBuf, String>>,
     /// Points per label, in [`PointLabel`] wire order.
-    pub label_counts: [usize; 6],
+    pub label_counts: [usize; LABELS],
 }
 
 impl Client {
