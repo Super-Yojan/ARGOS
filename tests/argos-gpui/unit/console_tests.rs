@@ -48,6 +48,8 @@ fn mark(id: u64) -> RoverMark {
         goal_active: false,
         navigation_settings: serde_json::Value::Null,
         exploration: None,
+        task: None,
+        task_supported: false,
     }
 }
 

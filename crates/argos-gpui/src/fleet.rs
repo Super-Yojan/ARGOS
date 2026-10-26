@@ -435,6 +435,10 @@ pub struct RoverMark {
     pub goal_active: bool,
     /// Terra's L4 run status while exploring or after a run ends.
     pub exploration: Option<ExplorationReport>,
+    /// Terra's L5 task status once a task has started.
+    pub task: Option<argos_core::TaskReport>,
+    /// The phone advertises `task`, so it can run a language model.
+    pub task_supported: bool,
 }
 impl RoverMark {
     /// L0 uses direct operator effort; a missing camera pose is only a map warning.
@@ -792,6 +796,12 @@ pub fn fleet_marks(
                 gps_source_fresh: localization.is_none_or(|report| report["gpsFresh"] != false),
                 outdoor,
                 exploration: report.as_ref().and_then(|_| decode_exploration(authority)),
+                task: report
+                    .as_ref()
+                    .and_then(|_| argos_core::decode_task(authority)),
+                task_supported: authority["supported_levels"]
+                    .as_array()
+                    .is_some_and(|levels| levels.iter().any(|level| level == "task")),
             })
         })
         .collect()
@@ -1165,6 +1175,75 @@ impl FleetFeed {
                     "Requested L4 Explore for {:.0} min on rover {id} · waiting for vehicle acknowledgement",
                     budget_seconds / 60.
                 ))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Select L5 and give the task in one message. Terra's phone model picks the
+    /// waypoints; Terra checks and drives them.
+    pub fn publish_task(&self, id: u64, instruction: String, budget_seconds: f64) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                let stamp = unix_millis();
+                let token = format!("gpui-{id}-{stamp}");
+                let task_id = format!("task-{id}-{stamp}");
+                let bytes = argos_core::encode_task_level_request(
+                    &token,
+                    &task_id,
+                    &instruction,
+                    budget_seconds,
+                )
+                .map_err(|error| error.to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| "task payload".to_string())?;
+                client
+                    .operator_command(id, "autonomy", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(format!(
+                    "Sent L5 task to rover {id} · waiting for vehicle acknowledgement"
+                ))
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Reply to the model's question, or add guidance, on `task/action`.
+    pub fn publish_task_reply(&self, id: u64, task_id: String, text: String) {
+        self.task_action(
+            id,
+            move |token| argos_core::encode_task_reply(&task_id, &text, token),
+            "Reply sent to the rover's model",
+        );
+    }
+    /// Cancel the task. The rover holds at L5.
+    pub fn cancel_task(&self, id: u64, task_id: String) {
+        self.task_action(
+            id,
+            move |token| argos_core::encode_task_cancel(&task_id, token),
+            "Task cancel requested",
+        );
+    }
+    fn task_action(
+        &self,
+        id: u64,
+        encode: impl FnOnce(&str) -> argos_core::Result<Vec<u8>> + Send + 'static,
+        done: &'static str,
+    ) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                let token = format!("gpui-{id}-{}", unix_millis());
+                let bytes = encode(&token).map_err(|error| error.to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| "task payload".to_string())?;
+                client
+                    .operator_command(id, "task/action", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(done.to_string())
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });

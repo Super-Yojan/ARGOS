@@ -806,6 +806,7 @@ impl Client {
                 && matches!(v["action"].as_str(), Some("pause" | "cancel")))
             || kind == "search/report/ack"
             || kind == "mission/report"
+            || (kind == "task/action" && v["action"] == "cancel")
             || (kind == "teleop"
                 && v["linear"].as_f64() == Some(0.)
                 && v["angular"].as_f64() == Some(0.));
@@ -845,6 +846,7 @@ impl Client {
                 | "search"
                 | "search/action"
                 | "search/report/ack"
+                | "task/action"
         ) || payload.len() > 2048
         {
             return Err(invalid("invalid operator command"));
@@ -872,6 +874,8 @@ impl Client {
             }
         } else if kind.starts_with("search") {
             validate_search_command(kind, payload)?;
+        } else if kind == "task/action" {
+            argos_core::validate_task_action(payload)?;
         } else if kind == "teleop" {
             let linear = value["linear"]
                 .as_f64()
@@ -896,6 +900,7 @@ impl Client {
                     | "supervised"
                     | "target_search"
                     | "explore"
+                    | "task"
             )
         ) {
             return Err(invalid("unsupported autonomy level"));
@@ -905,11 +910,18 @@ impl Client {
                 .is_none_or(|seconds| !argos_core::valid_explore_budget(seconds))
         {
             return Err(invalid("explore needs a budget"));
+        } else if value["level"] == "task"
+            && value["task"]["instruction"]
+                .as_str()
+                .is_none_or(|text| argos_core::task_text(text).is_err())
+        {
+            return Err(invalid("L5 needs a task"));
         }
         // Neutral may still be sent during telemetry loss; moving commands require fresh fleet and pose.
         let neutral = kind == "search/report/ack"
             || (kind == "search/action"
                 && matches!(value["action"].as_str(), Some("cancel" | "pause")))
+            || (kind == "task/action" && value["action"] == "cancel")
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
@@ -962,6 +974,10 @@ impl Client {
                     || authority["requested_level"] != "target_search"
                 {
                     return Err(invalid("search authority changed"));
+                }
+            } else if kind == "task/action" {
+                if authority["requested_level"] != "task" {
+                    return Err(invalid("Select L5 before replying to a task"));
                 }
             } else if kind == "navigation/settings" {
                 let (hardware, at) = states
