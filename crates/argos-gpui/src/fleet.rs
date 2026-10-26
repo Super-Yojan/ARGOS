@@ -1615,13 +1615,14 @@ pub fn live_line(status: &argos_zenoh::LiveStatus) -> String {
             let returns = total - cloud.label_counts[PointLabel::NoReturn as usize];
             let shown = |label: PointLabel| cloud.label_counts[label as usize];
             format!(
-                "Live 3D · {} frames · last {age:.1} s ago · {returns} returns: free {} · obstacle {} · overhead {} · out of range {} · outside band {}",
+                "Live 3D · {} frames · last {age:.1} s ago · {returns} returns: free {} · obstacle {} · overhead {} · out of range {} · outside band {} · floor veto {}",
                 status.frames,
                 shown(PointLabel::Free),
                 shown(PointLabel::Obstacle),
                 shown(PointLabel::Overhead),
                 shown(PointLabel::OutOfRange),
                 shown(PointLabel::OutsideBand),
+                shown(PointLabel::FloorVeto),
             )
         }
     }
