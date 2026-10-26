@@ -30,6 +30,7 @@ fn mark(id: u64) -> RoverMark {
         quality_reported: false,
         reversing: false,
         hold: None,
+        autonomy_reason: None,
         command_origin: CommandOrigin::Unknown,
         arrival_radius: 10.,
         outdoor_gps: false,
@@ -164,6 +165,25 @@ fn trace_separates_requested_from_effective_autonomy() {
     assert!(trace(&rover, false).contains(&(
         "Autonomy",
         "requested L0 Manual · effective L3 Waypoint".into()
+    )));
+}
+
+#[test]
+fn trace_names_the_hold_reason_when_no_level_is_in_effect() {
+    let mut rover = mark(5);
+    rover.requested_level = Some("waypoint_direct".into());
+    rover.effective_level = None;
+    rover.autonomy_reason = Some("router_loss_paused".into());
+    assert!(trace(&rover, false).contains(&(
+        "Autonomy",
+        "requested L2 Direct · held: router_loss_paused".into()
+    )));
+    rover.autonomy_reason = Some("sensor_unhealthy".into());
+    rover.degraded = true;
+    rover.degrade_reason = "tracking_lost".into();
+    assert!(trace(&rover, false).contains(&(
+        "Autonomy",
+        "requested L2 Direct · held: sensor_unhealthy (tracking_lost)".into()
     )));
 }
 

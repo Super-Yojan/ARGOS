@@ -141,7 +141,19 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
         (Some(requested), Some(effective)) => {
             format!("requested {requested} · effective {effective}")
         }
-        (Some(requested), None) => format!("requested {requested} · not confirmed"),
+        (Some(requested), None) => match mark.autonomy_reason.as_deref() {
+            // Pose problems name their cause, which Terra folds into `sensor_unhealthy`.
+            Some(reason @ "sensor_unhealthy")
+                if mark.degraded && !mark.degrade_reason.is_empty() =>
+            {
+                format!(
+                    "requested {requested} · held: {reason} ({})",
+                    mark.degrade_reason
+                )
+            }
+            Some(reason) if reason != "idle" => format!("requested {requested} · held: {reason}"),
+            _ => format!("requested {requested} · not confirmed"),
+        },
         (None, Some(effective)) => effective.to_string(),
         (None, None) => "Unknown".into(),
     };
