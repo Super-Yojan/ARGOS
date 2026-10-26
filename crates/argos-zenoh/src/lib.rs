@@ -1272,8 +1272,8 @@ impl Client {
             {
                 return Ok(());
             }
-            if down && !authority.can_drive(id, now) {
-                return Err(invalid("fresh confirmed teleop authority required"));
+            if down && let Some(reason) = authority.drive_refusal(id, now) {
+                return Err(invalid(&format!("cannot drive: {reason}")));
             }
             authority.generation(id)
         };

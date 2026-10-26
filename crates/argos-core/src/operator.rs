@@ -173,23 +173,57 @@ impl OperatorCache {
         Ok(())
     }
     pub fn can_drive(&self, id: u64, now: f64) -> bool {
-        self.entries
-            .get(&id)
-            .filter(|entry| {
-                entry
-                    .pending
-                    .as_ref()
-                    .is_none_or(|p| p.2 == "accepted" || p.2 == "rejected")
-            })
-            .and_then(|entry| entry.status.as_ref())
-            .is_some_and(|(status, t)| {
-                now - *t < STALE_SECONDS
-                    && status["safety"] == "clear"
-                    && matches!(
-                        status["effective_level"].as_str(),
-                        Some("teleop" | "assisted_teleop")
-                    )
-            })
+        self.drive_refusal(id, now).is_none()
+    }
+    /// Why manual driving is refused right now, or `None` when it is allowed.
+    /// Checks run in order: status present, request answered, status fresh, stop, hold, level.
+    pub fn drive_refusal(&self, id: u64, now: f64) -> Option<String> {
+        let Some(entry) = self.entries.get(&id) else {
+            return Some("no autonomy status from this rover yet".into());
+        };
+        if let Some((_, at, phase)) = &entry.pending
+            && phase != "accepted"
+            && phase != "rejected"
+        {
+            let age = now - at;
+            return Some(if age >= 2. {
+                format!(
+                    "rover never answered the last command ({age:.1} s ago); select L0 again to retry"
+                )
+            } else {
+                "waiting for the rover to answer the last command".into()
+            });
+        }
+        let Some((status, at)) = entry.status.as_ref() else {
+            return Some("no autonomy status from this rover yet".into());
+        };
+        let age = now - at;
+        if age >= STALE_SECONDS {
+            return Some(format!(
+                "rover status is {age:.1} s old (limit {STALE_SECONDS} s); check the link and that TerraPhone is open"
+            ));
+        }
+        let reason = status["reason"].as_str().unwrap_or("unknown");
+        if status["safety"] == "emergency_stop" {
+            return Some("Stop is active on the rover; press Reset stop".into());
+        }
+        let effective = status["effective_level"].as_str();
+        if status["safety"] != "clear" || effective.is_none() {
+            let requested = status["requested_level"].as_str().unwrap_or("unknown");
+            return Some(format!(
+                "rover is holding in {} ({reason}): {}",
+                level_label(requested),
+                hold_hint(reason)
+            ));
+        }
+        match effective {
+            Some("teleop" | "assisted_teleop") => None,
+            Some(level) => Some(format!(
+                "rover is in {}, not manual control; select L0 first",
+                level_label(level)
+            )),
+            None => unreachable!(),
+        }
     }
     pub fn clear(&mut self) {
         self.entries.clear();
@@ -245,6 +279,16 @@ impl OperatorCache {
             );
         }
         Value::Object(out)
+    }
+}
+fn hold_hint(reason: &str) -> &'static str {
+    match reason {
+        "sensor_unhealthy" => "sensors or phone recording unhealthy",
+        "map_stale" => "occupancy map is stale",
+        "router_loss_paused" => "paused after a link drop; select L0 again",
+        "invalid_time" => "phone clock went backwards",
+        "operator_stop" => "Stop is active; press Reset stop",
+        _ => "Terra is holding motion",
     }
 }
 pub fn operator_payload(kind: &str, mut value: Value, token: &str) -> Result<Vec<u8>> {
