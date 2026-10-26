@@ -33,6 +33,8 @@ pub use search::*;
 
 mod exploration;
 pub use exploration::*;
+mod task;
+pub use task::*;
 
 mod hardware;
 pub use hardware::*;

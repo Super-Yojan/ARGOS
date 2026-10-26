@@ -2,6 +2,7 @@
 //!
 //! The wire names match Terra's `Level` and the levels `operator_command` accepts.
 //! `explore` needs a budget, so it is sent with [`crate::encode_explore_request`].
+//! `task` (L5) needs a task, so it is sent with [`crate::encode_task_level_request`].
 //! `assigned_level` on the status is the recommendation field.
 //! There is no separate recommended topic.
 
@@ -12,7 +13,8 @@ use serde_json::{Value, json};
 ///
 /// L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct` (no avoidance),
 /// L3 `waypoint` (local planner), L4 `explore` (frontier exploration on a time
-/// budget). Supervised and target search stay on the same contract.
+/// budget), L5 `task` (the phone's language model picks waypoints for a typed
+/// task). Supervised and target search stay on the same contract.
 pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("teleop", "L0 Manual"),
     ("assisted_teleop", "L1 Assisted"),
@@ -21,6 +23,7 @@ pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("explore", "L4 Explore"),
     ("supervised", "Supervised"),
     ("target_search", "Search"),
+    ("task", "L5 Task"),
 ];
 
 pub fn level_label(level: &str) -> &str {
@@ -36,6 +39,9 @@ pub fn level_label(level: &str) -> &str {
 pub fn encode_level_request(level: &str, token: &str) -> Result<Vec<u8>> {
     if level == "explore" {
         return Err(invalid("explore needs a budget"));
+    }
+    if level == "task" {
+        return Err(invalid("L5 needs a task"));
     }
     if !OPERATOR_LEVELS.iter().any(|(wire, _)| *wire == level) {
         return Err(invalid("unsupported autonomy level"));

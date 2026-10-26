@@ -20,7 +20,8 @@ use map_overlay::map_paint;
 use argos_core::{
     APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, EXPLORE_BUDGETS_MIN,
     GoalDrag, HEADING_MAX_AGE_S, HEADING_MAX_UNCERTAINTY_DEG, OPERATOR_LEVELS, OutdoorReport,
-    PlanarPoint, drag_disabled_reason, drive_block, explore_refusal, level_label, phase_label,
+    PlanarPoint, TASK_BUDGETS_MIN, drag_disabled_reason, drive_block, explore_refusal, level_label,
+    phase_label, task_refusal,
 };
 use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
@@ -29,9 +30,11 @@ use argos_gpui::{
 };
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Selectable, Sizable, StyledExt, Theme, ThemeMode, ThemeStyled, TitleBar,
+    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, Theme, ThemeMode, ThemeStyled,
+    TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     description_list::{DescriptionItem, DescriptionList},
+    input::{Input, InputState},
     scroll::ScrollableElement,
     tab::{Tab, TabBar},
     tag::Tag,
@@ -93,6 +96,11 @@ struct Dashboard {
     latched: BTreeSet<u64>,
     /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
     explore_budget: usize,
+    /// Typed L5 task, and the reply box for the model's questions.
+    task_input: Entity<InputState>,
+    task_reply: Entity<InputState>,
+    /// Index into `TASK_BUDGETS_MIN` for the next L5 task.
+    task_budget: usize,
     fpv: FpvController,
     /// Which fleet `feed` and `fpv` are connected to. The console toggle
     /// replaces both.
@@ -106,9 +114,16 @@ impl Dashboard {
         fpv: FpvController,
         maps_notice: Option<String>,
         fleet_mode: LaunchMode,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let model = argos_gpui::robot_model();
+        let task_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Task for the rover, e.g. find the orange bucket behind the wall")
+        });
+        let task_reply =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Answer or extra guidance"));
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
         let focus = cx.focus_handle();
         let poll = cx.spawn(async |this, cx| {
@@ -176,6 +191,9 @@ impl Dashboard {
             claim: ControlClaim::new(),
             latched: BTreeSet::new(),
             explore_budget: 1,
+            task_input,
+            task_reply,
+            task_budget: 1,
             fpv,
             fleet_mode,
             _poll: poll,
@@ -622,6 +640,62 @@ impl Dashboard {
         self.feed.publish_explore(id, f64::from(minutes) * 60.);
         self.note = format!("Sending L4 Explore · {minutes} min");
     }
+    fn start_task(&mut self, id: u64, cx: &App) {
+        let Some(mark) = self.marks.iter().find(|mark| mark.id == id) else {
+            self.note = "Select a rover that is in the fleet".into();
+            return;
+        };
+        if let Some(reason) =
+            task_refusal(self.is_stopped(mark), mark.outdoor_gps, mark.task_supported)
+        {
+            self.note = reason.into();
+            return;
+        }
+        let text = self.task_input.read(cx).value().to_string();
+        let instruction = match argos_core::task_text(&text) {
+            Ok(text) => text,
+            Err(error) => {
+                self.note = error.0;
+                return;
+            }
+        };
+        let minutes = TASK_BUDGETS_MIN
+            .get(self.task_budget)
+            .copied()
+            .unwrap_or(TASK_BUDGETS_MIN[0]);
+        self.stop_drive();
+        self.feed
+            .publish_task(id, instruction, f64::from(minutes) * 60.);
+        self.note = format!("Sending L5 task · {minutes} min");
+    }
+    fn reply_task(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(task_id) = self
+            .marks
+            .iter()
+            .find(|mark| mark.id == id)
+            .and_then(|mark| mark.task.as_ref())
+            .filter(|task| task.running())
+            .map(|task| task.task_id.clone())
+        else {
+            self.note = "No running task to reply to".into();
+            return;
+        };
+        let text = self.task_reply.read(cx).value().to_string();
+        match argos_core::task_text(&text) {
+            Ok(text) => {
+                self.feed.publish_task_reply(id, task_id, text);
+                self.task_reply
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.note = "Sending reply to the rover's model".into();
+            }
+            Err(error) => self.note = error.0,
+        }
+    }
+    /// While the operator types a task, letter keys and Space are text, not drive or stop.
+    fn typing(&self, window: &Window, cx: &App) -> bool {
+        self.task_input.read(cx).focus_handle(cx).is_focused(window)
+            || self.task_reply.read(cx).focus_handle(cx).is_focused(window)
+    }
     fn hold(&mut self, key: &str, down: bool) {
         let Some(id) = self.selected else {
             return;
@@ -787,7 +861,10 @@ impl Render for Dashboard {
         div()
             .id("argos")
             .track_focus(&self.focus)
-            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _, cx| {
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+                if this.typing(window, cx) {
+                    return;
+                }
                 if let Some(key) = drive_key(&event.keystroke.key) {
                     this.hold(key, false);
                     cx.stop_propagation();
@@ -795,17 +872,21 @@ impl Render for Dashboard {
             }))
             // Capture phase: Space stops even when a focused button would
             // otherwise take it as activation.
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "space" {
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // Space in a task text box is a space; Stop all stays on the console bar.
+                if event.keystroke.key == "space" && !this.typing(window, cx) {
                     this.estop();
                     cx.stop_propagation();
                     cx.notify();
                 }
             }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     this.cancel_drag();
                     cx.stop_propagation();
+                    return;
+                }
+                if this.typing(window, cx) {
                     return;
                 }
                 if let Some(key) = drive_key(&event.keystroke.key) {
@@ -1726,6 +1807,7 @@ fn overview_tab(
                 .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
         )
         .child(explore_section(dashboard, mark, stopped, cx))
+        .child(task_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)
                 .child(
@@ -1899,6 +1981,8 @@ fn level_group(
         {
             if *wire == "explore" {
                 this.start_explore(id);
+            } else if *wire == "task" {
+                this.start_task(id, cx);
             } else {
                 this.feed.publish_level(id, wire);
                 this.note = format!("Sending {}", level_label(wire));
@@ -1956,6 +2040,116 @@ fn explore_section(
             }
             None => section.child(hint(
                 "L4 Explore drives to unmapped frontiers on its own until the budget ends or no frontier is left. Stop, Cancel goal, or choosing another level ends the run.",
+                cx,
+            )),
+        })
+}
+
+/// L5: type a task; the phone's model picks waypoints and Terra drives them.
+/// The model's plan also shows as the rover's goal and route on the map.
+fn task_section(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    stopped: bool,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let id = mark.id;
+    let refusal = task_refusal(stopped, mark.outdoor_gps, mark.task_supported);
+    let report = mark.task.clone();
+    let running = report.as_ref().is_some_and(|task| task.running())
+        && mark.requested_level.as_deref() == Some("task");
+    section("Task · L5", cx)
+        .child(Input::new(&dashboard.task_input).small())
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    ButtonGroup::new("task-budget")
+                        .outline()
+                        .small()
+                        .children(TASK_BUDGETS_MIN.iter().enumerate().map(|(index, minutes)| {
+                            Button::new(("task-budget", index as u64))
+                                .label(format!("{minutes} min"))
+                                .selected(dashboard.task_budget == index)
+                        }))
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                            if let Some(index) = clicks
+                                .first()
+                                .filter(|index| **index < TASK_BUDGETS_MIN.len())
+                            {
+                                this.task_budget = *index;
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(("task-start", id))
+                        .small()
+                        .label(if running { "Replace task" } else { "Start task" })
+                        .disabled(refusal.is_some())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.start_task(id, cx);
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .when(running, |row| {
+                    let task_id = report
+                        .as_ref()
+                        .map(|task| task.task_id.clone())
+                        .unwrap_or_default();
+                    row.child(
+                        Button::new(("task-cancel", id))
+                            .outline()
+                            .small()
+                            .label("Cancel task")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.feed.cancel_task(id, task_id.clone());
+                                this.note = "Task cancel requested".into();
+                                cx.notify();
+                            })),
+                    )
+                }),
+        )
+        .when_some(refusal, |section, reason| section.child(caution(reason, cx)))
+        .map(|section| match report {
+            Some(task) => {
+                let waiting = running && task.waiting_for_operator();
+                let question = task.question.clone();
+                let recent: Vec<String> = task
+                    .history
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .rev()
+                    .map(|(kind, text)| format!("{kind}: {text}"))
+                    .collect();
+                section
+                    .when_some(question.filter(|_| waiting), |section, question| {
+                        section.child(caution(format!("Model asks: {question}"), cx))
+                    })
+                    .when(running, |section| {
+                        section.child(
+                            h_flex()
+                                .gap_2()
+                                .child(div().flex_1().child(Input::new(&dashboard.task_reply).small()))
+                                .child(
+                                    Button::new(("task-reply", id))
+                                        .outline()
+                                        .small()
+                                        .label(if waiting { "Answer" } else { "Guide" })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.reply_task(id, window, cx);
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                    })
+                    .child(rows(task.rows()))
+                    .children(recent.into_iter().map(|line| hint(line, cx)))
+            }
+            None => section.child(hint(
+                "L5 hands the task to the rover's on-phone language model. It reads the phone's map, picks waypoints, and asks you when unsure. Terra checks every waypoint and drives it with the L3 planner. Stop, Cancel task, or another level ends it.",
                 cx,
             )),
         })
@@ -2383,7 +2577,8 @@ fn main() {
                         status(palette::DANGER);
                     theme.warning_foreground = gpui::white();
                 });
-                let view = cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, mode, cx));
+                let view =
+                    cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, mode, window, cx));
                 let focus = view.read(cx).focus.clone();
                 focus.focus(window, cx);
                 view
