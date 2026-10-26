@@ -104,3 +104,56 @@ fn direct_waypoint_authority_is_retained_as_a_distinct_supported_level() {
         "waypoint_direct"
     );
 }
+#[test]
+fn drive_refusal_names_the_failing_check() {
+    let mut c = OperatorCache::default();
+    assert!(
+        c.drive_refusal(1, 0.)
+            .unwrap()
+            .contains("no autonomy status")
+    );
+    let status = |extra: &str| {
+        format!(
+            r#"{{"requested_level":"teleop","active_source":"none","revision":1,"supported_levels":["teleop"],"paused":false,"assigned_level":null,{extra}}}"#
+        )
+    };
+    c.apply(
+        1,
+        "autonomy/status",
+        status(r#""effective_level":"teleop","safety":"clear","reason":"idle""#).as_bytes(),
+        0.,
+    )
+    .unwrap();
+    assert_eq!(c.drive_refusal(1, 0.1), None);
+    assert!(c.drive_refusal(1, 3.).unwrap().contains("s old"));
+    c.pending(1, "lost".into(), 0.2);
+    assert!(
+        c.drive_refusal(1, 0.3)
+            .unwrap()
+            .contains("waiting for the rover")
+    );
+    assert!(c.drive_refusal(1, 2.5).unwrap().contains("never answered"));
+    let mut c = OperatorCache::default();
+    c.apply(
+        1,
+        "autonomy/status",
+        status(r#""effective_level":null,"safety":"hold","reason":"sensor_unhealthy""#).as_bytes(),
+        0.,
+    )
+    .unwrap();
+    let why = c.drive_refusal(1, 0.1).unwrap();
+    assert!(
+        why.contains("sensor_unhealthy") && why.contains("recording"),
+        "{why}"
+    );
+    let mut c = OperatorCache::default();
+    c.apply(
+        1,
+        "autonomy/status",
+        status(r#""effective_level":null,"safety":"emergency_stop","reason":"operator_stop""#)
+            .as_bytes(),
+        0.,
+    )
+    .unwrap();
+    assert!(c.drive_refusal(1, 0.1).unwrap().contains("Reset stop"));
+}
