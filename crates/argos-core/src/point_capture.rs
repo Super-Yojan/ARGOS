@@ -26,6 +26,7 @@ pub fn label_color(label: PointLabel) -> [u8; 3] {
         PointLabel::OutsideBand => [230, 180, 34],
         PointLabel::NoReturn => [0, 0, 0],
         PointLabel::FloorVeto => [32, 178, 170],
+        PointLabel::Barrier => [255, 127, 14],
     }
 }
 
