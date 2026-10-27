@@ -81,6 +81,7 @@ fn outdoor(phase: &str, hold: Option<&str>, remaining: Option<f64>) -> OutdoorRe
         token: None,
         result: None,
         age_s: None,
+        goal_levels: vec!["waypoint".into()],
     }
 }
 

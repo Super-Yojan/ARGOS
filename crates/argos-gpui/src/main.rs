@@ -711,7 +711,7 @@ impl Dashboard {
             self.note = "The study condition locks L4 in this trial".into();
             return;
         }
-        if let Some(reason) = explore_refusal(self.is_stopped(mark), mark.outdoor_gps) {
+        if let Some(reason) = explore_refusal(self.is_stopped(mark), gps_blocks(mark, "explore")) {
             self.note = reason.into();
             return;
         }
@@ -732,9 +732,11 @@ impl Dashboard {
             self.note = "The study condition locks L5 in this trial".into();
             return;
         }
-        if let Some(reason) =
-            task_refusal(self.is_stopped(mark), mark.outdoor_gps, mark.task_supported)
-        {
+        if let Some(reason) = task_refusal(
+            self.is_stopped(mark),
+            gps_blocks(mark, "task"),
+            mark.task_supported,
+        ) {
             self.note = reason.into();
             return;
         }
@@ -2114,6 +2116,15 @@ fn level_group(
     }))
 }
 
+/// Outdoor GPS is the source but this Terra build cannot run `level` with it.
+fn gps_blocks(mark: &RoverMark, level: &str) -> bool {
+    mark.outdoor_gps
+        && !mark
+            .outdoor
+            .as_ref()
+            .is_some_and(|report| report.accepts_goal_at(level))
+}
+
 /// How many times the window sends a study condition to a rover that does not
 /// report it before warning that the rover refused it.
 const STUDY_SENDS: u32 = 5;
@@ -2190,7 +2201,7 @@ fn explore_section(
     stopped: bool,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
-    let refusal = explore_refusal(stopped, mark.outdoor_gps);
+    let refusal = explore_refusal(stopped, gps_blocks(mark, "explore"));
     let exploring = mark.requested_level.as_deref() == Some("explore");
     section("Exploration · L4", cx)
         .child(
@@ -2244,7 +2255,7 @@ fn task_section(
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let id = mark.id;
-    let refusal = task_refusal(stopped, mark.outdoor_gps, mark.task_supported);
+    let refusal = task_refusal(stopped, gps_blocks(mark, "task"), mark.task_supported);
     let report = mark.task.clone();
     let running = report.as_ref().is_some_and(|task| task.running())
         && mark.requested_level.as_deref() == Some("task");

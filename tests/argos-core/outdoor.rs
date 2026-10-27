@@ -222,3 +222,22 @@ fn temporary_heading_limit_accepts_35_degrees_but_keeps_freshness() {
         "Heading uncertain"
     );
 }
+
+#[test]
+fn goal_levels_default_to_l3_and_decode_when_terra_reports_them() {
+    let legacy = ready();
+    assert_eq!(legacy.goal_levels, vec!["waypoint".to_string()]);
+    assert!(!legacy.accepts_goal_at("explore"));
+
+    let report = OutdoorReport::decode(&json!({
+        "schema_version": 1, "capability": "outdoor_gps", "supported": true,
+        "acknowledged": true, "source": "outdoor_gps", "run_id": "run",
+        "navigation_revision": 4, "ready": true,
+        "goal_levels": ["waypoint_direct", "waypoint", "explore", "task"]
+    }))
+    .unwrap();
+    for level in ["waypoint_direct", "waypoint", "explore", "task"] {
+        assert!(report.accepts_goal_at(level), "{level}");
+    }
+    assert!(!report.accepts_goal_at("target_search"));
+}

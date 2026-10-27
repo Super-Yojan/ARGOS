@@ -54,6 +54,8 @@ pub const MISSION_MAX_DISTANCE_M: f64 = 500.;
 pub const ARRIVAL_RADIUS_DEFAULT_M: f64 = 10.;
 pub const ARRIVAL_RADIUS_MIN_M: f64 = 2.;
 pub const ARRIVAL_RADIUS_MAX_M: f64 = 20.;
+/// Levels that take a GPS goal when Terra does not report `goal_levels` (older builds).
+pub const LEGACY_GOAL_LEVELS: &[&str] = &["waypoint"];
 /// How old the outdoor status object itself may be. Provisional.
 pub const OUTDOOR_STATUS_MAX_AGE_S: f64 = 3.;
 
@@ -100,6 +102,9 @@ pub struct OutdoorReport {
     pub result: Option<String>,
     /// Age of this status object, seconds. Provisional `age` field.
     pub age_s: Option<f64>,
+    /// Autonomy levels (wire names) that accept a GPS destination. Terra builds
+    /// before GPS-at-every-level omit the field and only L3 takes one.
+    pub goal_levels: Vec<String>,
 }
 
 /// Operator-visible GPS fix. Independent of outdoor readiness.
@@ -117,8 +122,9 @@ pub struct OutdoorAdmission<'a> {
     pub latitude: f64,
     pub longitude: f64,
     pub arrival_radius_m: f64,
-    /// `Some("waypoint")` is required when the caller is about to publish.
-    /// `None` skips the level check so a mode request can still ask for L3.
+    /// The current level, which must be in the report's `goal_levels` when the
+    /// caller is about to publish. `None` skips the level check so a mode
+    /// request can still ask for a level.
     pub level: Option<&'a str>,
     pub run_id: &'a str,
     pub navigation_revision: u64,
@@ -230,7 +236,32 @@ impl OutdoorReport {
                 .filter(|result| !result.is_empty())
                 .map(str::to_string),
             age_s: finite_nonneg(value, "age"),
+            goal_levels: value
+                .get("goal_levels")
+                .and_then(Value::as_array)
+                .map(|levels| {
+                    levels
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_else(|| LEGACY_GOAL_LEVELS.iter().map(|l| l.to_string()).collect()),
         })
+    }
+
+    /// Whether a GPS destination may be sent while the rover is at `level`.
+    pub fn accepts_goal_at(&self, level: &str) -> bool {
+        self.goal_levels.iter().any(|l| l == level)
+    }
+
+    /// Operator wording for the levels that take a GPS goal.
+    pub fn goal_level_refusal(&self) -> &'static str {
+        if self.goal_levels.iter().any(|l| l != "waypoint") {
+            "GPS goals need L2 Direct, L3 Waypoint, L4 Explore or L5 Task"
+        } else {
+            "Outdoor GPS missions require L3 Waypoint"
+        }
     }
 
     pub fn acknowledged_outdoor(&self) -> bool {
@@ -402,9 +433,9 @@ pub fn admit_outdoor_goal(gate: OutdoorAdmission<'_>) -> StdResult<(), &'static 
         return Err("Mission distance exceeds 500 m");
     }
     if let Some(level) = gate.level
-        && level != "waypoint"
+        && !report.accepts_goal_at(level)
     {
-        return Err("Outdoor GPS missions require L3 Waypoint");
+        return Err(report.goal_level_refusal());
     }
     Ok(())
 }
