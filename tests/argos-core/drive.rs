@@ -268,3 +268,14 @@ fn navigation_settings_need_reported_status_and_valid_inputs() {
     assert!(encode_navigation_settings(&status, edit, "bad token", "run-7", 1).is_err());
     assert!(encode_navigation_settings(&status, edit, "nav-1", "", 1).is_err());
 }
+
+#[test]
+fn autonomy_status_carries_terra_sensor_hold() {
+    let status = br#"{"requested_level":"waypoint","effective_level":null,"reason":"sensor_unhealthy","sensor_hold":{"cause":"stale_vio","pose_age_s":0.41,"imu_age_s":0.01,"age_s":2.0,"count":3}}"#;
+    let hold = decode_autonomy_status(status).unwrap().sensor_hold.unwrap();
+    assert_eq!(hold.cause, "stale_vio");
+    assert_eq!(hold.count, 3);
+    assert_eq!(hold.label(), "stale_vio · pose 0.41 s old");
+    let older = br#"{"requested_level":"waypoint","reason":"sensor_unhealthy"}"#;
+    assert!(decode_autonomy_status(older).unwrap().sensor_hold.is_none());
+}

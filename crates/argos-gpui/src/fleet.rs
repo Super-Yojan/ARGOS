@@ -415,6 +415,7 @@ pub struct RoverMark {
     pub hold: Option<String>,
     /// Terra's reason for the current decision; explains a hold when no level is in effect.
     pub autonomy_reason: Option<String>,
+    pub sensor_hold: Option<argos_core::SensorHold>,
     pub command_origin: CommandOrigin,
     /// Metres. Frozen from the reviewed outdoor report, otherwise the 10 m default.
     pub arrival_radius: f64,
@@ -757,6 +758,9 @@ pub fn fleet_marks(
                     .is_some_and(|report| report.commanded_linear.is_some_and(|speed| speed < 0.)),
                 hold: report.as_ref().and_then(|report| report.hold.clone()),
                 autonomy_reason: report.as_ref().and_then(|report| report.reason.clone()),
+                sensor_hold: report
+                    .as_ref()
+                    .and_then(|report| report.sensor_hold.clone()),
                 command_origin: report
                     .as_ref()
                     .map(|report| report.origin)
