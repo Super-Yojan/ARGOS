@@ -123,6 +123,44 @@ pub struct AutonomyReport {
     pub pose_quality: Option<PoseQuality>,
     pub origin: CommandOrigin,
     pub arrival_radius: f64,
+    /// Terra's latest `sensor_unhealthy` hold, kept a few seconds after it clears.
+    pub sensor_hold: Option<SensorHold>,
+}
+
+/// What tripped Terra's latest `sensor_unhealthy` hold (`autonomy/status.sensor_hold`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SensorHold {
+    /// Machine-readable cause, such as `stale_vio` or `pose_stale`.
+    pub cause: String,
+    pub pose_age_s: Option<f64>,
+    /// Seconds since the hold.
+    pub age_s: f64,
+    /// Holds in this run.
+    pub count: u64,
+}
+
+impl SensorHold {
+    /// `stale_vio · pose 0.41 s old`
+    pub fn label(&self) -> String {
+        match self.pose_age_s {
+            Some(age) => format!("{} · pose {age:.2} s old", self.cause),
+            None => self.cause.clone(),
+        }
+    }
+}
+
+fn sensor_hold(value: &Value) -> Option<SensorHold> {
+    let hold = value.get("sensor_hold")?;
+    let cause = hold["cause"].as_str().filter(|cause| !cause.is_empty())?;
+    let age_s = hold["age_s"]
+        .as_f64()
+        .filter(|age| age.is_finite() && *age >= 0.)?;
+    Some(SensorHold {
+        cause: cause.into(),
+        pose_age_s: hold["pose_age_s"].as_f64().filter(|age| age.is_finite()),
+        age_s,
+        count: hold["count"].as_u64().unwrap_or(0),
+    })
 }
 
 pub fn decode_autonomy_status(bytes: &[u8]) -> Result<AutonomyReport> {
@@ -182,6 +220,7 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
             .and_then(|nested| pose_quality_value(nested).ok()),
         origin: command_origin(value),
         arrival_radius: arrival_radius_m(value),
+        sensor_hold: sensor_hold(value),
     })
 }
 

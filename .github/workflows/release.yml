@@ -7,8 +7,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  pull_request:
-    paths: [".github/workflows/release.yml", "scripts/package.py", "crates/argos-gpui/build.rs"]
   workflow_dispatch:
 
 permissions:
