@@ -1138,6 +1138,7 @@ impl Client {
             }
         }
         let payload = self.bound_payload(id, kind, payload.as_bytes())?;
+        let intervention = self.intervention(id, kind, &value);
         let result = self
             .session
             .lock()
@@ -1158,8 +1159,47 @@ impl Client {
                 "session_id": self.session_id,
                 "payload": value,
             }));
+            self.record_intervention(id, intervention, &value["token"]);
         }
         result
+    }
+    /// Classify an operator command as an intervention on autonomy, using the
+    /// rover's last reported level before the command takes effect.
+    fn intervention(
+        &self,
+        id: u64,
+        kind: &str,
+        value: &serde_json::Value,
+    ) -> Option<(&'static str, serde_json::Value)> {
+        let from = self
+            .operator_states
+            .lock()
+            .unwrap()
+            .get(&(id, "authority".into()))
+            .map(|(authority, _)| authority["effective_level"].clone())
+            .unwrap_or(serde_json::Value::Null);
+        let cause = intervention_cause(kind, value, &from)?;
+        Some((cause, from))
+    }
+    fn record_intervention(
+        &self,
+        id: u64,
+        intervention: Option<(&'static str, serde_json::Value)>,
+        token: &serde_json::Value,
+    ) {
+        let Some((cause, from)) = intervention else {
+            return;
+        };
+        let _ = self.recorder.record(serde_json::json!({
+            "kind": "intervention",
+            "cause": cause,
+            "rover_id": id,
+            "from_level": from,
+            "token": token,
+            "time": self.start.elapsed().as_secs_f64(),
+            "utc": utc(),
+            "session_id": self.session_id,
+        }));
     }
     pub fn localization_snapshot(&self) -> String {
         let values: serde_json::Map<String, serde_json::Value> = self
@@ -1223,6 +1263,7 @@ impl Client {
     }
     pub fn action(&self, id: u64, kind: &str, value: serde_json::Value) -> Result<String> {
         let token = uuid::Uuid::new_v4().to_string();
+        let intervention = self.intervention(id, kind, &value);
         let payload = operator_payload(kind, value, &token)?;
         let payload = self.bound_payload(id, kind, &payload)?;
         if kind == "autonomy" || kind == "safety" {
@@ -1253,6 +1294,7 @@ impl Client {
             "session_id": self.session_id,
             "payload": serde_json::from_slice::<serde_json::Value>(&payload).unwrap(),
         }));
+        self.record_intervention(id, intervention, &token.clone().into());
         Ok(token)
     }
     pub fn fleet_action(&self, kind: &str, value: serde_json::Value) -> Vec<(u64, String)> {
@@ -1521,7 +1563,12 @@ impl Client {
             "utc": utc(),
             "session_id": self.session_id,
         }));
-        self.publish(id, cancel_payload().to_vec())
+        let intervention = self.intervention(id, "goal/cancel", &serde_json::Value::Null);
+        let result = self.publish(id, cancel_payload().to_vec());
+        if result.is_ok() {
+            self.record_intervention(id, intervention, &serde_json::Value::Null);
+        }
+        result
     }
     fn publish(&self, id: u64, payload: Vec<u8>) -> Result<()> {
         let session = self.session.lock().unwrap();
@@ -1611,3 +1658,73 @@ fn zero_payload(
 #[cfg(test)]
 #[path = "../../../tests/argos-zenoh/unit/lib_forest_tests.rs"]
 mod forest_tests;
+
+/// Why an operator command counts as an intervention on autonomy, if it does.
+/// `from` is the rover's effective level before the command.
+fn intervention_cause(
+    kind: &str,
+    value: &serde_json::Value,
+    from: &serde_json::Value,
+) -> Option<&'static str> {
+    let autonomous = !matches!(from.as_str(), None | Some("teleop" | "assisted_teleop"));
+    match kind {
+        "safety" if value["action"] == "stop" => Some("stop"),
+        "autonomy"
+            if autonomous
+                && value.get("assigned_level").is_none()
+                && matches!(value["level"].as_str(), Some("teleop" | "assisted_teleop")) =>
+        {
+            Some("takeover")
+        }
+        "goal/cancel" if autonomous => Some("goal_cancel"),
+        "search/action" | "task/action"
+            if matches!(value["action"].as_str(), Some("cancel" | "pause")) =>
+        {
+            Some("mission_cancel")
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod intervention_tests {
+    use super::intervention_cause;
+    use serde_json::json;
+
+    #[test]
+    fn classifies_operator_interventions() {
+        let auto = json!("waypoint");
+        let manual = json!("teleop");
+        let to_l0 = json!({"level": "teleop"});
+        assert_eq!(
+            intervention_cause("autonomy", &to_l0, &auto),
+            Some("takeover")
+        );
+        assert_eq!(intervention_cause("autonomy", &to_l0, &manual), None);
+        assert_eq!(intervention_cause("autonomy", &to_l0, &json!(null)), None);
+        assert_eq!(
+            intervention_cause("autonomy", &json!({"level": "explore"}), &auto),
+            None
+        );
+        assert_eq!(
+            intervention_cause("autonomy", &json!({"assigned_level": "teleop"}), &auto),
+            None
+        );
+        assert_eq!(
+            intervention_cause("safety", &json!({"action": "stop"}), &manual),
+            Some("stop")
+        );
+        assert_eq!(
+            intervention_cause("safety", &json!({"action": "reset"}), &auto),
+            None
+        );
+        assert_eq!(
+            intervention_cause("goal/cancel", &json!(null), &auto),
+            Some("goal_cancel")
+        );
+        assert_eq!(
+            intervention_cause("task/action", &json!({"action": "cancel"}), &json!("task")),
+            Some("mission_cancel")
+        );
+    }
+}
