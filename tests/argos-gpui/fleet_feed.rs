@@ -489,3 +489,68 @@ fn shutdown_disconnects_so_a_replacement_feed_can_take_over() {
     assert_eq!(old.safety_reset(3), Err("Not connected".to_string()));
     replacement.shutdown();
 }
+
+#[test]
+fn found_buckets_land_on_the_map() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{}", socket.local_addr().unwrap().port());
+    drop(socket);
+    let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"router\"").unwrap();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let router = zenoh::open(config).wait().unwrap();
+    let client = Client::connect(&endpoint, "terra/rover").unwrap();
+    let origin = LocalFrame::origin(38.83, -77.3).unwrap();
+    let objects = br#"{"schema_version":1,"rover_id":3,"run_id":"run","revision":4,"objects":[
+        {"id":1,"class":"bucket","color":"orange","x":10.0,"y":0.0,"latitude":null,"longitude":null,"geo_accuracy_m":null,"confidence":0.9,"sightings":4,"confirmed":true,"first_seen":1.0,"last_seen":2.0},
+        {"id":2,"class":"bucket","color":"blue","x":0.0,"y":0.0,"latitude":38.8301,"longitude":-77.3002,"geo_accuracy_m":2.5,"confidence":0.8,"sightings":3,"confirmed":true,"first_seen":1.0,"last_seen":2.0}]}"#;
+    let mut marks = Vec::new();
+    wait_for(|| {
+        router
+            .put(
+                "terra/rover/fleet/state",
+                br#"{"count":1,"max_count":1,"ids":[3]}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        router
+            .put(
+                "terra/rover/3/pose",
+                br#"{"x":0,"y":0,"yaw":0,"heading":0}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        router
+            .put("terra/rover/3/objects", objects.as_slice())
+            .wait()
+            .unwrap();
+        let operator: serde_json::Value =
+            serde_json::from_str(&client.operator_snapshot()).unwrap();
+        marks = fleet_marks(
+            &client.snapshot(),
+            &serde_json::Value::Null,
+            &operator,
+            |_| None,
+            origin,
+        );
+        marks.first().is_some_and(|mark| mark.objects.len() == 2)
+    });
+    let found = &marks[0].objects;
+    // No GPS on the first bucket: it goes through the map frame, 10 m from the rover.
+    assert!(!found[0].from_gps);
+    let metres = argos_core::geodesic_metres(
+        marks[0].latitude,
+        marks[0].longitude,
+        found[0].latitude,
+        found[0].longitude,
+    );
+    assert!((metres - 10.).abs() < 0.1, "{metres}");
+    // The second carries its own GPS position.
+    assert!(found[1].from_gps);
+    assert_eq!((found[1].latitude, found[1].longitude), (38.8301, -77.3002));
+}

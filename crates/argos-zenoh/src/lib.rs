@@ -32,8 +32,9 @@ const AUTHORITY_TOPICS: [&str; 4] = [
     "experiment/status",
 ];
 /// Small operator telemetry, kept for every rover.
-const STATE_TOPICS: [&str; 6] = [
+const STATE_TOPICS: [&str; 7] = [
     "hardware/status",
+    "objects",
     "autonomy/status",
     "pose/quality",
     "navigation/outdoor",
@@ -408,6 +409,8 @@ impl Client {
                 "/search/report"
             } else if key.ends_with("/search/status") {
                 "/search/status"
+            } else if key.ends_with("/objects") {
+                "/objects"
             } else {
                 return;
             };
@@ -488,6 +491,8 @@ impl Client {
                 "pose_quality"
             } else if suffix == "/navigation/outdoor" {
                 "outdoor"
+            } else if suffix == "/objects" {
+                "objects"
             } else {
                 "authority"
             };

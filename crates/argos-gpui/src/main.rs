@@ -1807,6 +1807,15 @@ fn overview_tab(
                 .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
         )
         .child(explore_section(dashboard, mark, stopped, cx))
+        .when(!mark.objects.is_empty(), |tab| {
+            tab.child(
+                section("Found objects", cx).children(
+                    mark.objects
+                        .iter()
+                        .map(|object| div().text_sm().child(console::object_line(object))),
+                ),
+            )
+        })
         .child(task_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)
