@@ -31,6 +31,7 @@ fn mark(id: u64) -> RoverMark {
         reversing: false,
         hold: None,
         autonomy_reason: None,
+        sensor_hold: None,
         command_origin: CommandOrigin::Unknown,
         arrival_radius: 10.,
         outdoor_gps: false,
@@ -184,6 +185,21 @@ fn trace_names_the_hold_reason_when_no_level_is_in_effect() {
     assert!(trace(&rover, false).contains(&(
         "Autonomy",
         "requested L2 Direct · held: sensor_unhealthy (tracking_lost)".into()
+    )));
+    rover.sensor_hold = Some(argos_core::SensorHold {
+        cause: "stale_vio".into(),
+        pose_age_s: Some(0.41),
+        age_s: 0.,
+        count: 3,
+    });
+    let rows = trace(&rover, false);
+    assert!(rows.contains(&(
+        "Autonomy",
+        "requested L2 Direct · held: sensor_unhealthy (stale_vio · pose 0.41 s old)".into()
+    )));
+    assert!(rows.contains(&(
+        "Sensor hold",
+        "stale_vio · pose 0.41 s old · 0 s ago · 3 this run".into()
     )));
 }
 

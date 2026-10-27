@@ -142,7 +142,10 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
             format!("requested {requested} · effective {effective}")
         }
         (Some(requested), None) => match mark.autonomy_reason.as_deref() {
-            // Pose problems name their cause, which Terra folds into `sensor_unhealthy`.
+            // Terra names what tripped the hold; older builds only report pose quality.
+            Some(reason @ "sensor_unhealthy") if let Some(hold) = &mark.sensor_hold => {
+                format!("requested {requested} · held: {reason} ({})", hold.label())
+            }
             Some(reason @ "sensor_unhealthy")
                 if mark.degraded && !mark.degrade_reason.is_empty() =>
             {
@@ -164,7 +167,7 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
     };
     let pose = pose_warning_text(mark.command_origin, mark.degraded, &mark.degrade_reason)
         .unwrap_or_else(|| mark.status.clone());
-    vec![
+    let mut rows = vec![
         ("Mission", mission),
         ("Goal", goal),
         ("Autonomy", autonomy),
@@ -174,7 +177,20 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
             "Attention",
             attention(mark).unwrap_or_else(|| "Clear".into()),
         ),
-    ]
+    ];
+    // A hold of one tick is gone before anyone reads the Autonomy row.
+    if let Some(hold) = &mark.sensor_hold {
+        rows.push((
+            "Sensor hold",
+            format!(
+                "{} · {:.0} s ago · {} this run",
+                hold.label(),
+                hold.age_s,
+                hold.count
+            ),
+        ));
+    }
+    rows
 }
 
 /// Every rover in the fleet, located or not. Stop all reaches each one.
