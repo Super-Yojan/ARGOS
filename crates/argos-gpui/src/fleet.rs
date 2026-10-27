@@ -799,7 +799,7 @@ pub fn fleet_marks(
                 arrival_radius: outdoor
                     .as_ref()
                     .map(|report| report.arrival_radius_m)
-                    .unwrap_or(10.),
+                    .unwrap_or(argos_core::ARRIVAL_RADIUS_DEFAULT_M),
                 outdoor_gps: outdoor
                     .as_ref()
                     .is_some_and(|report| report.acknowledged_outdoor()),

@@ -51,7 +51,7 @@ pub const HEADING_MAX_AGE_S: f64 = 2.;
 // Temporary field-test allowance; freshness remains independently enforced.
 pub const HEADING_MAX_UNCERTAINTY_DEG: f64 = 35.;
 pub const MISSION_MAX_DISTANCE_M: f64 = 500.;
-pub const ARRIVAL_RADIUS_DEFAULT_M: f64 = 10.;
+pub const ARRIVAL_RADIUS_DEFAULT_M: f64 = 3.;
 pub const ARRIVAL_RADIUS_MIN_M: f64 = 2.;
 pub const ARRIVAL_RADIUS_MAX_M: f64 = 20.;
 /// Levels that take a GPS goal when Terra does not report `goal_levels` (older builds).
@@ -409,9 +409,6 @@ pub fn admit_outdoor_goal(gate: OutdoorAdmission<'_>) -> StdResult<(), &'static 
     if accuracy > GPS_MAX_UNCERTAINTY_M {
         return Err("GPS uncertainty exceeds 10 m");
     }
-    if accuracy > gate.arrival_radius_m {
-        return Err("GPS uncertainty is larger than the arrival radius");
-    }
     if report
         .heading_age_s
         .is_none_or(|age| age > HEADING_MAX_AGE_S)
@@ -557,7 +554,7 @@ pub fn outdoor_resume_refusal(
     if report.gps_age_s.is_none_or(|a| a > GPS_MAX_AGE_S)
         || report
             .gps_accuracy_m
-            .is_none_or(|a| a > GPS_MAX_UNCERTAINTY_M || a > report.arrival_radius_m)
+            .is_none_or(|a| a > GPS_MAX_UNCERTAINTY_M)
     {
         return Some("GPS stale or uncertain");
     }

@@ -2,10 +2,11 @@ use argos_core::*;
 
 #[test]
 fn level_and_teleop_payloads_round_trip() {
-    let level = encode_level_request("supervised", "mode-1").unwrap();
+    assert!(encode_level_request("supervised", "mode-0").is_err());
+    let level = encode_level_request("target_search", "mode-1").unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&level).unwrap(),
-        serde_json::json!({"level": "supervised", "token": "mode-1"})
+        serde_json::json!({"level": "target_search", "token": "mode-1"})
     );
     assert!(encode_level_request("explore", "mode-1").is_err());
     assert!(encode_level_request("teleop", "").is_err());
