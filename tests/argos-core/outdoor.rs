@@ -81,10 +81,9 @@ fn readiness_fails_closed_and_hold_reasons_stay_distinct() {
     report.arrival_radius_m = 5.;
     let mut admission = gate(Some(&report));
     admission.arrival_radius_m = 5.;
-    assert_eq!(
-        admit_outdoor_goal(admission).unwrap_err(),
-        "GPS uncertainty is larger than the arrival radius"
-    );
+    // GPS accuracy no longer has to fit inside the arrival radius: Terra
+    // judges arrival on its smoothed position.
+    assert_eq!(admit_outdoor_goal(admission), Ok(()));
     report = ready();
     report.gps_accuracy_m = Some(11.);
     assert_eq!(
@@ -205,10 +204,10 @@ fn resume_is_explicit_and_requires_current_paused_mission() {
 }
 
 #[test]
-fn outdoor_source_requests_ten_metre_radius() {
+fn outdoor_source_requests_three_metre_radius() {
     let payload = encode_source_request("outdoor_gps", "source-test", "run", 1).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    assert_eq!(value["arrival_radius_m"], 10.);
+    assert_eq!(value["arrival_radius_m"], 3.);
 }
 
 #[test]

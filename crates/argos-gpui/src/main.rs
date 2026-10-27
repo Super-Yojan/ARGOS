@@ -1907,7 +1907,7 @@ fn overview_tab(
         .child(
             section("Autonomy", cx)
                 .child(hint(console::level_line(mark), cx))
-                // L0–L3, then the supervised levels, so neither row wraps.
+                // L0–L3, then L4 and L5, so neither row wraps.
                 .child(level_group(id, level, lock.clone(), 0..4, cx))
                 .child(level_group(id, level, lock, 4..OPERATOR_LEVELS.len(), cx)),
         )

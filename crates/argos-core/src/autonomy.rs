@@ -14,15 +14,15 @@ use serde_json::{Value, json};
 /// L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct` (no avoidance),
 /// L3 `waypoint` (local planner), L4 `explore` (frontier exploration on a time
 /// budget), L5 `task` (the phone's language model picks waypoints for a typed
-/// task). Supervised and target search stay on the same contract.
+/// task). Target search is the other L4 mode. Terra's `supervised` level is
+/// not part of the design and has no button; the wire still accepts it.
 pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("teleop", "L0 Manual"),
     ("assisted_teleop", "L1 Assisted"),
     ("waypoint_direct", "L2 Direct"),
     ("waypoint", "L3 Waypoint"),
     ("explore", "L4 Explore"),
-    ("supervised", "Supervised"),
-    ("target_search", "Search"),
+    ("target_search", "L4 Search"),
     ("task", "L5 Task"),
 ];
 

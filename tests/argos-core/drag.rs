@@ -182,16 +182,6 @@ fn geographic_drag_release_sends_wgs84_and_freezes_the_radius() {
         y: longitude,
     });
     assert!(drag.distance_m() > 20.);
-    let mut widened = report.clone();
-    widened.gps_accuracy_m = Some(6.);
-    let mut wide = geo_gate(&widened, "waypoint");
-    if let Some(admission) = wide.admission.as_mut() {
-        admission.arrival_radius_m = 20.;
-    }
-    assert!(matches!(
-        drag.clone().release(wide),
-        DragEnd::Cancelled(reason) if reason.contains("arrival radius")
-    ));
     match drag.release(geo_gate(&report, "waypoint")) {
         DragEnd::Send(goal) => match goal {
             GoalRequest::Geographic {
