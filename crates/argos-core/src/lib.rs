@@ -31,6 +31,9 @@ pub use outdoor::*;
 mod search;
 pub use search::*;
 
+mod objects;
+pub use objects::*;
+
 mod exploration;
 pub use exploration::*;
 mod task;

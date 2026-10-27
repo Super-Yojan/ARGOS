@@ -442,6 +442,39 @@ pub struct RoverMark {
     pub task: Option<argos_core::TaskReport>,
     /// The phone advertises `task`, so it can run a language model.
     pub task_supported: bool,
+    /// Buckets and balls the rover's detector has confirmed this run.
+    pub objects: Vec<ObjectMark>,
+}
+/// A found object placed on the map.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectMark {
+    pub object: argos_core::FoundObject,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// True when the rover geolocated it from GPS; false when it is placed
+    /// through the rover's local map frame.
+    pub from_gps: bool,
+}
+fn object_marks(operator: &Value, overlay_frame: Option<LocalFrame>) -> Vec<ObjectMark> {
+    argos_core::decode_objects(&operator["objects"])
+        .into_iter()
+        .filter_map(|object| {
+            let (latitude, longitude, from_gps) = match (object.latitude, object.longitude) {
+                (Some(latitude), Some(longitude)) => (latitude, longitude, true),
+                _ => {
+                    let (latitude, longitude) =
+                        overlay_frame?.geographic(object.x, object.y).ok()?;
+                    (latitude, longitude, false)
+                }
+            };
+            Some(ObjectMark {
+                object,
+                latitude,
+                longitude,
+                from_gps,
+            })
+        })
+        .collect()
 }
 impl RoverMark {
     /// L0 uses direct operator effort; a missing camera pose is only a map warning.
@@ -809,6 +842,7 @@ pub fn fleet_marks(
                 task_supported: authority["supported_levels"]
                     .as_array()
                     .is_some_and(|levels| levels.iter().any(|level| level == "task")),
+                objects: object_marks(&operator[&key], overlay_frame),
             })
         })
         .collect()

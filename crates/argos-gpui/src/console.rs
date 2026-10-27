@@ -449,6 +449,32 @@ fn attention(mark: &RoverMark) -> Option<String> {
     mark.hardware.fault.clone()
 }
 
+/// One inspector line for a found object: what it is, where it is in the
+/// rover's local map, and its latitude/longitude with where that came from.
+pub fn object_line(mark: &crate::ObjectMark) -> String {
+    let o = &mark.object;
+    let mut label = o.label();
+    if let Some(first) = label.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    let geo = if mark.from_gps {
+        format!(
+            "{:.6}, {:.6}{} (GPS)",
+            mark.latitude,
+            mark.longitude,
+            o.geo_accuracy_m
+                .map(|a| format!(" ±{a:.0} m"))
+                .unwrap_or_default()
+        )
+    } else {
+        format!("{:.6}, {:.6} (map)", mark.latitude, mark.longitude)
+    };
+    format!(
+        "{label} #{} · local {:.1}, {:.1} m · {geo} · seen {}×",
+        o.id, o.x, o.y, o.sightings
+    )
+}
+
 #[cfg(test)]
 #[path = "../../../tests/argos-gpui/unit/console_tests.rs"]
 mod tests;

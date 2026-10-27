@@ -54,6 +54,7 @@ sequenceDiagram
 | `<prefix>/*/localization` | Frame and placement report |
 | `<prefix>/*/{autonomy/status,goal/proposal,mission/status,experiment/status}` | Authority, proposals, mission/experiment |
 | `<prefix>/*/{hardware/status,pose/quality,navigation/outdoor,search/report,search/status}` | Hardware, pose quality, outdoor navigation, search |
+| `<prefix>/*/objects` | Found buckets and balls, schema 1: local `x`/`y`, and `latitude`/`longitude` when the rover had a good GPS fix. Confirmed ones are drawn on the map |
 | `<prefix>/<selected>/map/occupancy` | Grid, schema 1, cells −1…100. Selected rover only |
 | `<prefix>/<selected>/{map/occupancy/heartbeat,pointcloud,pointcloud/heartbeat}` | Point cloud and content heartbeats. Selected rover only |
 | `<prefix>/<selected>/camera/depth` | `body` pose from the header. Pixels are dropped. Selected rover only |
