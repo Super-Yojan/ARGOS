@@ -243,7 +243,7 @@ fn operator_sends_a_local_goal_a_level_and_a_shaped_twist() {
                     && mark.hardware.ready
                     && mark.hardware.connected
                     && mark.requested_level.as_deref() == Some("teleop")
-                    && mark.recommended_level.as_deref() == Some("waypoint")
+                    && mark.assigned_level.as_deref() == Some("waypoint")
                     && !mark.outdoor_gps
                     && mark.grid.as_ref().is_some_and(|grid| {
                         grid.cells.contains(&argos_core::CellClass::Occupied)

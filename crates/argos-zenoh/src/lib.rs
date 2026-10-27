@@ -79,6 +79,15 @@ struct InputState {
     last_step: f64,
 }
 /// One native session; subscriptions retain only latest parsed telemetry.
+/// Default folder for session logs: `ARGOS_SESSION_DIR`, else the temp folder.
+/// Desktop apps pass a lasting folder to [`Client::connect_logged`] instead.
+pub fn session_dir() -> std::path::PathBuf {
+    std::env::var_os("ARGOS_SESSION_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 pub struct Client {
     session: Arc<Mutex<Option<zenoh::Session>>>,
     subscribers: Mutex<Vec<zenoh::pubsub::Subscriber<()>>>,
@@ -116,6 +125,16 @@ impl Client {
         endpoint: &str,
         prefix: &str,
         credentials: Option<(&str, &str)>,
+    ) -> Result<Self> {
+        Self::connect_logged(endpoint, prefix, credentials, &session_dir())
+    }
+    /// [`Self::connect_authenticated`] that writes the session log into
+    /// `log_dir` (created if needed) as `argos-session-<uuid>.jsonl`.
+    pub fn connect_logged(
+        endpoint: &str,
+        prefix: &str,
+        credentials: Option<(&str, &str)>,
+        log_dir: &std::path::Path,
     ) -> Result<Self> {
         terra_observability::initialize_runtime("argos");
         let topics = Topics::new(prefix)?;
@@ -281,7 +300,8 @@ impl Client {
         let held = Arc::new(Mutex::new(InputState::default()));
         let restart_input = held.clone();
         let session_id = uuid::Uuid::new_v4().to_string();
-        let log_path = std::env::temp_dir().join(format!("argos-session-{session_id}.jsonl"));
+        let _ = std::fs::create_dir_all(log_dir);
+        let log_path = log_dir.join(format!("argos-session-{session_id}.jsonl"));
         let recorder = Arc::new(
             session_log::RunRecorder::create(
                 &log_path,
@@ -895,6 +915,19 @@ impl Client {
             {
                 return Err(invalid("drive exceeds dashboard limits"));
             }
+        } else if kind == "autonomy" && value.get("assigned_level").is_some() {
+            let level = value["assigned_level"].as_str();
+            if !(value["assigned_level"].is_null()
+                || level.is_some_and(|level| {
+                    argos_core::STUDY_LEVELS
+                        .iter()
+                        .any(|(wire, _)| *wire == level)
+                }))
+                || value["token"].as_str().is_none_or(|t| !valid_token(t))
+                || value.as_object().is_some_and(|o| o.len() != 2)
+            {
+                return Err(invalid("invalid study condition"));
+            }
         } else if !matches!(
             value["level"].as_str(),
             Some(
@@ -941,7 +974,9 @@ impl Client {
         };
         // L0 selection and confirmed L0 control do not consume camera pose.
         // Fresh membership, authority, run/revision and hardware checks below remain.
-        let manual_without_pose = (kind == "autonomy" && value["level"] == "teleop")
+        // A study condition moves nothing: at most it drops the rover to L0.
+        let manual_without_pose = (kind == "autonomy"
+            && (value["level"] == "teleop" || value.get("assigned_level").is_some()))
             || (kind == "teleop"
                 && self
                     .operator_states
@@ -1084,6 +1119,8 @@ impl Client {
                 {
                     return Err(invalid("drive authority changed"));
                 }
+            } else if kind == "autonomy" && value.get("assigned_level").is_some() {
+                // Validated above; Terra checks the level against its own contract.
             } else if value["token"]
                 .as_str()
                 .is_none_or(|s| s.is_empty() || s.len() > 64)
@@ -1345,6 +1382,10 @@ impl Client {
                 )
                 .wait();
         }
+    }
+    /// The live session log this client appends to.
+    pub fn session_log_path(&self) -> &std::path::Path {
+        &self.log_path
     }
     /// Flush and export recorded session events as complete JSONL records.
     /// This exports the event log, not the live occupancy or point-cloud caches.

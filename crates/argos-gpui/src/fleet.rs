@@ -404,7 +404,7 @@ pub struct RoverMark {
     pub grid: Option<LocalMap>,
     pub requested_level: Option<String>,
     pub effective_level: Option<String>,
-    pub recommended_level: Option<String>,
+    pub assigned_level: Option<String>,
     pub route: Vec<RouteSample>,
     pub goal: Option<GoalMark>,
     pub degraded: bool,
@@ -762,9 +762,7 @@ pub fn fleet_marks(
                 grid: grid.as_ref().map(|(grid, _)| local_map(grid, 256)),
                 requested_level: report.as_ref().map(|report| report.requested.clone()),
                 effective_level: report.as_ref().and_then(|report| report.effective.clone()),
-                recommended_level: report
-                    .as_ref()
-                    .and_then(|report| report.recommended.clone()),
+                assigned_level: report.as_ref().and_then(|report| report.assigned.clone()),
                 route: report
                     .as_ref()
                     .map(|report| report.route.clone())
@@ -1196,6 +1194,54 @@ impl FleetFeed {
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
     }
+    /// Set (`Some`) or clear (`None`) rover `id`'s study condition. Terra then
+    /// rejects every other level except L0 takeover.
+    pub fn publish_assignment(&self, id: u64, level: Option<&str>) {
+        let client = self.client.clone();
+        let picture = self.picture.clone();
+        let level = level.map(str::to_string);
+        std::thread::spawn(move || {
+            let message = (|| {
+                let guard = client.lock().unwrap();
+                let client = guard.as_ref().ok_or("Not connected")?;
+                let token = format!("gpui-study-{id}-{}", unix_millis());
+                let bytes = argos_core::encode_assignment_request(level.as_deref(), &token)
+                    .map_err(|error| error.to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| "level payload".to_string())?;
+                client
+                    .operator_command(id, "autonomy", &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(match &level {
+                    Some(level) => format!(
+                        "Study condition {} sent to rover {id}",
+                        argos_core::level_label(level)
+                    ),
+                    None => format!("Study condition cleared on rover {id}"),
+                })
+            })();
+            picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
+        });
+    }
+    /// Copy the current session log to a new timestamped file next to it, with
+    /// a closing snapshot record. Returns the file written.
+    pub fn export_session(&self, label: &str) -> Result<PathBuf, String> {
+        let guard = self.client.lock().unwrap();
+        let client = guard
+            .as_ref()
+            .ok_or("Not connected, so there is no session log")?;
+        let live = client.session_log_path();
+        let stem = live
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("argos-session");
+        let destination =
+            live.with_file_name(format!("{stem}-{label}-export-{}.jsonl", unix_millis()));
+        let text = destination.to_string_lossy().into_owned();
+        client
+            .export_session(&text)
+            .map_err(|error| format!("Export failed: {error}"))?;
+        Ok(destination)
+    }
     /// Start L4 frontier exploration for `budget_seconds`. Terra picks and
     /// drives the frontiers; this only sends the level with its budget.
     pub fn publish_explore(&self, id: u64, budget_seconds: f64) {
@@ -1622,6 +1668,17 @@ impl FleetFeed {
             .ok_or_else(|| "Not connected".to_string())
     }
 }
+/// Where session logs go: `ARGOS_SESSION_DIR`, else `Documents/ARGOS Sessions`
+/// in the home folder, else the temp folder (which the OS may clear).
+pub fn session_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ARGOS_SESSION_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| PathBuf::from(home).join("Documents").join("ARGOS Sessions"))
+        .unwrap_or_else(std::env::temp_dir)
+}
 /// Where Capture 3D saves PLY files: `ARGOS_CAPTURE_DIR`, else
 /// `Documents/ARGOS Captures` in the home folder, else the temp folder.
 pub fn capture_dir() -> PathBuf {
@@ -1725,7 +1782,12 @@ fn run(
             .credentials
             .as_ref()
             .map(|(user, password)| (user.as_str(), password.as_str()));
-        match Client::connect_authenticated(&config.endpoint, &config.prefix, credentials) {
+        match Client::connect_logged(
+            &config.endpoint,
+            &config.prefix,
+            credentials,
+            &session_dir(),
+        ) {
             Ok(client) => {
                 let client = Arc::new(client);
                 if stopped.load(Ordering::Acquire) {

@@ -327,7 +327,7 @@ pub fn level_index(mark: &RoverMark) -> Option<usize> {
         .position(|(wire, _)| *wire == requested)
 }
 
-/// Current level and, when the vehicle offers one, its recommendation.
+/// Current level and, while a study condition is set, the assigned level.
 pub fn level_line(mark: &RoverMark) -> String {
     let current = mark
         .effective_level
@@ -335,12 +335,12 @@ pub fn level_line(mark: &RoverMark) -> String {
         .or(mark.requested_level.as_deref())
         .map(level_label)
         .unwrap_or("level unknown");
-    let recommended = mark
-        .recommended_level
+    let assigned = mark
+        .assigned_level
         .as_deref()
-        .map(|level| format!(" · recommended {}", level_label(level)))
+        .map(|level| format!(" · study fixed at {}", level_label(level)))
         .unwrap_or_default();
-    format!("{current}{recommended}")
+    format!("{current}{assigned}")
 }
 
 /// Index into [`NAVIGATION_SOURCES`] of the source the vehicle reports.
