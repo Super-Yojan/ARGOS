@@ -1009,10 +1009,16 @@ impl Client {
                     .get(&(id, "hardware".into()))
                     .ok_or_else(|| invalid("Hardware unavailable"))?;
                 require_relay(hardware, at, false)?;
-                if authority["requested_level"] != "waypoint"
+                if !authority["requested_level"]
+                    .as_str()
+                    .is_some_and(|level| report.accepts_goal_at(level))
                     || authority["safety"] == "emergency_stop"
                 {
-                    return Err(invalid("Select L3 with ready hardware before resuming"));
+                    return Err(invalid(if report.goal_levels.len() > 1 {
+                        "Select L2–L5 with ready hardware before resuming"
+                    } else {
+                        "Select L3 with ready hardware before resuming"
+                    }));
                 }
             } else if kind == "navigation/source" {
                 let source = value["source"].as_str();

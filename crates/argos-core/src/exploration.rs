@@ -37,8 +37,9 @@ pub fn valid_explore_budget(seconds: f64) -> bool {
 
 /// Why the console will not start exploring now, or `None` when it may.
 ///
-/// Terra holds exploration while outdoor GPS is the navigation source and ends
-/// the run at once under a latched stop, so neither is worth sending.
+/// Terra ends the run at once under a latched stop. `outdoor_gps` is true only
+/// when Outdoor GPS is the source and the rover does not list `explore` in its
+/// GPS `goal_levels`: older Terra builds hold exploration in that mode.
 pub fn explore_refusal(stopped: bool, outdoor_gps: bool) -> Option<&'static str> {
     if stopped {
         Some("Reset stop before exploring")

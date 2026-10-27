@@ -360,6 +360,13 @@ pub fn source_index(mark: &RoverMark) -> usize {
 pub fn navigation_note(mark: &RoverMark) -> &'static str {
     if mark.app_update_required {
         "Local navigation. Outdoor GPS is unavailable in this runtime."
+    } else if mark.outdoor_gps
+        && mark
+            .outdoor
+            .as_ref()
+            .is_some_and(|report| report.goal_levels.len() > 1)
+    {
+        "Outdoor GPS acknowledged. At L2–L5, drag the map marker to send the GPS destination. L3–L5 still avoid obstacles on the local map."
     } else if mark.outdoor_gps {
         "Outdoor GPS acknowledged. Drag the map marker. Release sends the WGS84 goal."
     } else {

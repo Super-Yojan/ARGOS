@@ -94,6 +94,26 @@ fn geographic_drag_release_sends_wgs84_and_freezes_the_radius() {
         Some("Outdoor GPS missions require L3 Waypoint")
     );
 
+    // A Terra that lists goal_levels takes a GPS destination at L2–L5.
+    let mut every = report.clone();
+    every.goal_levels = ["waypoint_direct", "waypoint", "explore", "task"]
+        .map(String::from)
+        .to_vec();
+    for level in ["waypoint_direct", "waypoint", "explore", "task"] {
+        assert_eq!(
+            drag_disabled_reason(geo_gate(&every, level)),
+            None,
+            "{level}"
+        );
+    }
+    for level in ["teleop", "assisted_teleop", "target_search"] {
+        assert_eq!(
+            drag_disabled_reason(geo_gate(&every, level)),
+            Some("GPS goals need L2 Direct, L3 Waypoint, L4 Explore or L5 Task"),
+            "{level}"
+        );
+    }
+
     let mut stale = report.clone();
     stale.gps_age_s = Some(9.);
     assert_eq!(

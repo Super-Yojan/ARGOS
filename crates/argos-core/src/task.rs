@@ -120,6 +120,8 @@ pub fn validate_task_action(payload: &str) -> Result<Value> {
 }
 
 /// Why the console will not start a task now, or `None` when it may.
+/// `outdoor_gps` is true only when Outdoor GPS is the source and the rover does
+/// not list `task` in its GPS `goal_levels` (older Terra builds).
 pub fn task_refusal(stopped: bool, outdoor_gps: bool, supported: bool) -> Option<&'static str> {
     if !supported {
         Some("This phone has no on-device model, so it does not offer L5")
