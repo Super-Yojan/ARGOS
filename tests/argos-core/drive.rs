@@ -13,7 +13,7 @@ fn level_and_teleop_payloads_round_trip() {
     let report = decode_autonomy_status(status).unwrap();
     assert_eq!(report.requested, "waypoint");
     assert_eq!(report.effective.as_deref(), Some("waypoint"));
-    assert_eq!(report.recommended.as_deref(), Some("supervised"));
+    assert_eq!(report.assigned.as_deref(), Some("supervised"));
     assert_eq!(
         report.route,
         vec![
@@ -278,4 +278,31 @@ fn autonomy_status_carries_terra_sensor_hold() {
     assert_eq!(hold.label(), "stale_vio · pose 0.41 s old");
     let older = br#"{"requested_level":"waypoint","reason":"sensor_unhealthy"}"#;
     assert!(decode_autonomy_status(older).unwrap().sensor_hold.is_none());
+}
+
+#[test]
+fn study_condition_locks_levels_like_terra() {
+    use argos_core::{encode_assignment_request, level_permitted};
+    assert!(level_permitted(None, "supervised"));
+    assert!(level_permitted(Some("waypoint"), "waypoint"));
+    assert!(level_permitted(Some("waypoint"), "teleop"));
+    assert!(!level_permitted(Some("waypoint"), "waypoint_direct"));
+    assert!(!level_permitted(Some("waypoint"), "supervised"));
+    assert!(level_permitted(Some("explore"), "target_search"));
+    assert!(!level_permitted(Some("waypoint"), "target_search"));
+    let set: serde_json::Value =
+        serde_json::from_slice(&encode_assignment_request(Some("explore"), "s-1").unwrap())
+            .unwrap();
+    assert_eq!(
+        set,
+        serde_json::json!({"assigned_level":"explore","token":"s-1"})
+    );
+    let clear: serde_json::Value =
+        serde_json::from_slice(&encode_assignment_request(None, "s-2").unwrap()).unwrap();
+    assert_eq!(
+        clear,
+        serde_json::json!({"assigned_level":null,"token":"s-2"})
+    );
+    assert!(encode_assignment_request(Some("supervised"), "s-3").is_err());
+    assert!(encode_assignment_request(Some("waypoint"), "bad token").is_err());
 }

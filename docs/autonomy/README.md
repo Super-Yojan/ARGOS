@@ -17,7 +17,9 @@ Select Teleop for precise manual movement, Assisted teleop for obstacle support,
 
 Per-rover and fleet takeover clear held input before requesting Teleop. Emergency stop is latched at Terra; reset is separate. Fleet actions retain each target's acknowledgement independently; publication alone is not confirmation. W/S or arrows drive forward/reverse, A/D or arrows turn while the driving panel has keyboard focus. Touch pads use the same Rust input state. Leaving the view, losing focus, changing rover, or losing authority clears intent. Input ordering preserves independent releases and fences earlier presses after a clear.
 
-Export session logs through the sidebar. The JSONL manifest identifies the session; requests retain tokens, teleop packets retain session/sequence, and experiment snapshots identify rover runs and paired time samples. Goal/cancel actions and observed mission state are recorded. Recording failure is visible and leaves emergency controls available. Exporting an active session creates a flushed snapshot; it does not imply mission completion.
+For a fixed-level trial, pick a level under **Study condition · all rovers**. ARGOS sends `{"assigned_level": ...}` on each rover's `autonomy` topic and sends it again if a restarted rover does not report it. Terra rejects every other level with `level_not_assigned`, except L0 takeover (a fixed L4 also allows Search). If the rover's level is outside the condition, it drops to L0. ARGOS greys out the locked buttons. **Off** clears the condition. A window that has not picked a condition never sends one, so restarting ARGOS mid-trial leaves the rovers as they were.
+
+Export session logs with **Export log** in the top bar. The JSONL manifest identifies the session; requests retain tokens, teleop packets retain session/sequence, and experiment snapshots identify rover runs and paired time samples. Goal/cancel actions and observed mission state are recorded. Recording failure is visible and leaves emergency controls available. Exporting an active session creates a flushed snapshot; it does not imply mission completion.
 
 ## Evidence
 

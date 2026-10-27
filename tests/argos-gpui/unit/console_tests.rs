@@ -22,7 +22,7 @@ fn mark(id: u64) -> RoverMark {
         grid: None,
         requested_level: Some("waypoint".into()),
         effective_level: Some("waypoint".into()),
-        recommended_level: None,
+        assigned_level: None,
         route: Vec::new(),
         goal: None,
         degraded: false,
@@ -52,6 +52,7 @@ fn mark(id: u64) -> RoverMark {
         exploration: None,
         task: None,
         task_supported: false,
+        objects: Vec::new(),
     }
 }
 
@@ -355,8 +356,11 @@ fn level_group_selects_the_requested_level_not_the_effective_one() {
     assert_eq!(level_index(&rover), None);
     rover.requested_level = None;
     assert_eq!(level_index(&rover), None);
-    rover.recommended_level = Some("supervised".into());
-    assert_eq!(level_line(&rover), "L3 Waypoint · recommended Supervised");
+    rover.assigned_level = Some("waypoint".into());
+    assert_eq!(
+        level_line(&rover),
+        "L3 Waypoint · study fixed at L3 Waypoint"
+    );
 }
 
 #[test]
@@ -500,4 +504,35 @@ fn callout_names_the_exploration_state_instead_of_idle() {
     let ended = callout(&rover, false, false);
     assert_eq!(ended.tag, None);
     assert_eq!(ended.state, "Done · no frontiers left");
+}
+
+#[test]
+fn object_line_names_local_and_gps_positions() {
+    let object = argos_core::FoundObject {
+        id: 2,
+        class: "bucket".into(),
+        color: Some("orange".into()),
+        x: 2.04,
+        y: -1.5,
+        latitude: Some(38.829712),
+        longitude: Some(-77.307501),
+        geo_accuracy_m: Some(3.2),
+        confidence: 0.9,
+        sightings: 5,
+    };
+    let gps = crate::ObjectMark {
+        object: object.clone(),
+        latitude: 38.829712,
+        longitude: -77.307501,
+        from_gps: true,
+    };
+    assert_eq!(
+        object_line(&gps),
+        "Orange bucket #2 · local 2.0, -1.5 m · 38.829712, -77.307501 ±3 m (GPS) · seen 5×"
+    );
+    let map = crate::ObjectMark {
+        from_gps: false,
+        ..gps
+    };
+    assert!(object_line(&map).ends_with("38.829712, -77.307501 (map) · seen 5×"));
 }

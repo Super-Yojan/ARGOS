@@ -65,6 +65,27 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                     previous = Some(at);
                 }
             }
+            // Found buckets and balls: a square for a bucket, a dot for a ball.
+            for mark in &marks {
+                for object in &mark.objects {
+                    let Some(at) = map.project(object.latitude, object.longitude) else {
+                        continue;
+                    };
+                    let ball = object.object.class == "ball";
+                    let half = if ball { 6. } else { 8. };
+                    window.paint_quad(quad(
+                        Bounds {
+                            origin: point(at.x - px(half), at.y - px(half)),
+                            size: size(px(2. * half), px(2. * half)),
+                        },
+                        Corners::all(px(if ball { half } else { 2. })),
+                        rgb(object.object.marker_color()),
+                        Edges::all(px(2.)),
+                        rgb(0x12161a),
+                        BorderStyle::default(),
+                    ));
+                }
+            }
             let Some(goal) = &drag else {
                 return;
             };

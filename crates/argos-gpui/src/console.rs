@@ -327,7 +327,7 @@ pub fn level_index(mark: &RoverMark) -> Option<usize> {
         .position(|(wire, _)| *wire == requested)
 }
 
-/// Current level and, when the vehicle offers one, its recommendation.
+/// Current level and, while a study condition is set, the assigned level.
 pub fn level_line(mark: &RoverMark) -> String {
     let current = mark
         .effective_level
@@ -335,12 +335,12 @@ pub fn level_line(mark: &RoverMark) -> String {
         .or(mark.requested_level.as_deref())
         .map(level_label)
         .unwrap_or("level unknown");
-    let recommended = mark
-        .recommended_level
+    let assigned = mark
+        .assigned_level
         .as_deref()
-        .map(|level| format!(" · recommended {}", level_label(level)))
+        .map(|level| format!(" · study fixed at {}", level_label(level)))
         .unwrap_or_default();
-    format!("{current}{recommended}")
+    format!("{current}{assigned}")
 }
 
 /// Index into [`NAVIGATION_SOURCES`] of the source the vehicle reports.
@@ -454,6 +454,32 @@ fn attention(mark: &RoverMark) -> Option<String> {
         return Some(HEADING_HOLD_LABEL.into());
     }
     mark.hardware.fault.clone()
+}
+
+/// One inspector line for a found object: what it is, where it is in the
+/// rover's local map, and its latitude/longitude with where that came from.
+pub fn object_line(mark: &crate::ObjectMark) -> String {
+    let o = &mark.object;
+    let mut label = o.label();
+    if let Some(first) = label.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    let geo = if mark.from_gps {
+        format!(
+            "{:.6}, {:.6}{} (GPS)",
+            mark.latitude,
+            mark.longitude,
+            o.geo_accuracy_m
+                .map(|a| format!(" ±{a:.0} m"))
+                .unwrap_or_default()
+        )
+    } else {
+        format!("{:.6}, {:.6} (map)", mark.latitude, mark.longitude)
+    };
+    format!(
+        "{label} #{} · local {:.1}, {:.1} m · {geo} · seen {}×",
+        o.id, o.x, o.y, o.sightings
+    )
 }
 
 #[cfg(test)]

@@ -3,8 +3,8 @@
 //! The wire names match Terra's `Level` and the levels `operator_command` accepts.
 //! `explore` needs a budget, so it is sent with [`crate::encode_explore_request`].
 //! `task` (L5) needs a task, so it is sent with [`crate::encode_task_level_request`].
-//! `assigned_level` on the status is the recommendation field.
-//! There is no separate recommended topic.
+//! `assigned_level` on the status is the study condition (see [`encode_assignment_request`]).
+//! Terra rejects other levels while it is set, except L0 takeover.
 
 use crate::{Result, invalid, valid_token};
 use serde_json::{Value, json};
@@ -50,6 +50,45 @@ pub fn encode_level_request(level: &str, token: &str) -> Result<Vec<u8>> {
         return Err(invalid("invalid autonomy token"));
     }
     serde_json::to_vec(&json!({"level": level, "token": token}))
+        .map_err(|e| crate::Error(e.to_string()))
+}
+
+/// Levels a study condition can fix, in picker order. Supervised is not a
+/// study level, and Search runs inside a fixed L4.
+pub const STUDY_LEVELS: &[(&str, &str)] = &[
+    ("teleop", "L0"),
+    ("assisted_teleop", "L1"),
+    ("waypoint_direct", "L2"),
+    ("waypoint", "L3"),
+    ("explore", "L4"),
+    ("task", "L5"),
+];
+
+/// Whether an operator may select `level` under study condition `assigned`.
+/// Mirrors Terra: L0 takeover is always allowed, and a fixed L4 also allows
+/// target search.
+pub fn level_permitted(assigned: Option<&str>, level: &str) -> bool {
+    match assigned {
+        None => true,
+        Some(assigned) => {
+            level == "teleop"
+                || level == assigned
+                || (assigned == "explore" && level == "target_search")
+        }
+    }
+}
+
+/// `{"assigned_level": <level> | null, "token"}` on the `autonomy` topic.
+/// Terra then rejects other levels, and drops to L0 if its current level is
+/// outside the condition.
+pub fn encode_assignment_request(level: Option<&str>, token: &str) -> Result<Vec<u8>> {
+    if level.is_some_and(|level| !STUDY_LEVELS.iter().any(|(wire, _)| *wire == level)) {
+        return Err(invalid("not a study level"));
+    }
+    if !valid_token(token) {
+        return Err(invalid("invalid autonomy token"));
+    }
+    serde_json::to_vec(&json!({"assigned_level": level, "token": token}))
         .map_err(|e| crate::Error(e.to_string()))
 }
 
@@ -104,12 +143,12 @@ pub const POSE_QUALITY_SCHEMA: u64 = 1;
 pub const HEADING_HOLD: &str = "heading_requires_spin_or_replan";
 pub const HEADING_HOLD_LABEL: &str = "Heading needs a spin or a replan";
 
-/// Status fields the window displays. `recommended` is Terra's `assigned_level`.
+/// Status fields the window displays. `assigned` is the study condition Terra enforces.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AutonomyReport {
     pub requested: String,
     pub effective: Option<String>,
-    pub recommended: Option<String>,
+    pub assigned: Option<String>,
     pub supported: Vec<String>,
     pub route: Vec<RouteSample>,
     pub token: Option<String>,
@@ -206,7 +245,7 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
     Ok(AutonomyReport {
         requested,
         effective: level("effective_level"),
-        recommended: level("assigned_level"),
+        assigned: level("assigned_level"),
         supported,
         route,
         token: level("token"),
