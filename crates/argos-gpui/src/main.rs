@@ -20,8 +20,8 @@ use map_overlay::map_paint;
 use argos_core::{
     APP_UPDATE_REQUIRED, ControlClaim, DragAnchor, DragGate, DragSpace, EXPLORE_BUDGETS_MIN,
     GoalDrag, HEADING_MAX_AGE_S, HEADING_MAX_UNCERTAINTY_DEG, OPERATOR_LEVELS, OutdoorReport,
-    PlanarPoint, TASK_BUDGETS_MIN, drag_disabled_reason, drive_block, explore_refusal, level_label,
-    phase_label, task_refusal,
+    PlanarPoint, STUDY_LEVELS, TASK_BUDGETS_MIN, drag_disabled_reason, drive_block,
+    explore_refusal, level_label, level_permitted, phase_label, task_refusal,
 };
 use argos_gpui::console::{self, CalloutTag, InspectorTab};
 use argos_gpui::{
@@ -102,6 +102,13 @@ struct Dashboard {
     /// Index into `TASK_BUDGETS_MIN` for the next L5 task.
     task_budget: usize,
     fpv: FpvController,
+    /// Study condition chosen in this window: `None` until the experimenter
+    /// picks one, then `Some(None)` for off or `Some(Some(level))` for a fixed
+    /// level. Until then the window never sends one, so a restarted window
+    /// does not clear a running trial's condition.
+    study: Option<Option<&'static str>>,
+    /// Per rover: when the condition was last sent and how often since it changed.
+    study_sends: BTreeMap<u64, (f64, u32)>,
     /// Which fleet `feed` and `fpv` are connected to. The console toggle
     /// replaces both.
     fleet_mode: LaunchMode,
@@ -195,6 +202,8 @@ impl Dashboard {
             task_reply,
             task_budget: 1,
             fpv,
+            study: None,
+            study_sends: BTreeMap::new(),
             fleet_mode,
             _poll: poll,
         }
@@ -253,7 +262,77 @@ impl Dashboard {
             self.framed = ids;
             self.framed_center = Some((latitude, longitude));
         }
+        self.sync_study();
         self.seed_preview();
+    }
+    /// Keep every rover on this window's study condition. Terra forgets it on
+    /// restart, so a rover that reports another condition is sent it again,
+    /// at most every 2 s and [`STUDY_SENDS`] times per change.
+    fn sync_study(&mut self) {
+        let Some(want) = self.study else {
+            return;
+        };
+        let ids: Vec<(u64, bool)> = self
+            .marks
+            .iter()
+            .map(|mark| (mark.id, mark.assigned_level.as_deref() == want))
+            .collect();
+        self.study_sends
+            .retain(|id, _| ids.iter().any(|(seen, _)| seen == id));
+        for (id, matches) in ids {
+            if matches {
+                self.study_sends.remove(&id);
+                continue;
+            }
+            let (at, count) = self.study_sends.entry(id).or_insert((f64::NEG_INFINITY, 0));
+            if *count < STUDY_SENDS && self.now - *at >= 2. {
+                (*at, *count) = (self.now, *count + 1);
+                self.feed.publish_assignment(id, want);
+            }
+        }
+    }
+    /// The condition that locks the level picker: this window's choice, else
+    /// what the rover reports.
+    fn study_lock<'a>(&self, mark: &'a RoverMark) -> Option<&'a str> {
+        match self.study {
+            Some(want) => want,
+            None => mark.assigned_level.as_deref(),
+        }
+    }
+    /// True once a rover has ignored every resend of the condition, which an
+    /// older Terra build does.
+    fn study_refused(&self, mark: &RoverMark) -> bool {
+        self.study
+            .is_some_and(|want| mark.assigned_level.as_deref() != want)
+            && self
+                .study_sends
+                .get(&mark.id)
+                .is_some_and(|(at, count)| *count >= STUDY_SENDS && self.now - at >= 2.)
+    }
+    fn set_study(&mut self, level: Option<&'static str>) {
+        self.study = Some(level);
+        self.study_sends.clear();
+        self.note = match level {
+            Some(level) => format!(
+                "Study condition: every rover fixed at {} · L0 takeover and Stop stay available",
+                level_label(level)
+            ),
+            None => "Study condition off · every level is available".into(),
+        };
+        self.sync_study();
+    }
+    fn export_session(&mut self) {
+        let label = match self.study {
+            Some(Some(level)) => STUDY_LEVELS
+                .iter()
+                .find(|(wire, _)| *wire == level)
+                .map_or("study", |(_, short)| *short),
+            _ => "free",
+        };
+        self.note = match self.feed.export_session(label) {
+            Ok(path) => format!("Session log exported to {}", path.display()),
+            Err(error) => error,
+        };
     }
     fn seed_preview(&mut self) {
         if !self.preview || self.preview_done || self.drag.is_some() {
@@ -628,6 +707,10 @@ impl Dashboard {
             self.note = "Select a rover that is in the fleet".into();
             return;
         };
+        if !level_permitted(self.study_lock(mark), "explore") {
+            self.note = "The study condition locks L4 in this trial".into();
+            return;
+        }
         if let Some(reason) = explore_refusal(self.is_stopped(mark), mark.outdoor_gps) {
             self.note = reason.into();
             return;
@@ -645,6 +728,10 @@ impl Dashboard {
             self.note = "Select a rover that is in the fleet".into();
             return;
         };
+        if !level_permitted(self.study_lock(mark), "task") {
+            self.note = "The study condition locks L5 in this trial".into();
+            return;
+        }
         if let Some(reason) =
             task_refusal(self.is_stopped(mark), mark.outdoor_gps, mark.task_supported)
         {
@@ -1211,6 +1298,21 @@ fn console_bar(
                         .child(format!("Link {}", dashboard.link)),
                 )
                 .child(
+                    Button::new("export-session")
+                        .outline()
+                        .small()
+                        .label("Export log")
+                        .tooltip(format!(
+                            "Save a copy of this window's session log in {}. The live log is kept there too.",
+                            argos_gpui::session_dir().display()
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.export_session();
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .child(
                     Button::new("stop-all")
                         .danger()
                         .small()
@@ -1737,6 +1839,7 @@ fn overview_tab(
     let driving = dashboard.driving;
     let (hardware_status, hardware_detail) = console::hardware_lines(mark, stopped);
     let level = console::level_index(mark);
+    let lock = dashboard.study_lock(mark).map(str::to_owned);
     let source = console::source_index(mark);
     let mut navigation = Vec::new();
     if let Some(gps) = mark.raw_gps {
@@ -1803,9 +1906,10 @@ fn overview_tab(
             section("Autonomy", cx)
                 .child(hint(console::level_line(mark), cx))
                 // L0–L3, then the supervised levels, so neither row wraps.
-                .child(level_group(id, level, 0..4, cx))
-                .child(level_group(id, level, 4..OPERATOR_LEVELS.len(), cx)),
+                .child(level_group(id, level, lock.clone(), 0..4, cx))
+                .child(level_group(id, level, lock, 4..OPERATOR_LEVELS.len(), cx)),
         )
+        .child(study_section(dashboard, mark, cx))
         .child(explore_section(dashboard, mark, stopped, cx))
         .child(task_section(dashboard, mark, stopped, cx))
         .child(
@@ -1952,6 +2056,7 @@ fn capture_section(
 fn level_group(
     id: u64,
     requested: Option<usize>,
+    lock: Option<String>,
     range: std::ops::Range<usize>,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
@@ -1966,11 +2071,12 @@ fn level_group(
         OPERATOR_LEVELS[range]
             .iter()
             .enumerate()
-            .map(|(offset, (_, label))| {
+            .map(|(offset, (wire, label))| {
                 let index = start + offset;
                 Button::new(("level", index as u64))
                     .label(*label)
                     .selected(requested == Some(index))
+                    .disabled(!level_permitted(lock.as_deref(), wire))
             }),
     )
     .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
@@ -1979,7 +2085,14 @@ fn level_group(
                 .first()
                 .and_then(|offset| OPERATOR_LEVELS.get(start + offset))
         {
-            if *wire == "explore" {
+            let lock = this
+                .marks
+                .iter()
+                .find(|mark| mark.id == id)
+                .and_then(|mark| this.study_lock(mark));
+            if !level_permitted(lock, wire) {
+                this.note = format!("The study condition locks {}", level_label(wire));
+            } else if *wire == "explore" {
                 this.start_explore(id);
             } else if *wire == "task" {
                 this.start_task(id, cx);
@@ -1990,6 +2103,74 @@ fn level_group(
         }
         cx.notify();
     }))
+}
+
+/// How many times the window sends a study condition to a rover that does not
+/// report it before warning that the rover refused it.
+const STUDY_SENDS: u32 = 5;
+
+/// Study condition for the whole fleet: off, or one fixed level. Terra
+/// enforces it, so other levels stay locked even from the phone.
+fn study_section(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let current = match dashboard.study {
+        Some(choice) => choice,
+        None => mark.assigned_level.as_deref().and_then(|level| {
+            STUDY_LEVELS
+                .iter()
+                .find(|(wire, _)| *wire == level)
+                .map(|(wire, _)| *wire)
+        }),
+    };
+    let selected = current.map_or(0, |level| {
+        STUDY_LEVELS
+            .iter()
+            .position(|(wire, _)| *wire == level)
+            .map_or(0, |index| index + 1)
+    });
+    let pending = dashboard
+        .study
+        .is_some_and(|want| mark.assigned_level.as_deref() != want);
+    section("Study condition · all rovers", cx)
+        .child(
+            ButtonGroup::new("study")
+                .outline()
+                .small()
+                .child(Button::new(("study", 0u64)).label("Off").selected(selected == 0))
+                .children(STUDY_LEVELS.iter().enumerate().map(|(index, (_, short))| {
+                    Button::new(("study", index as u64 + 1))
+                        .label(*short)
+                        .selected(selected == index + 1)
+                }))
+                .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                    if let Some(index) = clicks.first() {
+                        let level = index
+                            .checked_sub(1)
+                            .and_then(|index| STUDY_LEVELS.get(index))
+                            .map(|(wire, _)| *wire);
+                        this.set_study(level);
+                    }
+                    cx.notify();
+                })),
+        )
+        .map(|section| {
+            if dashboard.study_refused(mark) {
+                section.child(caution(
+                    "This rover did not take the study condition · update Terra on it",
+                    cx,
+                ))
+            } else if pending {
+                section.child(hint("Sending the study condition to this rover…", cx))
+            } else {
+                section.child(hint(
+                    "Fixes every rover at one level for a trial. Terra rejects the other levels; L0 takeover and Stop stay available. ARGOS and Terra both log it.",
+                    cx,
+                ))
+            }
+        })
 }
 
 /// L4 budget picker and Terra's run status. Terra chooses the frontiers; the

@@ -93,8 +93,8 @@ Depth frames for the selected rover still arrive whole, so that bandwidth is on 
 
 ## Session log
 
-On connect, ARGOS writes `argos-session-<uuid>.jsonl` in the temp directory.
+On connect, the desktop app writes `argos-session-<uuid>.jsonl` in `Documents/ARGOS Sessions` (or `ARGOS_SESSION_DIR`). `Client::connect` without a folder still uses `ARGOS_SESSION_DIR` or the temp directory.
 
 Goals, cancels, actions, teleop packets, and observed state each get a line.
 
-Export copies that file. A failed recorder stays visible. Stop still works.
+**Export log** in the top bar writes a flushed copy next to it, named with the study condition. A failed recorder stays visible. Stop still works.

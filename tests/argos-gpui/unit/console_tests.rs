@@ -22,7 +22,7 @@ fn mark(id: u64) -> RoverMark {
         grid: None,
         requested_level: Some("waypoint".into()),
         effective_level: Some("waypoint".into()),
-        recommended_level: None,
+        assigned_level: None,
         route: Vec::new(),
         goal: None,
         degraded: false,
@@ -354,8 +354,11 @@ fn level_group_selects_the_requested_level_not_the_effective_one() {
     assert_eq!(level_index(&rover), None);
     rover.requested_level = None;
     assert_eq!(level_index(&rover), None);
-    rover.recommended_level = Some("supervised".into());
-    assert_eq!(level_line(&rover), "L3 Waypoint · recommended Supervised");
+    rover.assigned_level = Some("waypoint".into());
+    assert_eq!(
+        level_line(&rover),
+        "L3 Waypoint · study fixed at L3 Waypoint"
+    );
 }
 
 #[test]

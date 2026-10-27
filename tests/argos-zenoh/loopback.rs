@@ -934,3 +934,72 @@ fn live_points_stream_renews_draws_and_stops() {
     client.disconnect();
     peer.close().wait().unwrap();
 }
+
+#[test]
+fn study_condition_is_sent_and_logged_in_the_chosen_folder() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{}", socket.local_addr().unwrap().port());
+    drop(socket);
+    let mut config = zenoh::Config::default();
+    config
+        .insert_json5(
+            "listen/endpoints",
+            &serde_json::json!([endpoint]).to_string(),
+        )
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let peer = zenoh::open(config).wait().unwrap();
+    let actions = peer
+        .declare_subscriber("terra/rover/9/autonomy")
+        .wait()
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("argos-study-{}", uuid::Uuid::new_v4()));
+    let c = Client::connect_logged(&endpoint, "terra/rover", None, &dir).unwrap();
+    assert!(c.session_log_path().starts_with(&dir));
+    wait_for(|| {
+        peer.put(
+            "terra/rover/fleet/state",
+            r#"{"count":1,"max_count":32,"ids":[9]}"#,
+        )
+        .wait()
+        .unwrap();
+        c.snapshot().link == "healthy"
+    });
+    fresh_authority(&peer, &c, "terra/rover", 9);
+    assert!(
+        c.operator_command(
+            9,
+            "autonomy",
+            r#"{"assigned_level":"supervised","token":"s-0"}"#
+        )
+        .is_err()
+    );
+    c.operator_command(
+        9,
+        "autonomy",
+        r#"{"assigned_level":"waypoint","token":"s-1"}"#,
+    )
+    .unwrap();
+    let sent: serde_json::Value = serde_json::from_slice(
+        &actions
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap()
+            .payload()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(sent["assigned_level"], "waypoint");
+    assert_eq!(sent["run_id"], "run");
+    c.operator_command(9, "autonomy", r#"{"assigned_level":null,"token":"s-2"}"#)
+        .unwrap();
+    let export = dir.join("export.jsonl");
+    c.export_session(export.to_str().unwrap()).unwrap();
+    let log = std::fs::read_to_string(&export).unwrap();
+    assert!(log.contains(r#""assigned_level":"waypoint""#));
+    assert!(log.contains(r#""assigned_level":null"#));
+    c.disconnect();
+    std::fs::remove_dir_all(dir).unwrap();
+}
