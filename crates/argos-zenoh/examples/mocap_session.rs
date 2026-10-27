@@ -258,7 +258,17 @@ fn drive(
     }
     let driving = Instant::now();
     let mut note = "";
+    let mut refused = 0;
     while driving.elapsed().as_secs_f64() < duration {
+        // A brief Terra hold makes the client drop held keys; press them again
+        // so a 0.1 s timing hold does not end the run.
+        let pressed = c.input(id, "w", true).and_then(|()| match turn {
+            Some(key) => c.input(id, key, true),
+            None => Ok(()),
+        });
+        if pressed.is_err() {
+            refused += 1;
+        }
         c.refresh_drive(id);
         // Safety net on the phone's own pose; the run itself is timed.
         if turn.is_none()
@@ -276,6 +286,9 @@ fn drive(
     let _ = c.input(id, "w", false);
     c.clear_input();
     let utc_end = utc();
+    if refused > 0 && note.is_empty() {
+        note = "rover held during the run; keys pressed again";
+    }
     std::thread::sleep(Duration::from_secs_f64(SETTLE_SECONDS));
     let moved = match (origin, pose(c, id)) {
         (Some(a), Some(b)) => (b.0 - a.0).hypot(b.1 - a.1),
