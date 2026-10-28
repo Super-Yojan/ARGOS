@@ -36,3 +36,7 @@ path = "src/bin/fpv_test_sender.rs"
 [[test]]
 name = "fleet_feed"
 path = "../../tests/argos-gpui/fleet_feed.rs"
+
+[[test]]
+name = "agent_bridge"
+path = "../../tests/argos-gpui/agent_bridge.rs"

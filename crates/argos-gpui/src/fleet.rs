@@ -1066,6 +1066,8 @@ pub struct FleetFeed {
     focus: Arc<Mutex<Option<u64>>>,
     /// Set by `shutdown`; the thread closes its session and exits.
     stopped: Arc<AtomicBool>,
+    /// Who the next command is for, carried in its token. See [`FleetFeed::as_source`].
+    source: Arc<Mutex<argos_core::CommandSource>>,
 }
 impl FleetFeed {
     pub fn start(config: DashboardConfig) -> Self {
@@ -1085,6 +1087,7 @@ impl FleetFeed {
                 origin: config.origin,
                 focus: Arc::new(Mutex::new(None)),
                 stopped: Arc::new(AtomicBool::new(false)),
+                source: Arc::new(Mutex::new(argos_core::CommandSource::Operator)),
             };
         }
         let origin = config.origin;
@@ -1114,7 +1117,58 @@ impl FleetFeed {
             origin,
             focus,
             stopped,
+            source: Arc::new(Mutex::new(argos_core::CommandSource::Operator)),
         }
+    }
+    /// Run `send` with its commands' tokens marked as coming from `source`,
+    /// so the session log and receipts tell an agent's or an accepted
+    /// recommendation's commands from the operator's own.
+    pub fn as_source<R>(
+        &self,
+        source: argos_core::CommandSource,
+        send: impl FnOnce(&Self) -> R,
+    ) -> R {
+        let previous = self.swap_source(source);
+        let result = send(self);
+        self.swap_source(previous);
+        result
+    }
+    /// Mark commands as coming from `source` until the next swap; returns the
+    /// source to put back. For callers that cannot use [`Self::as_source`].
+    pub fn swap_source(&self, source: argos_core::CommandSource) -> argos_core::CommandSource {
+        if let Ok(client) = self.connected() {
+            client.set_command_source(
+                (source != argos_core::CommandSource::Operator).then(|| source.name()),
+            );
+        }
+        std::mem::replace(&mut *self.source.lock().unwrap(), source)
+    }
+    fn token_source(&self) -> argos_core::CommandSource {
+        *self.source.lock().unwrap()
+    }
+    /// Add an event to the session log, stamped like the client's own records.
+    pub fn record(&self, event: Value) {
+        if let Ok(client) = self.connected() {
+            client.record_event(event);
+        }
+    }
+    /// The operator telemetry the client caches for one rover, as JSON.
+    pub fn rover_telemetry(&self, id: u64) -> Value {
+        self.connected()
+            .ok()
+            .and_then(|client| {
+                serde_json::from_str::<Value>(&client.operator_state_snapshot()).ok()
+            })
+            .map(|mut all| {
+                let mut rover = all[id.to_string()].take();
+                // Grids and point clouds are far too big for an agent's context.
+                if let Some(rover) = rover.as_object_mut() {
+                    rover.remove("cloud");
+                    rover.remove("occupancy");
+                }
+                rover
+            })
+            .unwrap_or(Value::Null)
     }
     /// Zero any held drive input, then close the session in the background.
     /// Commands fail with "Not connected" from here on. Used when the window
@@ -1187,11 +1241,12 @@ impl FleetFeed {
         let client = self.client.clone();
         let picture = self.picture.clone();
         let level = level.to_string();
+        let source = self.token_source();
         std::thread::spawn(move || {
             let message = (|| {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
-                let token = format!("gpui-{id}-{}", unix_millis());
+                let token = argos_core::command_token(source, id, unix_millis());
                 let bytes = argos_core::encode_level_request(&level, &token)
                     .map_err(|error| error.to_string())?;
                 let payload = String::from_utf8(bytes).map_err(|_| "level payload".to_string())?;
@@ -1258,11 +1313,12 @@ impl FleetFeed {
     pub fn publish_explore(&self, id: u64, budget_seconds: f64) {
         let client = self.client.clone();
         let picture = self.picture.clone();
+        let source = self.token_source();
         std::thread::spawn(move || {
             let message = (|| {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
-                let token = format!("gpui-{id}-{}", unix_millis());
+                let token = argos_core::command_token(source, id, unix_millis());
                 let bytes = argos_core::encode_explore_request(&token, budget_seconds)
                     .map_err(|error| error.to_string())?;
                 let payload = String::from_utf8(bytes).map_err(|_| "level payload".to_string())?;
@@ -1288,12 +1344,13 @@ impl FleetFeed {
     ) {
         let client = self.client.clone();
         let picture = self.picture.clone();
+        let source = self.token_source();
         std::thread::spawn(move || {
             let message = (|| {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
                 let stamp = unix_millis();
-                let token = format!("gpui-{id}-{stamp}");
+                let token = argos_core::command_token(source, id, stamp);
                 let task_id = format!("task-{id}-{stamp}");
                 let bytes = argos_core::encode_task_level_request(
                     &token,
@@ -1386,11 +1443,12 @@ impl FleetFeed {
     ) {
         let client = self.client.clone();
         let picture = self.picture.clone();
+        let source = self.token_source();
         std::thread::spawn(move || {
             let message = (|| {
                 let guard = client.lock().unwrap();
                 let client = guard.as_ref().ok_or("Not connected")?;
-                let token = format!("gpui-{id}-{}", unix_millis());
+                let token = argos_core::command_token(source, id, unix_millis());
                 let bytes = encode(&token).map_err(|error| error.to_string())?;
                 let payload = String::from_utf8(bytes).map_err(|_| format!("{kind} payload"))?;
                 client

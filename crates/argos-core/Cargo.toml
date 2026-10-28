@@ -71,3 +71,7 @@ path = "../../tests/argos-core/point_capture.rs"
 [[test]]
 name = "objects"
 path = "../../tests/argos-core/objects.rs"
+
+[[test]]
+name = "agent"
+path = "../../tests/argos-core/agent.rs"
