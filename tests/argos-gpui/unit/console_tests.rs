@@ -522,19 +522,24 @@ fn object_line_names_local_and_gps_positions() {
         confidence: 0.9,
         sightings: 5,
     };
-    let gps = crate::ObjectMark {
+    let mark = crate::ObjectMark {
         object: object.clone(),
-        latitude: 38.829712,
-        longitude: -77.307501,
-        from_gps: true,
+        map_position: None,
     };
     assert_eq!(
-        object_line(&gps),
-        "Orange bucket #2 · local 2.0, -1.5 m · 38.829712, -77.307501 ±3 m (GPS) · seen 5×"
+        object_line(&mark),
+        "Orange bucket #2 · x 2.04, y -1.50 m · seen 5× · GPS 38.829712, -77.307501 ±3 m"
     );
-    let map = crate::ObjectMark {
-        from_gps: false,
-        ..gps
+    let no_gps = crate::ObjectMark {
+        object: argos_core::FoundObject {
+            latitude: None,
+            longitude: None,
+            ..object
+        },
+        map_position: None,
     };
-    assert!(object_line(&map).ends_with("38.829712, -77.307501 (map) · seen 5×"));
+    assert_eq!(
+        object_line(&no_gps),
+        "Orange bucket #2 · x 2.04, y -1.50 m · seen 5×"
+    );
 }

@@ -449,34 +449,22 @@ pub struct RoverMark {
     /// Terra's bucket dock, once one has started this run.
     pub dock: Option<argos_core::DockReport>,
 }
-/// A found object placed on the map.
+/// A found object. Its local map position is the truth: the dock and the
+/// planner use it. The map draws it through the same frame as the rover, so
+/// it lands where the rover saw it; the rover's GPS lat/lon (meters off
+/// outdoors) is only extra info on `object`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectMark {
     pub object: argos_core::FoundObject,
-    pub latitude: f64,
-    pub longitude: f64,
-    /// True when the rover geolocated it from GPS; false when it is placed
-    /// through the rover's local map frame.
-    pub from_gps: bool,
+    /// Where the map draws it, from local x/y; `None` without a map frame.
+    pub map_position: Option<(f64, f64)>,
 }
 fn object_marks(operator: &Value, overlay_frame: Option<LocalFrame>) -> Vec<ObjectMark> {
     argos_core::decode_objects(&operator["objects"])
         .into_iter()
-        .filter_map(|object| {
-            let (latitude, longitude, from_gps) = match (object.latitude, object.longitude) {
-                (Some(latitude), Some(longitude)) => (latitude, longitude, true),
-                _ => {
-                    let (latitude, longitude) =
-                        overlay_frame?.geographic(object.x, object.y).ok()?;
-                    (latitude, longitude, false)
-                }
-            };
-            Some(ObjectMark {
-                object,
-                latitude,
-                longitude,
-                from_gps,
-            })
+        .map(|object| ObjectMark {
+            map_position: overlay_frame.and_then(|frame| frame.geographic(object.x, object.y).ok()),
+            object,
         })
         .collect()
 }
