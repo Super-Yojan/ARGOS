@@ -146,7 +146,10 @@ fn rover_json(dashboard: &Dashboard, mark: &RoverMark) -> Value {
             json!({
                 "id": object.id, "class": object.class, "color": object.color,
                 "x": object.x, "y": object.y,
-                "latitude": found.latitude, "longitude": found.longitude, "from_gps": found.from_gps,
+                "frame": "local",
+                "gps": object.latitude.zip(object.longitude).map(|(latitude, longitude)| json!({
+                    "latitude": latitude, "longitude": longitude, "accuracy_m": object.geo_accuracy_m,
+                })),
                 "confidence": object.confidence, "sightings": object.sightings,
             })
         }).collect::<Vec<_>>(),

@@ -68,7 +68,10 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             // Found buckets and balls: a square for a bucket, a dot for a ball.
             for mark in &marks {
                 for object in &mark.objects {
-                    let Some(at) = map.project(object.latitude, object.longitude) else {
+                    let Some(at) = object
+                        .map_position
+                        .and_then(|(latitude, longitude)| map.project(latitude, longitude))
+                    else {
                         continue;
                     };
                     let ball = object.object.class == "ball";

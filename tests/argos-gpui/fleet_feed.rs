@@ -541,16 +541,13 @@ fn found_buckets_land_on_the_map() {
         marks.first().is_some_and(|mark| mark.objects.len() == 2)
     });
     let found = &marks[0].objects;
-    // No GPS on the first bucket: it goes through the map frame, 10 m from the rover.
-    assert!(!found[0].from_gps);
-    let metres = argos_core::geodesic_metres(
-        marks[0].latitude,
-        marks[0].longitude,
-        found[0].latitude,
-        found[0].longitude,
-    );
-    assert!((metres - 10.).abs() < 0.1, "{metres}");
-    // The second carries its own GPS position.
-    assert!(found[1].from_gps);
-    assert_eq!((found[1].latitude, found[1].longitude), (38.8301, -77.3002));
+    // Both are drawn from local x/y through the rover's map frame: 10 m and 0 m away.
+    let metres = |i: usize| {
+        let (latitude, longitude) = found[i].map_position.unwrap();
+        argos_core::geodesic_metres(marks[0].latitude, marks[0].longitude, latitude, longitude)
+    };
+    assert!((metres(0) - 10.).abs() < 0.1, "{}", metres(0));
+    // The second's own GPS fix is kept only as extra info, not where it is drawn.
+    assert!(metres(1) < 0.1, "{}", metres(1));
+    assert_eq!(found[1].object.latitude, Some(38.8301));
 }

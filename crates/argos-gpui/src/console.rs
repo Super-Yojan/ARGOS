@@ -456,28 +456,25 @@ fn attention(mark: &RoverMark) -> Option<String> {
     mark.hardware.fault.clone()
 }
 
-/// One inspector line for a found object: what it is, where it is in the
-/// rover's local map, and its latitude/longitude with where that came from.
+/// One inspector line for a found object: what it is and where it is in the
+/// rover's local map. The rover's GPS estimate is only a trailing note.
 pub fn object_line(mark: &crate::ObjectMark) -> String {
     let o = &mark.object;
     let mut label = o.label();
     if let Some(first) = label.get_mut(..1) {
         first.make_ascii_uppercase();
     }
-    let geo = if mark.from_gps {
-        format!(
-            "{:.6}, {:.6}{} (GPS)",
-            mark.latitude,
-            mark.longitude,
+    let gps = match (o.latitude, o.longitude) {
+        (Some(latitude), Some(longitude)) => format!(
+            " · GPS {latitude:.6}, {longitude:.6}{}",
             o.geo_accuracy_m
                 .map(|a| format!(" ±{a:.0} m"))
                 .unwrap_or_default()
-        )
-    } else {
-        format!("{:.6}, {:.6} (map)", mark.latitude, mark.longitude)
+        ),
+        _ => String::new(),
     };
     format!(
-        "{label} #{} · local {:.1}, {:.1} m · {geo} · seen {}×",
+        "{label} #{} · x {:.2}, y {:.2} m · seen {}×{gps}",
         o.id, o.x, o.y, o.sightings
     )
 }
