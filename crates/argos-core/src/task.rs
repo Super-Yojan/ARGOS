@@ -5,6 +5,10 @@
 //! waypoints, and Terra checks every waypoint with A* and drives it on the L3
 //! route. This station sends the task, answers the model's questions, and shows
 //! Terra's task status, which is nested on `autonomy/status` as `task`.
+//!
+//! A task can instead go to an MCP agent on the phone (Qwen 3.5 2B in
+//! TerraPhone): it calls Terra's tools, and raw drive needs the operator's
+//! approval here.
 
 use crate::{Result, invalid, valid_token};
 use serde_json::{Value, json};
@@ -31,13 +35,53 @@ pub fn task_text(text: &str) -> Result<String> {
     Ok(text.to_string())
 }
 
-/// `{"level":"task","token","task":{"task_id","instruction","budget_seconds"}}`:
-/// one message selects L5 and gives the task.
+/// Who answers an L5 task on the phone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TaskAgent {
+    /// The phone's built-in model, replying with JSON waypoints.
+    #[default]
+    Builtin,
+    /// An MCP agent on the phone, calling Terra's tools.
+    Mcp,
+}
+
+impl TaskAgent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Mcp => "mcp",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Builtin => "Built-in model",
+            Self::Mcp => "MCP agent",
+        }
+    }
+}
+
+/// Answerers the rover lists in `status.task_agents`. Older Terra builds have
+/// no list; a rover that offers `task` then has only the built-in model.
+pub fn task_agents(status: &Value, task_supported: bool) -> Vec<TaskAgent> {
+    match status["task_agents"].as_array() {
+        Some(items) => [TaskAgent::Builtin, TaskAgent::Mcp]
+            .into_iter()
+            .filter(|a| items.iter().any(|i| i == a.as_str()))
+            .collect(),
+        None if task_supported => vec![TaskAgent::Builtin],
+        None => vec![],
+    }
+}
+
+/// `{"level":"task","token","task":{"task_id","instruction","budget_seconds","agent"}}`:
+/// one message selects L5 and gives the task. `agent` is left out for the
+/// built-in model so older Terra builds still accept it.
 pub fn encode_task_level_request(
     token: &str,
     task_id: &str,
     instruction: &str,
     budget_seconds: f64,
+    agent: TaskAgent,
 ) -> Result<Vec<u8>> {
     if !valid_token(token) || !valid_token(task_id) {
         return Err(invalid("invalid task token"));
@@ -48,16 +92,16 @@ pub fn encode_task_level_request(
     {
         return Err(invalid("invalid task budget"));
     }
-    serde_json::to_vec(&json!({
-        "level": "task",
-        "token": token,
-        "task": {
-            "task_id": task_id,
-            "instruction": task_text(instruction)?,
-            "budget_seconds": budget_seconds,
-        },
-    }))
-    .map_err(|e| crate::Error(e.to_string()))
+    let mut task = json!({
+        "task_id": task_id,
+        "instruction": task_text(instruction)?,
+        "budget_seconds": budget_seconds,
+    });
+    if agent == TaskAgent::Mcp {
+        task["agent"] = json!("mcp");
+    }
+    serde_json::to_vec(&json!({"level": "task", "token": token, "task": task}))
+        .map_err(|e| crate::Error(e.to_string()))
 }
 
 /// `task/action` reply: answers the model's question or adds guidance.
@@ -83,6 +127,21 @@ pub fn encode_task_cancel(task_id: &str, token: &str) -> Result<Vec<u8>> {
         .map_err(|e| crate::Error(e.to_string()))
 }
 
+/// `task/action` `approve_drive` or `deny_drive`: answer the agent's raw-drive request.
+/// Deny also ends a grant that is running and stops the rover.
+pub fn encode_task_drive(task_id: &str, approve: bool, token: &str) -> Result<Vec<u8>> {
+    if !valid_token(token) || !valid_token(task_id) {
+        return Err(invalid("invalid task token"));
+    }
+    let action = if approve {
+        "approve_drive"
+    } else {
+        "deny_drive"
+    };
+    serde_json::to_vec(&json!({"task_id": task_id, "action": action, "token": token}))
+        .map_err(|e| crate::Error(e.to_string()))
+}
+
 /// Check a `task/action` before it is sent.
 pub fn validate_task_action(payload: &str) -> Result<Value> {
     if payload.len() > 2048 {
@@ -99,11 +158,19 @@ pub fn validate_task_action(payload: &str) -> Result<Value> {
         return Err(invalid("invalid task action"));
     }
     match v["action"].as_str() {
-        Some("cancel") => {}
+        Some("cancel" | "approve_drive" | "deny_drive") => {
+            if let Some(text) = v.get("text") {
+                task_text(text.as_str().unwrap_or(""))?;
+            }
+        }
         Some("reply") => {
             task_text(v["text"].as_str().unwrap_or(""))?;
         }
-        _ => return Err(invalid("task action is reply or cancel")),
+        _ => {
+            return Err(invalid(
+                "task action is reply, cancel, approve_drive or deny_drive",
+            ));
+        }
     }
     let allowed = [
         "task_id",
@@ -124,7 +191,7 @@ pub fn validate_task_action(payload: &str) -> Result<Value> {
 /// not list `task` in its GPS `goal_levels` (older Terra builds).
 pub fn task_refusal(stopped: bool, outdoor_gps: bool, supported: bool) -> Option<&'static str> {
     if !supported {
-        Some("This phone has no on-device model, so it does not offer L5")
+        Some("This phone has no on-device model or agent, so it does not offer L5")
     } else if stopped {
         Some("Reset stop before starting a task")
     } else if outdoor_gps {
@@ -141,6 +208,14 @@ pub struct TaskWaypoint {
     pub y: f64,
     /// Map id the model chose (`F2`, `O1`, `L1`) or `point`.
     pub label: String,
+}
+
+/// The agent's pending raw-drive request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskDriveRequest {
+    pub reason: String,
+    pub seconds: f64,
+    pub waiting_s: f64,
 }
 
 /// Terra's `TaskStatus`, the fields the console shows.
@@ -165,6 +240,10 @@ pub struct TaskReport {
     pub last_error: Option<String>,
     /// `(kind, text)`, oldest first.
     pub history: Vec<(String, String)>,
+    pub agent: TaskAgent,
+    pub drive_request: Option<TaskDriveRequest>,
+    /// Seconds left on an approved raw-drive grant.
+    pub drive_remaining_s: Option<f64>,
 }
 
 impl TaskReport {
@@ -177,17 +256,38 @@ impl TaskReport {
     pub fn waiting_for_operator(&self) -> bool {
         self.phase == "waiting_operator"
     }
+    /// The agent asked for raw drive and the operator has not answered.
+    pub fn awaiting_drive_approval(&self) -> bool {
+        self.running() && self.drive_request.is_some()
+    }
+    /// Who answers this task, for the console: "model" or "agent".
+    fn answerer(&self) -> &'static str {
+        match self.agent {
+            TaskAgent::Builtin => "model",
+            TaskAgent::Mcp => "agent",
+        }
+    }
     /// One line for the console: what the task is doing, or how it ended.
     pub fn state_label(&self) -> String {
         match (self.phase.as_str(), self.reason.as_str()) {
             ("planning", "retrying_model") => "Asking the model again".into(),
+            ("planning", "awaiting_drive_approval") => {
+                "The agent asks to drive · approve or deny".into()
+            }
+            ("planning", "agent_driving") => match self.drive_remaining_s {
+                Some(s) => format!("Agent is driving · grant ends in {s:.0} s"),
+                None => "Agent is driving".into(),
+            },
+            ("planning", "awaiting_agent") => "Waiting for the agent".into(),
             ("planning", _) => match self.waiting_s {
                 Some(s) => format!("Model is thinking · {s:.0} s"),
                 None => "Waiting for the model".into(),
             },
-            ("navigating", "route_blocked") => "Route blocked · will ask the model again".into(),
-            ("navigating", _) => "Driving the model's waypoints".into(),
-            ("waiting_operator", _) => "The model asked you a question".into(),
+            ("navigating", "route_blocked") => {
+                format!("Route blocked · will ask the {} again", self.answerer())
+            }
+            ("navigating", _) => format!("Driving the {}'s waypoints", self.answerer()),
+            ("waiting_operator", _) => format!("The {} asked you a question", self.answerer()),
             ("completed", _) => "Done".into(),
             ("failed", reason) => format!("Failed · {}", task_end_reason_label(reason)),
             ("cancelled", reason) => format!("Cancelled · {}", task_end_reason_label(reason)),
@@ -201,7 +301,12 @@ impl TaskReport {
             ("Task", self.instruction.clone()),
             (
                 "Steps",
-                format!("{} of {} model calls", self.step, self.max_steps),
+                format!(
+                    "{} of {} {} decisions",
+                    self.step,
+                    self.max_steps,
+                    self.answerer()
+                ),
             ),
             (
                 "Time",
@@ -217,6 +322,21 @@ impl TaskReport {
                 .map(|s| format!(" · last answer {s:.1} s"))
                 .unwrap_or_default();
             rows.push(("Model", format!("{model}{latency}")));
+        }
+        if self.agent == TaskAgent::Mcp {
+            rows.push(("Agent", "MCP agent on the phone".into()));
+        }
+        if let Some(request) = &self.drive_request {
+            rows.push((
+                "Drive request",
+                format!(
+                    "{:.0} s · {} · waiting {:.0} s",
+                    request.seconds, request.reason, request.waiting_s
+                ),
+            ));
+        }
+        if let Some(left) = self.drive_remaining_s {
+            rows.push(("Raw drive", format!("approved · {left:.0} s left")));
         }
         if !self.plan.is_empty() {
             rows.push((
@@ -240,9 +360,10 @@ impl TaskReport {
 
 pub fn task_end_reason_label(reason: &str) -> &'static str {
     match reason {
-        "model_done" => "the model finished the task",
-        "model_gave_up" => "the model gave up",
+        "model_done" => "the model or agent finished the task",
+        "model_gave_up" => "the model or agent gave up",
         "model_failures" => "three bad or missing model answers in a row",
+        "agent_timeout" => "the agent went quiet for 90 s",
         "budget_exhausted" => "time budget used up",
         "step_limit" => "model call limit reached",
         "operator_cancel" => "cancelled here",
@@ -312,6 +433,23 @@ pub fn decode_task(status: &Value) -> Option<TaskReport> {
         rationale: text("rationale"),
         last_error: text("last_error"),
         history,
+        agent: if value["agent"] == "mcp" {
+            TaskAgent::Mcp
+        } else {
+            TaskAgent::Builtin
+        },
+        drive_request: value["drive_request"].as_object().and_then(|r| {
+            Some(TaskDriveRequest {
+                reason: r.get("reason")?.as_str()?.to_string(),
+                seconds: r.get("seconds")?.as_f64().filter(|s| s.is_finite())?,
+                waiting_s: r
+                    .get("waiting_seconds")
+                    .and_then(Value::as_f64)
+                    .filter(|s| s.is_finite())
+                    .unwrap_or(0.),
+            })
+        }),
+        drive_remaining_s: number("drive_remaining_seconds"),
     })
 }
 
@@ -321,15 +459,30 @@ mod tests {
 
     #[test]
     fn encodes_the_inline_task_request_terra_decodes() {
-        let bytes =
-            encode_task_level_request("tok-1", "task-1", "  Find the bucket. ", 300.).unwrap();
+        let bytes = encode_task_level_request(
+            "tok-1",
+            "task-1",
+            "  Find the bucket. ",
+            300.,
+            TaskAgent::Builtin,
+        )
+        .unwrap();
         let v: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["level"], "task");
+        assert!(v["task"].get("agent").is_none());
+        let mcp: Value = serde_json::from_slice(
+            &encode_task_level_request("tok-1", "task-1", "go", 60., TaskAgent::Mcp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(mcp["task"]["agent"], "mcp");
         assert_eq!(v["task"]["instruction"], "Find the bucket.");
         assert_eq!(v["task"]["budget_seconds"], 300.);
-        assert!(encode_task_level_request("tok", "task", "   ", 300.).is_err());
-        assert!(encode_task_level_request("tok", "task", "go", 0.).is_err());
-        assert!(encode_task_level_request("tok", "task", &"x".repeat(501), 60.).is_err());
+        assert!(encode_task_level_request("tok", "task", "   ", 300., TaskAgent::Builtin).is_err());
+        assert!(encode_task_level_request("tok", "task", "go", 0., TaskAgent::Builtin).is_err());
+        assert!(
+            encode_task_level_request("tok", "task", &"x".repeat(501), 60., TaskAgent::Builtin)
+                .is_err()
+        );
     }
 
     #[test]
@@ -338,6 +491,11 @@ mod tests {
         assert!(validate_task_action(&reply).is_ok());
         let cancel = String::from_utf8(encode_task_cancel("t", "c").unwrap()).unwrap();
         assert!(validate_task_action(&cancel).is_ok());
+        for approve in [true, false] {
+            let drive = String::from_utf8(encode_task_drive("t", approve, "d").unwrap()).unwrap();
+            assert!(validate_task_action(&drive).is_ok());
+        }
+        assert!(validate_task_action(r#"{"task_id":"t","action":"drive","token":"r"}"#).is_err());
         assert!(validate_task_action(r#"{"task_id":"t","action":"reply","token":"r"}"#).is_err());
         assert!(
             validate_task_action(r#"{"task_id":"t","action":"cancel","token":"r","linear":1}"#)
@@ -373,5 +531,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(failed.state_label(), "Failed · model call limit reached");
+    }
+
+    #[test]
+    fn decodes_an_mcp_agent_task_and_its_drive_request() {
+        let status = json!({"task_agents": ["builtin", "mcp"], "task": {
+            "task_id": "t1", "phase": "planning", "reason": "awaiting_drive_approval",
+            "agent": "mcp", "step": 1, "max_steps": 20,
+            "drive_request": {"reason": "nudge closer", "seconds": 20.0, "waiting_seconds": 3.0}
+        }});
+        let report = decode_task(&status).unwrap();
+        assert_eq!(report.agent, TaskAgent::Mcp);
+        assert!(report.awaiting_drive_approval());
+        assert_eq!(report.drive_request.as_ref().unwrap().seconds, 20.);
+        assert_eq!(
+            report.state_label(),
+            "The agent asks to drive · approve or deny"
+        );
+        assert_eq!(
+            task_agents(&status, true),
+            vec![TaskAgent::Builtin, TaskAgent::Mcp]
+        );
+        assert_eq!(task_agents(&json!({}), true), vec![TaskAgent::Builtin]);
+        assert!(task_agents(&json!({}), false).is_empty());
+        let granted = decode_task(&json!({"task": {"task_id": "t", "phase": "planning",
+            "reason": "agent_driving", "agent": "mcp", "drive_remaining_seconds": 41.2}}))
+        .unwrap();
+        assert_eq!(
+            granted.state_label(),
+            "Agent is driving · grant ends in 41 s"
+        );
+        assert!(!granted.awaiting_drive_approval());
     }
 }
