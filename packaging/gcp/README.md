@@ -44,6 +44,23 @@ publishing/subscribing to fleet topics; it does not provide per-operator roles.
 Desktop control claims are local UI state, not an exclusive router-wide lock.
 Coordinate operators; vehicle runtime checks remain the final command boundary.
 
+## Zorvane online rooms
+
+Zorvane players browse, host and join rooms through this router. They sign in as
+`zorvane` with the password in root-only `/etc/argos/zorvane.password`, which the
+installer creates and adds to `users.txt` when the account is missing. Share that
+password with players; it is not the fleet password.
+
+`router.json5` turns on Zenoh access control with default deny. The `zorvane`
+account may only publish, subscribe and query under `zorvane/**`, so a player can
+never reach `terra/phone/**`. Every other account in `users.txt` keeps full
+access. The installer builds that list from `users.txt`, so rerun it after you add
+an account, or the new account can do nothing. Each room also has its own room
+password, checked by the hosting simulator.
+
+To change the player password, edit the `zorvane:` line in `users.txt` and
+`zorvane.password` together, then `sudo systemctl restart argos-router`.
+
 ## Build and deploy
 
 Build the router for the Debian x86_64 host (requires cargo-zigbuild and Zig):
@@ -66,7 +83,8 @@ sudo journalctl -u argos-router -u argos-router-tls --since '10 minutes ago'
 ```
 
 The installer creates the service user/directories when needed, preserves existing
-fleet credentials and custom user dictionary entries, installs the router, and
+fleet credentials and custom user dictionary entries, adds the `zorvane` player
+account and access control (see above), installs the router, and
 replaces Caddy's old reverse proxy with a status response. It disables/stops the
 legacy `argos-server.service` when present and removes its installed unit file.
 It leaves old server binaries, `/etc/argos/server.env`, SQLite data and web files
