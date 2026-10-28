@@ -22,15 +22,24 @@ fn bridge_checks_the_token_and_relays_to_the_window() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(dir.join(AGENT_BRIDGE_FILE)).unwrap().permissions().mode();
+        let mode = std::fs::metadata(dir.join(AGENT_BRIDGE_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o077, 0, "bridge file must be private");
     }
     let token = file["token"].as_str().unwrap().to_string();
     let mut stream = TcpStream::connect(("127.0.0.1", bridge.port())).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
 
-    let refused = ask(&mut stream, &mut reader, json!({"id": 1, "token": "nope", "op": "state"}));
+    let refused = ask(
+        &mut stream,
+        &mut reader,
+        json!({"id": 1, "token": "nope", "op": "state"}),
+    );
     assert_eq!(refused["ok"], false);
     assert!(refused["error"].as_str().unwrap().contains("token"));
     assert!(bridge.take_calls().is_empty());
@@ -39,7 +48,7 @@ fn bridge_checks_the_token_and_relays_to_the_window() {
     let window = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            for call in bridge.take_calls() {
+            if let Some(call) = bridge.take_calls().into_iter().next() {
                 assert!(call.envelope.request.is_ok());
                 call.answer(Ok(json!({"rovers": []})));
                 return bridge;
@@ -48,11 +57,18 @@ fn bridge_checks_the_token_and_relays_to_the_window() {
         }
         panic!("no call reached the window");
     });
-    let reply = ask(&mut stream, &mut reader, json!({"id": 2, "token": token, "op": "state"}));
+    let reply = ask(
+        &mut stream,
+        &mut reader,
+        json!({"id": 2, "token": token, "op": "state"}),
+    );
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["id"], 2);
     assert_eq!(reply["rovers"], json!([]));
     let bridge = window.join().unwrap();
     drop(bridge);
-    assert!(!dir.join(AGENT_BRIDGE_FILE).exists(), "the file goes with the bridge");
+    assert!(
+        !dir.join(AGENT_BRIDGE_FILE).exists(),
+        "the file goes with the bridge"
+    );
 }

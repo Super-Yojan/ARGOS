@@ -85,6 +85,17 @@ pub enum CommandSource {
     Recommendation,
 }
 
+impl CommandSource {
+    /// The `source` written on session-log records.
+    pub fn name(self) -> &'static str {
+        match self {
+            CommandSource::Operator => "operator",
+            CommandSource::Agent => "agent",
+            CommandSource::Recommendation => "recommendation",
+        }
+    }
+}
+
 pub fn command_token(source: CommandSource, id: u64, millis: u128) -> String {
     match source {
         CommandSource::Operator => format!("gpui-{id}-{millis}"),
@@ -96,11 +107,11 @@ pub fn command_token(source: CommandSource, id: u64, millis: u128) -> String {
 /// `operator`, `agent` or `recommendation`, read back from a token.
 pub fn token_source(token: &str) -> &'static str {
     if token.starts_with("gpui-agent-") {
-        "agent"
+        CommandSource::Agent.name()
     } else if token.starts_with("gpui-rec-") {
-        "recommendation"
+        CommandSource::Recommendation.name()
     } else {
-        "operator"
+        CommandSource::Operator.name()
     }
 }
 

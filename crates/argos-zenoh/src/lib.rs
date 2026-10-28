@@ -115,6 +115,9 @@ pub struct Client {
     captures: point_capture::Captures,
     /// Live point stream per rover; subscribed only while one is wanted.
     lives: point_capture::Lives,
+    /// Who is sending commands right now, when the dashboard says so; tags
+    /// interventions whose tokens do not carry it (stops, goal cancels).
+    command_source: Mutex<Option<&'static str>>,
 }
 type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
 impl Client {
@@ -683,6 +686,7 @@ impl Client {
             tracking,
             captures: Default::default(),
             lives: Default::default(),
+            command_source: Mutex::new(None),
         })
     }
     /// Subscribe to these rovers' occupancy grids, point clouds, and depth
@@ -1196,11 +1200,18 @@ impl Client {
             "rover_id": id,
             "from_level": from,
             "token": token,
-            "source": token.as_str().map(argos_core::token_source).unwrap_or("operator"),
+            "source": (*self.command_source.lock().unwrap())
+                .or_else(|| token.as_str().map(argos_core::token_source))
+                .unwrap_or("operator"),
             "time": self.start.elapsed().as_secs_f64(),
             "utc": utc(),
             "session_id": self.session_id,
         }));
+    }
+    /// Mark the commands sent until the next call as coming from `source`
+    /// (`agent`, `recommendation`), or `None` for the operator's own.
+    pub fn set_command_source(&self, source: Option<&'static str>) {
+        *self.command_source.lock().unwrap() = source;
     }
     /// Add a station event, such as an agent request or a recommendation
     /// decision, to the session log with the usual time stamps.

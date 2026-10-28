@@ -1125,10 +1125,20 @@ impl FleetFeed {
         source: argos_core::CommandSource,
         send: impl FnOnce(&Self) -> R,
     ) -> R {
-        let previous = std::mem::replace(&mut *self.source.lock().unwrap(), source);
+        let previous = self.swap_source(source);
         let result = send(self);
-        *self.source.lock().unwrap() = previous;
+        self.swap_source(previous);
         result
+    }
+    /// Mark commands as coming from `source` until the next swap; returns the
+    /// source to put back. For callers that cannot use [`Self::as_source`].
+    pub fn swap_source(&self, source: argos_core::CommandSource) -> argos_core::CommandSource {
+        if let Ok(client) = self.connected() {
+            client.set_command_source(
+                (source != argos_core::CommandSource::Operator).then(|| source.name()),
+            );
+        }
+        std::mem::replace(&mut *self.source.lock().unwrap(), source)
     }
     fn token_source(&self) -> argos_core::CommandSource {
         *self.source.lock().unwrap()
@@ -1146,7 +1156,15 @@ impl FleetFeed {
             .and_then(|client| {
                 serde_json::from_str::<Value>(&client.operator_state_snapshot()).ok()
             })
-            .map(|mut all| all[id.to_string()].take())
+            .map(|mut all| {
+                let mut rover = all[id.to_string()].take();
+                // Grids and point clouds are far too big for an agent's context.
+                if let Some(rover) = rover.as_object_mut() {
+                    rover.remove("cloud");
+                    rover.remove("occupancy");
+                }
+                rover
+            })
             .unwrap_or(Value::Null)
     }
     /// Zero any held drive input, then close the session in the background.

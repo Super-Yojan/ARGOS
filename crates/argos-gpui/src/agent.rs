@@ -237,6 +237,7 @@ impl Dashboard {
             "link": self.link,
             "time_s": self.now,
             "operator": {
+                "has_control": self.claim.held(self.now),
                 "selected": self.selected,
                 "driving": self.driving,
                 "note": self.note,
@@ -324,6 +325,16 @@ impl Dashboard {
 
     fn agent_command(&mut self, command: &AgentCommand) -> Result<String, String> {
         let source = CommandSource::Agent;
+        // Stops always go through; everything else needs this window's operator
+        // lease, the same as the buttons.
+        if !matches!(command, AgentCommand::Stop { .. } | AgentCommand::StopAll)
+            && !self.claim.held(self.now)
+        {
+            return Err(
+                "This ARGOS window does not hold control; the operator must press Take control"
+                    .into(),
+            );
+        }
         match command {
             AgentCommand::SetLevel {
                 rover,
@@ -333,7 +344,7 @@ impl Dashboard {
             AgentCommand::GoTo { rover, goal } => self.goal_command(*rover, goal, source),
             AgentCommand::CancelGoal { rover } => {
                 self.agent_mark(*rover)?;
-                self.feed.cancel_goal(*rover);
+                self.feed.as_source(source, |feed| feed.cancel_goal(*rover));
                 Ok(format!("Cancel sent to rover {rover}"))
             }
             AgentCommand::StartTask {
@@ -361,14 +372,18 @@ impl Dashboard {
                     return Err(format!("Rover {rover} is not on the map"));
                 }
                 self.end_agent_drive("stop");
+                let previous = self.feed.swap_source(source);
                 self.stop_rover(*rover);
+                self.feed.swap_source(previous);
                 Ok(format!(
                     "Stop sent to rover {rover} · the operator must press Reset stop"
                 ))
             }
             AgentCommand::StopAll => {
                 self.end_agent_drive("stop");
+                let previous = self.feed.swap_source(source);
                 self.stop_all();
+                self.feed.swap_source(previous);
                 Ok(self.note.clone())
             }
             AgentCommand::RequestDrive {
@@ -826,6 +841,11 @@ impl Dashboard {
         let Some(entry) = self.agent.book.get(rec_id).cloned() else {
             return;
         };
+        // Like the buttons, a card that sends something needs the operator lease.
+        if !matches!(entry.rec.action, RecAction::Attention) && !self.claim.held(self.now) {
+            self.note = "Take control to accept this card".into();
+            return;
+        }
         if self
             .agent
             .book

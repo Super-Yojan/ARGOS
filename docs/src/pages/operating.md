@@ -78,6 +78,10 @@ The autonomy buttons ask the rover to change level. The inspector shows the leve
 
 When the phone has both, **Built-in model** and **MCP agent** buttons pick who runs the next task; ARGOS prefers the MCP agent. The agent works through Terra's tools: it reads the map, looks through the camera, sends waypoints that Terra checks the same way, and asks you questions. It may also ask for **raw drive** for up to 60 s. That request shows in amber with its reason; nothing moves until you press **Approve drive**. During a grant the agent's speed is capped at 0.5 m/s and the obstacle planner still checks every command. **Deny drive** or **End drive** stops it at once, and the grant ends by itself when its time runs out.
 
+## Agents
+
+The **Agent** panel at the bottom left lets an AI agent put recommendation cards in front of you (Advise, the default) or, in Operator mode, command rovers through these same checks. Raw drive from an agent always waits for **Approve drive**. See [Agents and recommendations](/ARGOS/agents).
+
 ## The map grid
 
 **Map grid** draws the selected rover's occupancy grid under it, semi-transparent. A cell at 65 or above is occupied, 0 to 64 is free, and a negative cell is unknown. Only the selected rover's grid is fetched, so selecting another rover fills in its grid within about two seconds.
