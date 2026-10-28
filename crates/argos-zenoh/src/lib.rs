@@ -832,6 +832,7 @@ impl Client {
             || kind == "search/report/ack"
             || kind == "mission/report"
             || (kind == "task/action" && v["action"] == "cancel")
+            || (kind == "dock" && v["action"] == "cancel")
             || (kind == "teleop"
                 && v["linear"].as_f64() == Some(0.)
                 && v["angular"].as_f64() == Some(0.));
@@ -872,6 +873,7 @@ impl Client {
                 | "search/action"
                 | "search/report/ack"
                 | "task/action"
+                | "dock"
         ) || payload.len() > 2048
         {
             return Err(invalid("invalid operator command"));
@@ -901,6 +903,8 @@ impl Client {
             validate_search_command(kind, payload)?;
         } else if kind == "task/action" {
             argos_core::validate_task_action(payload)?;
+        } else if kind == "dock" {
+            argos_core::validate_dock_action(payload)?;
         } else if kind == "teleop" {
             let linear = value["linear"]
                 .as_f64()
@@ -960,6 +964,7 @@ impl Client {
             || (kind == "search/action"
                 && matches!(value["action"].as_str(), Some("cancel" | "pause")))
             || (kind == "task/action" && value["action"] == "cancel")
+            || (kind == "dock" && value["action"] == "cancel")
             || kind == "teleop"
                 && value["linear"].as_f64() == Some(0.)
                 && value["angular"].as_f64() == Some(0.);
@@ -1682,6 +1687,7 @@ fn intervention_cause(
         {
             Some("mission_cancel")
         }
+        "dock" if value["action"] == "cancel" => Some("dock_cancel"),
         _ => None,
     }
 }

@@ -446,6 +446,8 @@ pub struct RoverMark {
     pub task_agents: Vec<argos_core::TaskAgent>,
     /// Buckets and balls the rover's detector has confirmed this run.
     pub objects: Vec<ObjectMark>,
+    /// Terra's bucket dock, once one has started this run.
+    pub dock: Option<argos_core::DockReport>,
 }
 /// A found object placed on the map.
 #[derive(Clone, Debug, PartialEq)]
@@ -849,6 +851,7 @@ pub fn fleet_marks(
                         .is_some_and(|levels| levels.iter().any(|level| level == "task")),
                 ),
                 objects: object_marks(&operator[&key], overlay_frame),
+                dock: report.as_ref().and_then(|report| report.dock.clone()),
             })
         })
         .collect()
@@ -1339,9 +1342,45 @@ impl FleetFeed {
             "Task cancel requested",
         );
     }
+    /// Line the rover up over found bucket `object_id`.
+    pub fn start_dock(&self, id: u64, object_id: u32) {
+        self.operator_action(
+            id,
+            "dock",
+            move |token| argos_core::encode_dock_start(object_id, token),
+            "Dock requested · Terra lines up over the bucket",
+        );
+    }
+    /// Approve the dump: Terra opens the gate.
+    pub fn approve_dump(&self, id: u64, dock_id: u64) {
+        self.operator_action(
+            id,
+            "dock",
+            move |token| argos_core::encode_dock_dump(dock_id, token),
+            "Dump approved · the gate opens",
+        );
+    }
+    /// End the dock. An open gate closes.
+    pub fn cancel_dock(&self, id: u64) {
+        self.operator_action(
+            id,
+            "dock",
+            argos_core::encode_dock_cancel,
+            "Dock cancel requested",
+        );
+    }
     fn task_action(
         &self,
         id: u64,
+        encode: impl FnOnce(&str) -> argos_core::Result<Vec<u8>> + Send + 'static,
+        done: &'static str,
+    ) {
+        self.operator_action(id, "task/action", encode, done);
+    }
+    fn operator_action(
+        &self,
+        id: u64,
+        kind: &'static str,
         encode: impl FnOnce(&str) -> argos_core::Result<Vec<u8>> + Send + 'static,
         done: &'static str,
     ) {
@@ -1353,9 +1392,9 @@ impl FleetFeed {
                 let client = guard.as_ref().ok_or("Not connected")?;
                 let token = format!("gpui-{id}-{}", unix_millis());
                 let bytes = encode(&token).map_err(|error| error.to_string())?;
-                let payload = String::from_utf8(bytes).map_err(|_| "task payload".to_string())?;
+                let payload = String::from_utf8(bytes).map_err(|_| format!("{kind} payload"))?;
                 client
-                    .operator_command(id, "task/action", &payload)
+                    .operator_command(id, kind, &payload)
                     .map_err(|error| error.to_string())?;
                 Ok::<_, String>(done.to_string())
             })();
