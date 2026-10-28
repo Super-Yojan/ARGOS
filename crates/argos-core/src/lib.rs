@@ -38,6 +38,8 @@ mod exploration;
 pub use exploration::*;
 mod task;
 pub use task::*;
+mod agent;
+pub use agent::*;
 
 mod hardware;
 pub use hardware::*;

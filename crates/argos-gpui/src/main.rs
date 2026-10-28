@@ -9,6 +9,7 @@
 //! same click: the ghost shows the arrival radius and GPS distance, and Send
 //! goal publishes the WGS84 point as the explicit operator action.
 
+mod agent;
 mod interaction;
 mod local_map;
 mod map_overlay;
@@ -114,6 +115,8 @@ struct Dashboard {
     /// Which fleet `feed` and `fpv` are connected to. The console toggle
     /// replaces both.
     fleet_mode: LaunchMode,
+    /// Agent bridge, mode, recommendation cards, and raw-drive grant.
+    agent: agent::AgentDesk,
     _poll: Task<()>,
 }
 impl Dashboard {
@@ -151,6 +154,7 @@ impl Dashboard {
                             cx.drop_image(retired, None);
                         }
                         this.sync(cx);
+                        this.serve_agents();
                         if this.close_preview {
                             this.close_preview = false;
                             this.view.update(cx, |map, _| map.frame_near());
@@ -208,6 +212,7 @@ impl Dashboard {
             study: None,
             study_sends: BTreeMap::new(),
             fleet_mode,
+            agent: agent::AgentDesk::start(),
             _poll: poll,
         }
     }
@@ -584,6 +589,7 @@ impl Dashboard {
         }
     }
     fn stop_rover(&mut self, id: u64) {
+        self.end_agent_drive("stop");
         self.stop_drive();
         self.drag = None;
         self.latched.insert(id);
@@ -593,6 +599,7 @@ impl Dashboard {
         };
     }
     fn begin_drive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_agent_drive("operator took the wheel");
         let Some(id) = self.selected else {
             self.note = "Select a rover before driving".into();
             return;
@@ -644,6 +651,7 @@ impl Dashboard {
     /// Safety stop for every fleet member, located or not. Each rover then
     /// needs its own Reset stop; nothing here re-arms or resumes.
     fn stop_all(&mut self) {
+        self.end_agent_drive("stop");
         self.stop_drive();
         self.drag = None;
         let ids = console::fleet_ids(&self.marks, &self.presence);
@@ -676,6 +684,7 @@ impl Dashboard {
                 return;
             }
         };
+        self.end_agent_drive("fleet switched");
         self.stop_drive();
         self.drag = None;
         self.selected = None;
@@ -1113,6 +1122,7 @@ impl Render for Dashboard {
                         )
                     })
                     .child(offscreen_tabs(&field, &unlocated, selected, cx))
+                    .child(agent::agent_panel(self, cx))
                     .children(confirm)
                     .children(inspector),
             )

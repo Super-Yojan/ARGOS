@@ -1196,10 +1196,22 @@ impl Client {
             "rover_id": id,
             "from_level": from,
             "token": token,
+            "source": token.as_str().map(argos_core::token_source).unwrap_or("operator"),
             "time": self.start.elapsed().as_secs_f64(),
             "utc": utc(),
             "session_id": self.session_id,
         }));
+    }
+    /// Add a station event, such as an agent request or a recommendation
+    /// decision, to the session log with the usual time stamps.
+    pub fn record_event(&self, mut event: serde_json::Value) {
+        if !event.is_object() {
+            return;
+        }
+        event["time"] = self.start.elapsed().as_secs_f64().into();
+        event["utc"] = utc().into();
+        event["session_id"] = self.session_id.clone().into();
+        let _ = self.recorder.record(event);
     }
     pub fn localization_snapshot(&self) -> String {
         let values: serde_json::Map<String, serde_json::Value> = self
