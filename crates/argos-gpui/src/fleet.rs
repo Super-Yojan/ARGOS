@@ -442,6 +442,8 @@ pub struct RoverMark {
     pub task: Option<argos_core::TaskReport>,
     /// The phone advertises `task`, so it can run a language model.
     pub task_supported: bool,
+    /// Who can answer an L5 task on this phone: the built-in model, an MCP agent, or both.
+    pub task_agents: Vec<argos_core::TaskAgent>,
     /// Buckets and balls the rover's detector has confirmed this run.
     pub objects: Vec<ObjectMark>,
 }
@@ -840,6 +842,12 @@ pub fn fleet_marks(
                 task_supported: authority["supported_levels"]
                     .as_array()
                     .is_some_and(|levels| levels.iter().any(|level| level == "task")),
+                task_agents: argos_core::task_agents(
+                    authority,
+                    authority["supported_levels"]
+                        .as_array()
+                        .is_some_and(|levels| levels.iter().any(|level| level == "task")),
+                ),
                 objects: object_marks(&operator[&key], overlay_frame),
             })
         })
@@ -1268,7 +1276,13 @@ impl FleetFeed {
     }
     /// Select L5 and give the task in one message. Terra's phone model picks the
     /// waypoints; Terra checks and drives them.
-    pub fn publish_task(&self, id: u64, instruction: String, budget_seconds: f64) {
+    pub fn publish_task(
+        &self,
+        id: u64,
+        instruction: String,
+        budget_seconds: f64,
+        agent: argos_core::TaskAgent,
+    ) {
         let client = self.client.clone();
         let picture = self.picture.clone();
         std::thread::spawn(move || {
@@ -1283,6 +1297,7 @@ impl FleetFeed {
                     &task_id,
                     &instruction,
                     budget_seconds,
+                    agent,
                 )
                 .map_err(|error| error.to_string())?;
                 let payload = String::from_utf8(bytes).map_err(|_| "task payload".to_string())?;
@@ -1302,6 +1317,18 @@ impl FleetFeed {
             id,
             move |token| argos_core::encode_task_reply(&task_id, &text, token),
             "Reply sent to the rover's model",
+        );
+    }
+    /// Approve or deny the agent's raw-drive request. Deny also ends a running grant.
+    pub fn publish_task_drive(&self, id: u64, task_id: String, approve: bool) {
+        self.task_action(
+            id,
+            move |token| argos_core::encode_task_drive(&task_id, approve, token),
+            if approve {
+                "Raw drive approved for the agent"
+            } else {
+                "Raw drive denied · the rover stops"
+            },
         );
     }
     /// Cancel the task. The rover holds at L5.

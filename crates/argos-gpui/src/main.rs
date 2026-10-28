@@ -101,6 +101,8 @@ struct Dashboard {
     task_reply: Entity<InputState>,
     /// Index into `TASK_BUDGETS_MIN` for the next L5 task.
     task_budget: usize,
+    /// Answerer picked for the next L5 task; `None` prefers the phone's MCP agent.
+    task_agent: Option<argos_core::TaskAgent>,
     fpv: FpvController,
     /// Study condition chosen in this window: `None` until the experimenter
     /// picks one, then `Some(None)` for off or `Some(Some(level))` for a fixed
@@ -201,6 +203,7 @@ impl Dashboard {
             task_input,
             task_reply,
             task_budget: 1,
+            task_agent: None,
             fpv,
             study: None,
             study_sends: BTreeMap::new(),
@@ -752,10 +755,11 @@ impl Dashboard {
             .get(self.task_budget)
             .copied()
             .unwrap_or(TASK_BUDGETS_MIN[0]);
+        let agent = task_agent_choice(self.task_agent, mark);
         self.stop_drive();
         self.feed
-            .publish_task(id, instruction, f64::from(minutes) * 60.);
-        self.note = format!("Sending L5 task · {minutes} min");
+            .publish_task(id, instruction, f64::from(minutes) * 60., agent);
+        self.note = format!("Sending L5 task to the {} · {minutes} min", agent.label());
     }
     fn reply_task(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some(task_id) = self
@@ -2246,8 +2250,24 @@ fn explore_section(
         })
 }
 
-/// L5: type a task; the phone's model picks waypoints and Terra drives them.
-/// The model's plan also shows as the rover's goal and route on the map.
+/// The picked answerer if the rover has it, else its MCP agent, else the built-in model.
+fn task_agent_choice(
+    picked: Option<argos_core::TaskAgent>,
+    mark: &RoverMark,
+) -> argos_core::TaskAgent {
+    use argos_core::TaskAgent;
+    picked
+        .filter(|agent| mark.task_agents.contains(agent))
+        .or_else(|| {
+            mark.task_agents
+                .contains(&TaskAgent::Mcp)
+                .then_some(TaskAgent::Mcp)
+        })
+        .unwrap_or(TaskAgent::Builtin)
+}
+
+/// L5: type a task; the phone's model or MCP agent picks waypoints and Terra drives them.
+/// The plan also shows as the rover's goal and route on the map.
 fn task_section(
     dashboard: &Dashboard,
     mark: &RoverMark,
@@ -2259,7 +2279,27 @@ fn task_section(
     let report = mark.task.clone();
     let running = report.as_ref().is_some_and(|task| task.running())
         && mark.requested_level.as_deref() == Some("task");
+    let agents = mark.task_agents.clone();
+    let chosen = task_agent_choice(dashboard.task_agent, mark);
     section("Task · L5", cx)
+        .when(agents.len() > 1, |section| {
+            section.child(
+                ButtonGroup::new("task-agent")
+                    .outline()
+                    .small()
+                    .children(agents.iter().enumerate().map(|(index, agent)| {
+                        Button::new(("task-agent", index as u64))
+                            .label(agent.label())
+                            .selected(*agent == chosen)
+                    }))
+                    .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
+                        if let Some(agent) = clicks.first().and_then(|index| agents.get(*index)) {
+                            this.task_agent = Some(*agent);
+                        }
+                        cx.notify();
+                    })),
+            )
+        })
         .child(Input::new(&dashboard.task_input).small())
         .child(
             h_flex()
@@ -2316,6 +2356,13 @@ fn task_section(
         .map(|section| match report {
             Some(task) => {
                 let waiting = running && task.waiting_for_operator();
+                let drive_asked = running && task.awaiting_drive_approval();
+                let driving = running && task.drive_remaining_s.is_some();
+                let asker = match task.agent {
+                    argos_core::TaskAgent::Builtin => "Model",
+                    argos_core::TaskAgent::Mcp => "Agent",
+                };
+                let drive_task_id = task.task_id.clone();
                 let question = task.question.clone();
                 let recent: Vec<String> = task
                     .history
@@ -2327,7 +2374,53 @@ fn task_section(
                     .collect();
                 section
                     .when_some(question.filter(|_| waiting), |section, question| {
-                        section.child(caution(format!("Model asks: {question}"), cx))
+                        section.child(caution(format!("{asker} asks: {question}"), cx))
+                    })
+                    .when_some(
+                        task.drive_request.clone().filter(|_| drive_asked),
+                        |section, request| {
+                            section.child(caution(
+                                format!(
+                                    "Agent asks for raw drive for {:.0} s: {}. Speed is capped at 0.5 m/s and the obstacle planner still checks every command.",
+                                    request.seconds, request.reason
+                                ),
+                                cx,
+                            ))
+                        },
+                    )
+                    .when(drive_asked || driving, |section| {
+                        let deny_id = drive_task_id.clone();
+                        section.child(
+                            h_flex()
+                                .gap_2()
+                                .when(drive_asked, |row| {
+                                    row.child(
+                                        Button::new(("task-drive-approve", id))
+                                            .small()
+                                            .label("Approve drive")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.feed.publish_task_drive(
+                                                    id,
+                                                    drive_task_id.clone(),
+                                                    true,
+                                                );
+                                                this.note = "Approving raw drive".into();
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .child(
+                                    Button::new(("task-drive-deny", id))
+                                        .outline()
+                                        .small()
+                                        .label(if driving { "End drive" } else { "Deny drive" })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.feed.publish_task_drive(id, deny_id.clone(), false);
+                                            this.note = "Denying raw drive".into();
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
                     })
                     .when(running, |section| {
                         section.child(
@@ -2350,7 +2443,7 @@ fn task_section(
                     .children(recent.into_iter().map(|line| hint(line, cx)))
             }
             None => section.child(hint(
-                "L5 hands the task to the rover's on-phone language model. It reads the phone's map, picks waypoints, and asks you when unsure. Terra checks every waypoint and drives it with the L3 planner. Stop, Cancel task, or another level ends it.",
+                "L5 hands the task to the rover's on-phone language model or MCP agent (Qwen 3.5 2B). It reads the phone's map, picks waypoints, and asks you when unsure. Terra checks every waypoint and drives it with the L3 planner. The agent can ask for raw drive, which runs only after you approve it. Stop, Cancel task, or another level ends it.",
                 cx,
             )),
         })
