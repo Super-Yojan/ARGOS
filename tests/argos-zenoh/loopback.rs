@@ -1003,3 +1003,101 @@ fn study_condition_is_sent_and_logged_in_the_chosen_folder() {
     c.disconnect();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn dock_start_and_dump_reach_the_rover() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp/127.0.0.1:{}", socket.local_addr().unwrap().port());
+    drop(socket);
+    let mut config = zenoh::Config::default();
+    config.insert_json5("mode", "\"router\"").unwrap();
+    config
+        .insert_json5("listen/endpoints", &format!("[\"{endpoint}\"]"))
+        .unwrap();
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .unwrap();
+    let router = zenoh::open(config).wait().unwrap();
+    let docks = router
+        .declare_subscriber("dock-test/7/dock")
+        .wait()
+        .unwrap();
+    let client = Client::connect(&endpoint, "dock-test").unwrap();
+    client.focus(Some(7)).unwrap();
+    let status = |safety: &str| {
+        serde_json::json!({
+            "run_id": "run", "revision": 4, "requested_level": "waypoint",
+            "effective_level": "waypoint", "safety": safety,
+            "supported_levels": ["teleop", "waypoint"],
+        })
+        .to_string()
+    };
+    wait_for(|| {
+        router
+            .put(
+                "dock-test/fleet/state",
+                br#"{"count":1,"max_count":1,"ids":[7]}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        router
+            .put(
+                "dock-test/7/pose",
+                br#"{"rover_id":7,"sequence":1,"x":0,"y":0,"yaw":0}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        router
+            .put("dock-test/7/autonomy/status", status("clear"))
+            .wait()
+            .unwrap();
+        router
+            .put(
+                "dock-test/7/hardware/status",
+                br#"{"schema_version":1,"control_mode":"streamed_relay","connected":true,"ready":true,"output_active":false,"reason":"ready","age":0.1}"#.as_slice(),
+            )
+            .wait()
+            .unwrap();
+        client
+            .snapshot()
+            .rovers
+            .first()
+            .is_some_and(|r| r.pose.is_some())
+            && client.operator_snapshot().contains("hardware")
+            && client.operator_snapshot().contains("\"revision\":4")
+    });
+    for payload in [
+        r#"{"action":"start","object_id":1,"token":"dock-start"}"#,
+        r#"{"action":"dump","dock_id":2,"token":"dock-dump"}"#,
+    ] {
+        client.operator_command(7, "dock", payload).unwrap();
+        let sample = docks.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+        let sent: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+        assert_eq!(sent["run_id"], "run");
+        assert_eq!(sent["authority_revision"], 4);
+    }
+    // A latched stop refuses a new dock; cancel still goes through.
+    wait_for(|| {
+        router
+            .put("dock-test/7/autonomy/status", status("emergency_stop"))
+            .wait()
+            .unwrap();
+        client.operator_snapshot().contains("emergency_stop")
+    });
+    assert!(
+        client
+            .operator_command(
+                7,
+                "dock",
+                r#"{"action":"start","object_id":1,"token":"dock-again"}"#
+            )
+            .is_err()
+    );
+    client
+        .operator_command(7, "dock", r#"{"action":"cancel","token":"dock-cancel"}"#)
+        .unwrap();
+    let sample = docks.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    let sent: serde_json::Value = serde_json::from_slice(&sample.payload().to_bytes()).unwrap();
+    assert_eq!(sent["action"], "cancel");
+    client.disconnect();
+}
