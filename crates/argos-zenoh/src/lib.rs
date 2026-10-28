@@ -1136,6 +1136,16 @@ impl Client {
                 }
             } else if kind == "autonomy" && value.get("assigned_level").is_some() {
                 // Validated above; Terra checks the level against its own contract.
+            } else if kind == "dock" {
+                // Start and dump move the rover or open the gate; Terra checks the
+                // bucket, level and alignment against its own dock contract.
+                let (hardware, at) = states
+                    .get(&(id, "hardware".into()))
+                    .ok_or_else(|| invalid("hardware status unavailable"))?;
+                require_relay(hardware, at, false)?;
+                if authority["safety"] == "emergency_stop" {
+                    return Err(invalid("Stop is active · reset it before docking"));
+                }
             } else if value["token"]
                 .as_str()
                 .is_none_or(|s| s.is_empty() || s.len() > 64)
