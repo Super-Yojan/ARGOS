@@ -1124,7 +1124,8 @@ impl Render for Dashboard {
                     .child(offscreen_tabs(&field, &unlocated, selected, cx))
                     .child(agent::agent_panel(self, cx))
                     .children(confirm)
-                    .children(inspector),
+                    .children(inspector)
+                    .child(dump_popups(&self.marks, cx)),
             )
     }
 }
@@ -1375,6 +1376,131 @@ fn heading_line(report: &OutdoorReport) -> String {
 const CLICK_SLOP_PX: f32 = 4.;
 
 /// The proposed destination's popup, anchored just above the clicked point.
+/// Bucket dock status with Dump and Cancel. The dump pop-up offers the same Dump.
+fn dock_section(
+    id: u64,
+    dock: argos_core::DockReport,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let active = dock.active();
+    let awaiting = dock.awaiting_approval;
+    let dock_id = dock.dock_id;
+    section("Bucket dock", cx)
+        .child(rows(dock.rows()))
+        .when(active, |section| {
+            section.child(
+                h_flex()
+                    .gap_2()
+                    .when(awaiting, |row| {
+                        row.child(
+                            Button::new(("dock-dump", id))
+                                .primary()
+                                .small()
+                                .label("Dump")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.feed.approve_dump(id, dock_id);
+                                    this.note = "Dump approved".into();
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new(("dock-cancel", id))
+                            .outline()
+                            .small()
+                            .label("Cancel dock")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.feed.cancel_dock(id);
+                                this.note = "Dock cancel requested".into();
+                                cx.notify();
+                            })),
+                    ),
+            )
+        })
+}
+
+/// One pop-up per rover whose dock is aligned and waiting for the operator
+/// (L0–L3). L4 and L5 dump on their own, so they never ask.
+fn dump_popups(marks: &[RoverMark], cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let waiting: Vec<(u64, argos_core::DockReport)> = marks
+        .iter()
+        .filter_map(|mark| {
+            mark.dock
+                .clone()
+                .filter(|dock| dock.awaiting_approval && dock.phase == "aligned")
+                .map(|dock| (mark.id, dock))
+        })
+        .collect();
+    v_flex()
+        .absolute()
+        .top_3()
+        .left_0()
+        .right_0()
+        .items_center()
+        .gap_2()
+        .children(waiting.into_iter().map(|(id, dock)| {
+            let dock_id = dock.dock_id;
+            let detail = format!(
+                "{} · {:+.2} m side · {:+.2} m range · {:+.0}°{}",
+                dock.target_label(),
+                dock.lateral_m,
+                dock.range_m,
+                dock.heading_deg,
+                if dock.verified {
+                    ""
+                } else {
+                    " · camera lost the bucket at the end, check the FPV"
+                }
+            );
+            v_flex()
+                .id(("dump-popup", id))
+                .w(px(340.))
+                .p_3()
+                .gap_2()
+                .popover_style(cx)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .child(format!("Rover {id} is lined up. Dump now?")),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(detail),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            Button::new(("dump-popup-cancel", id))
+                                .ghost()
+                                .small()
+                                .label("Cancel dock")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.feed.cancel_dock(id);
+                                    this.note = "Dock cancel requested".into();
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new(("dump-popup-dump", id))
+                                .primary()
+                                .small()
+                                .label("Open gate and dump")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.feed.approve_dump(id, dock_id);
+                                    this.note = "Dump approved".into();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+        }))
+}
+
 fn goal_popup(goal: &GoalDrag, at: Point<Pixels>, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let distance = match goal.arrival_radius_m {
         Some(radius) => format!(
@@ -1928,14 +2054,33 @@ fn overview_tab(
         .child(study_section(dashboard, mark, cx))
         .child(explore_section(dashboard, mark, stopped, cx))
         .when(!mark.objects.is_empty(), |tab| {
+            let docking = mark.dock.as_ref().is_some_and(|dock| dock.active());
             tab.child(
-                section("Found objects", cx).children(
-                    mark.objects
-                        .iter()
-                        .map(|object| div().text_sm().child(console::object_line(object))),
-                ),
+                section("Found objects", cx).children(mark.objects.iter().map(|object| {
+                    let object_id = object.object.id;
+                    let bucket = object.object.class == "bucket";
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(div().text_sm().child(console::object_line(object)))
+                        .when(bucket, |row| {
+                            row.child(
+                                Button::new(("dock-start", id * 1000 + u64::from(object_id)))
+                                    .outline()
+                                    .small()
+                                    .label("Dock")
+                                    .disabled(stopped || docking)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.feed.start_dock(id, object_id);
+                                        this.note = "Docking on the bucket".into();
+                                        cx.notify();
+                                    })),
+                            )
+                        })
+                })),
             )
         })
+        .when_some(mark.dock.clone(), |tab, dock| tab.child(dock_section(id, dock, cx)))
         .child(task_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)

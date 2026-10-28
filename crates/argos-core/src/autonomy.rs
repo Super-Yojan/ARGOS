@@ -164,6 +164,8 @@ pub struct AutonomyReport {
     pub arrival_radius: f64,
     /// Terra's latest `sensor_unhealthy` hold, kept a few seconds after it clears.
     pub sensor_hold: Option<SensorHold>,
+    /// Bucket dock, once one has started this run.
+    pub dock: Option<crate::DockReport>,
 }
 
 /// What tripped Terra's latest `sensor_unhealthy` hold (`autonomy/status.sensor_hold`).
@@ -260,6 +262,7 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
         origin: command_origin(value),
         arrival_radius: arrival_radius_m(value),
         sensor_hold: sensor_hold(value),
+        dock: crate::decode_dock(value),
     })
 }
 

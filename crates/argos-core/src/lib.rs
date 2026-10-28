@@ -40,6 +40,8 @@ mod task;
 pub use task::*;
 mod agent;
 pub use agent::*;
+mod dock;
+pub use dock::*;
 
 mod hardware;
 pub use hardware::*;

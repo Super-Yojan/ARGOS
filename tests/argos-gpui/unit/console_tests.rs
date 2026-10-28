@@ -54,6 +54,7 @@ fn mark(id: u64) -> RoverMark {
         task_supported: false,
         task_agents: Vec::new(),
         objects: Vec::new(),
+        dock: None,
     }
 }
 
