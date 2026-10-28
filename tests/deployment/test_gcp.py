@@ -79,6 +79,21 @@ else:
         self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
         self.assertIn('terra:' + secret.read_text().strip(), (self.root / 'etc/argos/users.txt').read_text())
         self.assertFalse((self.root / 'etc/argos/server.env').exists())
+        zorvane = self.root / 'etc/argos/zorvane.password'
+        self.assertEqual(zorvane.stat().st_mode & 0o777, 0o600)
+        self.assertIn('zorvane:' + zorvane.read_text().strip(), (self.root / 'etc/argos/users.txt').read_text())
+
+    def test_router_acl_limits_zorvane_players_to_their_keys(self):
+        self.run_script('install.sh')
+        acl = json.loads((self.root / 'etc/argos/router.json5').read_text())['access_control']
+        self.assertTrue(acl['enabled'])
+        self.assertEqual(acl['default_permission'], 'deny')
+        rules = {rule['id']: rule for rule in acl['rules']}
+        subjects = {subject['id']: subject['usernames'] for subject in acl['subjects']}
+        self.assertEqual(subjects, {'fleet': ['argos', 'terra'], 'players': ['zorvane']})
+        self.assertEqual(rules['zorvane-only']['key_exprs'], ['zorvane/**'])
+        self.assertIn({'rules': ['zorvane-only'], 'subjects': ['players']}, acl['policies'])
+        self.assertIn({'rules': ['everything'], 'subjects': ['fleet']}, acl['policies'])
         events = self.events.read_text()
         self.assertIn('enable --now argos-router-tls.timer', events)
         self.assertIn('reload caddy', events)
@@ -92,7 +107,14 @@ else:
         unit.write_text('old service')
         self.run_script('install.sh')
         self.assertEqual((self.root / 'etc/argos/fleet.password').read_text(), 'existing-secret\n')
-        self.assertEqual((self.root / 'etc/argos/users.txt').read_text(), 'terra:existing-secret\ncustom:other\n')
+        zorvane = (self.root / 'etc/argos/zorvane.password').read_text().strip()
+        self.assertEqual((self.root / 'etc/argos/users.txt').read_text(),
+                         f'terra:existing-secret\ncustom:other\nzorvane:{zorvane}\n')
+        acl = json.loads((self.root / 'etc/argos/router.json5').read_text())['access_control']
+        self.assertEqual(acl['subjects'][0], {'id': 'fleet', 'usernames': ['custom', 'terra']})
+        # A second install keeps the zorvane account as it is.
+        self.run_script('install.sh')
+        self.assertEqual((self.root / 'etc/argos/users.txt').read_text().count('zorvane:'), 1)
         self.assertEqual((self.root / 'etc/argos/server.env').read_text(), 'legacy-data')
         self.assertFalse(unit.exists())
         self.assertIn('disable --now argos-server.service', self.events.read_text())

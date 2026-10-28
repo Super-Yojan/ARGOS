@@ -24,6 +24,19 @@ users = root / 'users.txt'
 # Preserve custom accounts and credentials on upgrades.
 if not users.exists():
     users.write_text('terra:' + password + '\nargos:' + password + '\n')
+# Zorvane players sign in as `zorvane` and may only touch zorvane/**.
+zorvane = root / 'zorvane.password'
+if not zorvane.exists():
+    zorvane.write_text(secrets.token_urlsafe(18) + '\n')
+zorvane.chmod(0o600)
+lines = users.read_text().splitlines()
+names = [line.split(':', 1)[0] for line in lines if ':' in line]
+if 'zorvane' not in names:
+    lines.append('zorvane:' + zorvane.read_text().strip())
+    users.write_text('\n'.join(lines) + '\n')
+fleet = sorted({name for name in names if name != 'zorvane'})
+messages = ['put', 'delete', 'declare_subscriber', 'query', 'declare_queryable', 'reply',
+            'liveliness_token', 'declare_liveliness_subscriber', 'liveliness_query']
 config = {
     'mode': 'router',
     'listen': {'endpoints': ['tls/0.0.0.0:7448', 'tcp/127.0.0.1:7449']},
@@ -35,6 +48,26 @@ config = {
             'listen_certificate': '/var/lib/argos/tls/server.crt',
             'enable_mtls': False,
         }},
+    },
+    # Default deny: every account in users.txt except zorvane keeps full access.
+    # Rerun install.sh after adding an account so it joins the fleet subject.
+    'access_control': {
+        'enabled': True,
+        'default_permission': 'deny',
+        'rules': [
+            {'id': 'everything', 'key_exprs': ['**'], 'messages': messages,
+             'flows': ['ingress', 'egress'], 'permission': 'allow'},
+            {'id': 'zorvane-only', 'key_exprs': ['zorvane/**'], 'messages': messages,
+             'flows': ['ingress', 'egress'], 'permission': 'allow'},
+        ],
+        'subjects': [
+            {'id': 'fleet', 'usernames': fleet},
+            {'id': 'players', 'usernames': ['zorvane']},
+        ],
+        'policies': [
+            {'rules': ['everything'], 'subjects': ['fleet']},
+            {'rules': ['zorvane-only'], 'subjects': ['players']},
+        ],
     },
 }
 (root / 'router.json5').write_text(json.dumps(config))
