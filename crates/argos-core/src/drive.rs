@@ -294,6 +294,9 @@ pub struct NavigationEdit {
     /// Body length and width, metres. Terra validates 0.1..=3.
     pub length: f64,
     pub width: f64,
+    /// Terra `explore_through_unknown`: L4 Explore plans through unknown cells.
+    /// `None` keeps the rover's value; older Terra builds reject the field.
+    pub explore_through_unknown: Option<bool>,
 }
 impl NavigationEdit {
     /// CrabTrapBot's body with the given in-place turning choice.
@@ -302,6 +305,7 @@ impl NavigationEdit {
             allow_in_place,
             length: CRAB_TRAP_BOT_LENGTH,
             width: CRAB_TRAP_BOT_WIDTH,
+            explore_through_unknown: None,
         }
     }
 }
@@ -309,6 +313,12 @@ impl NavigationEdit {
 /// In-place turning as Terra last reported it, if its navigation status says.
 pub fn navigation_allows_in_place(navigation: &Value) -> Option<bool> {
     navigation["parameters"]["turning"]["allow_in_place"].as_bool()
+}
+
+/// Explore through unknown space as Terra last reported it. `None` from a
+/// Terra build that predates the setting.
+pub fn navigation_explores_through_unknown(navigation: &Value) -> Option<bool> {
+    navigation["parameters"]["explore_through_unknown"].as_bool()
 }
 
 /// Terra `navigation/settings` request. Terra replaces all parameters at once,
@@ -343,6 +353,12 @@ pub fn encode_navigation_settings(
     parameters["turning"]["allow_in_place"] = json!(edit.allow_in_place);
     parameters["length"] = json!(edit.length);
     parameters["width"] = json!(edit.width);
+    if let Some(through) = edit.explore_through_unknown {
+        if navigation_explores_through_unknown(navigation).is_none() {
+            return Err(invalid("update Terra to explore through unknown space"));
+        }
+        parameters["explore_through_unknown"] = json!(through);
+    }
     serde_json::to_vec(&json!({
         "token": token,
         "run_id": run_id,
