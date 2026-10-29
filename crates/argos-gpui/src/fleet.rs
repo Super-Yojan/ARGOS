@@ -1559,10 +1559,10 @@ impl FleetFeed {
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });
     }
-    /// Ask Terra to allow (or forbid) autonomous in-place turns, and set
-    /// CrabTrapBot's body size. Terra applies it only with neutral hardware,
-    /// no active goal, and current authority.
-    pub fn configure_navigation(&self, id: u64, allow_in_place: bool) {
+    /// Ask Terra for new planner settings, always with CrabTrapBot's body
+    /// size. Terra applies them only with neutral hardware, no active goal,
+    /// and current authority. `done` is the note shown once sent.
+    pub fn configure_navigation(&self, id: u64, edit: NavigationEdit, done: String) {
         let client = self.client.clone();
         let picture = self.picture.clone();
         std::thread::spawn(move || {
@@ -1589,7 +1589,7 @@ impl FleetFeed {
                 let token = format!("nav-{id}-{}", unix_millis());
                 let bytes = encode_navigation_settings(
                     &navigation,
-                    NavigationEdit::crab_trap_bot(allow_in_place),
+                    edit,
                     &token,
                     &run_id,
                     authority_revision,
@@ -1602,10 +1602,7 @@ impl FleetFeed {
                 client
                     .operator_command(id, "navigation/settings", &payload)
                     .map_err(|error| error.to_string())?;
-                Ok::<_, String>(format!(
-                    "Requested autonomy in-place turns {} with CrabTrapBot size",
-                    if allow_in_place { "on" } else { "off" }
-                ))
+                Ok::<_, String>(done)
             })();
             picture.lock().unwrap().command = message.unwrap_or_else(|error| error);
         });

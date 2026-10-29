@@ -263,11 +263,55 @@ fn navigation_settings_need_reported_status_and_valid_inputs() {
             allow_in_place: true,
             length,
             width,
+            explore_through_unknown: None,
         };
         assert!(encode_navigation_settings(&status, edit, "nav-1", "run-7", 1).is_err());
     }
     assert!(encode_navigation_settings(&status, edit, "bad token", "run-7", 1).is_err());
     assert!(encode_navigation_settings(&status, edit, "nav-1", "", 1).is_err());
+}
+
+#[test]
+fn explore_through_unknown_is_sent_only_to_a_terra_that_reports_it() {
+    let older = terra_navigation_status();
+    assert_eq!(navigation_explores_through_unknown(&older), None);
+    let on = NavigationEdit {
+        explore_through_unknown: Some(true),
+        ..NavigationEdit::crab_trap_bot(false)
+    };
+    // Older Terra rejects unknown fields, so ARGOS refuses instead of sending it.
+    assert!(encode_navigation_settings(&older, on, "nav-1", "run-7", 12).is_err());
+    // The in-place toggle leaves the field out for older Terra.
+    let spin = encode_navigation_settings(
+        &older,
+        NavigationEdit::crab_trap_bot(true),
+        "nav-1",
+        "run-7",
+        12,
+    )
+    .unwrap();
+    let spin: serde_json::Value = serde_json::from_slice(&spin).unwrap();
+    assert!(spin["parameters"].get("explore_through_unknown").is_none());
+
+    let mut current = terra_navigation_status();
+    current["parameters"]["explore_through_unknown"] = false.into();
+    assert_eq!(navigation_explores_through_unknown(&current), Some(false));
+    let bytes = encode_navigation_settings(&current, on, "nav-2", "run-7", 12).unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(request["parameters"]["explore_through_unknown"], true);
+    assert_eq!(request["parameters"]["turning"]["allow_in_place"], false);
+    // A spin change keeps the rover's explore choice.
+    current["parameters"]["explore_through_unknown"] = true.into();
+    let bytes = encode_navigation_settings(
+        &current,
+        NavigationEdit::crab_trap_bot(true),
+        "nav-3",
+        "run-7",
+        12,
+    )
+    .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(request["parameters"]["explore_through_unknown"], true);
 }
 
 #[test]
