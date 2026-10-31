@@ -2747,11 +2747,13 @@ fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) ->
         )
 }
 
-/// Terra's planner turning, which governs autonomous goals. Teleop spin above
-/// only shapes the operator's own commands. Sending also sets CrabTrapBot's size.
+/// Terra's planner turning and explore-through-unknown, which govern autonomy.
+/// Teleop spin above only shapes the operator's own commands. Sending either
+/// also sets CrabTrapBot's size.
 fn autonomy_turning_row(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let id = mark.id;
     let reported = argos_core::navigation_allows_in_place(&mark.navigation_settings);
+    let through = argos_core::navigation_explores_through_unknown(&mark.navigation_settings);
     let footprint = mark.navigation_settings["footprint_radius"].as_f64();
     h_flex()
         .flex_wrap()
@@ -2768,7 +2770,42 @@ fn autonomy_turning_row(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl I
                     None => "Autonomy spin unknown",
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.feed.configure_navigation(id, reported != Some(true));
+                    let allow = reported != Some(true);
+                    this.feed.configure_navigation(
+                        id,
+                        argos_core::NavigationEdit::crab_trap_bot(allow),
+                        format!(
+                            "Requested autonomy in-place turns {} with CrabTrapBot size",
+                            if allow { "on" } else { "off" }
+                        ),
+                    );
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("explore-through-unknown")
+                .outline()
+                .small()
+                .selected(through == Some(true))
+                .disabled(through.is_none())
+                .label(match through {
+                    Some(true) => "Explore through unknown on",
+                    Some(false) => "Explore through unknown off",
+                    None => "Explore through unknown needs Terra update",
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let on = through != Some(true);
+                    this.feed.configure_navigation(
+                        id,
+                        argos_core::NavigationEdit {
+                            explore_through_unknown: Some(on),
+                            ..argos_core::NavigationEdit::crab_trap_bot(reported == Some(true))
+                        },
+                        format!(
+                            "Requested L4 Explore through unknown space {}",
+                            if on { "on" } else { "off" }
+                        ),
+                    );
                     cx.notify();
                 })),
         )
