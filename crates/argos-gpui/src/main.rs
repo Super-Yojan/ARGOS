@@ -2399,7 +2399,7 @@ fn explore_section(
                     .child(rows(report.rows()))
             }
             None => section.child(hint(
-                "L4 Explore drives to unmapped frontiers on its own until the budget ends or no frontier is left. Stop, Cancel goal, or choosing another level ends the run.",
+                "L4 Explore drives to unmapped frontiers on its own until the budget ends or no frontier is left, and maps the buckets and balls it sees under Found objects. Stop, Cancel goal, or choosing another level ends the run.",
                 cx,
             )),
         })

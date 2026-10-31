@@ -14,21 +14,38 @@ use serde_json::{Value, json};
 /// L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct` (no avoidance),
 /// L3 `waypoint` (local planner), L4 `explore` (frontier exploration on a time
 /// budget), L5 `task` (the phone's language model picks waypoints for a typed
-/// task). Target search is the other L4 mode. Terra's `supervised` level is
-/// not part of the design and has no button; the wire still accepts it.
+/// task). L4 is one button: explore and target search together, since
+/// explore maps the buckets and balls it sees. Terra's bounded
+/// `target_search` is a mode of that same L4 (see [`OTHER_LEVELS`]), so it
+/// has no button of its own. Terra's `supervised` level is not part of the
+/// design and has no button.
 pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("teleop", "L0 Manual"),
     ("assisted_teleop", "L1 Assisted"),
     ("waypoint_direct", "L2 Direct"),
     ("waypoint", "L3 Waypoint"),
     ("explore", "L4 Explore"),
-    ("target_search", "L4 Search"),
     ("task", "L5 Task"),
 ];
+
+/// Levels Terra may report and the wire still accepts, with no button of
+/// their own. `target_search` is L4's bounded area search, started on the
+/// phone; the L4 button stays selected while it runs.
+pub const OTHER_LEVELS: &[(&str, &str)] = &[("target_search", "L4 Search")];
+
+/// The button a reported level belongs to: `target_search` maps to L4 `explore`.
+pub fn operator_level(level: &str) -> &str {
+    if level == "target_search" {
+        "explore"
+    } else {
+        level
+    }
+}
 
 pub fn level_label(level: &str) -> &str {
     OPERATOR_LEVELS
         .iter()
+        .chain(OTHER_LEVELS)
         .find(|(wire, _)| *wire == level)
         .map(|(_, label)| *label)
         .unwrap_or(level)
@@ -43,7 +60,11 @@ pub fn encode_level_request(level: &str, token: &str) -> Result<Vec<u8>> {
     if level == "task" {
         return Err(invalid("L5 needs a task"));
     }
-    if !OPERATOR_LEVELS.iter().any(|(wire, _)| *wire == level) {
+    if !OPERATOR_LEVELS
+        .iter()
+        .chain(OTHER_LEVELS)
+        .any(|(wire, _)| *wire == level)
+    {
         return Err(invalid("unsupported autonomy level"));
     }
     if !valid_token(token) {

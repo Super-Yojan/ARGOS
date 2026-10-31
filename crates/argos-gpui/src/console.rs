@@ -320,8 +320,9 @@ pub fn field_notices(link: &str, detail: &str, maps: Option<&str>) -> Vec<String
 }
 
 /// Index into [`OPERATOR_LEVELS`] of the level this window last requested.
+/// Target search counts as L4, so the one L4 button stays selected.
 pub fn level_index(mark: &RoverMark) -> Option<usize> {
-    let requested = mark.requested_level.as_deref()?;
+    let requested = argos_core::operator_level(mark.requested_level.as_deref()?);
     OPERATOR_LEVELS
         .iter()
         .position(|(wire, _)| *wire == requested)

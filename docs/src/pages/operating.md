@@ -67,12 +67,12 @@ The autonomy buttons ask the rover to change level. The inspector shows the leve
 | L1 Assisted | `assisted_teleop` | Your driving, through its obstacle and braking checks |
 | L2 Direct | `waypoint_direct` | Drives straight to the goal you set |
 | L3 Waypoint | `waypoint` | Plans a path to the goal you set |
-| L4 Explore | `explore` | Picks unmapped frontiers and drives to them, with no per-goal approval |
-| Supervised | `supervised` | Proposes frontiers to explore and waits for your approval before each one |
-| Search | `target_search` | Searches a bounded area for a target, then holds and reports it |
+| L4 Explore | `explore` | Picks unmapped frontiers and drives to them, with no per-goal approval, and maps the buckets and balls it sees |
 | L5 Task | `task` | Its on-phone language model or MCP agent turns a task you type into waypoints, and asks you when unsure |
 
 **L4 Explore** runs for the budget you pick under **Exploration · L4**: 3, 5 or 10 min. The inspector shows elapsed and remaining time, the current frontier, area covered, and why the run ended. Stop, Cancel goal, or choosing another level ends it. ARGOS does not send L4 while a stop is latched or while Outdoor GPS is the navigation source.
+
+L4 is one button: explore and target search together. Terra's bounded area search (`target_search`) is started from the phone and counts as L4, so the L4 button stays selected while it runs and a study condition fixed at L4 allows it.
 
 **L5 Task** is under **Task · L5**. Type what the rover should do, pick 3, 5 or 10 min, and press **Start task** (or the **L5 Task** level button). The phone's own language model reads the phone's map, picks the next waypoints, and Terra checks each one with its L3 planner before driving it. The rover holds while the model thinks. When the model asks a question it appears in amber; type the answer and press **Answer**. While a task runs you can also add guidance with **Guide**, or press **Cancel task**. The inspector shows the state, model calls used, time, the plan, the model's reason and the last few steps. Space types a space while a task box has focus; use **Stop all** to stop then. The rover offers L5 only if its phone can run a model (an iPhone with Apple Intelligence on iOS 26 or later) or has loaded its MCP agent (Qwen 3.5 2B, downloaded on the first phone start). ARGOS does not send a task while a stop is latched or while Outdoor GPS is the navigation source.
 

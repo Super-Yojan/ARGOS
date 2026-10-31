@@ -334,6 +334,13 @@ fn study_condition_locks_levels_like_terra() {
     assert!(!level_permitted(Some("waypoint"), "waypoint_direct"));
     assert!(!level_permitted(Some("waypoint"), "supervised"));
     assert!(level_permitted(Some("explore"), "target_search"));
+    // L4 is one button: explore. Target search has none but keeps its label.
+    let l4: Vec<_> = argos_core::OPERATOR_LEVELS
+        .iter()
+        .filter(|(_, label)| label.starts_with("L4"))
+        .collect();
+    assert_eq!(l4, [&("explore", "L4 Explore")]);
+    assert_eq!(argos_core::level_label("target_search"), "L4 Search");
     assert!(!level_permitted(Some("waypoint"), "target_search"));
     let set: serde_json::Value =
         serde_json::from_slice(&encode_assignment_request(Some("explore"), "s-1").unwrap())
