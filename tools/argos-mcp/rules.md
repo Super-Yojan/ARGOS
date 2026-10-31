@@ -34,8 +34,7 @@ it up and dump by hand. There is no dump or raw-drive recommendation.
 | L1 Assisted | `assisted_teleop` | Operator drives; the planner vetoes collisions | Armed |
 | L2 Direct | `waypoint_direct` | Drives straight at a goal, no avoidance | Fresh pose, a goal |
 | L3 Waypoint | `waypoint` | Plans a route to a goal and avoids obstacles | Fresh pose, map, a goal |
-| L4 Explore | `explore` | Picks unmapped frontiers on its own for 3, 5 or 10 min | Local navigation (not Outdoor GPS), no stop |
-| L4 Search | `target_search` | Searches an area for a target, then holds | As L4 |
+| L4 Explore | `explore` | Picks unmapped frontiers on its own for 3, 5 or 10 min and maps the buckets and balls it sees | Local navigation (not Outdoor GPS), no stop |
 | L5 Task | `task` | The phone's model or MCP agent turns a typed task into checked waypoints for 3, 5 or 10 min | `task_supported`, local navigation, no stop |
 
 A rover with a `study_condition` is fixed at that level for a study trial: do
