@@ -66,7 +66,7 @@ The autonomy buttons ask the rover to change level. The inspector shows the leve
 | L0 Manual | `teleop` | Only what you drive |
 | L1 Assisted | `assisted_teleop` | Your driving, through its obstacle and braking checks |
 | L2 Direct | `waypoint_direct` | Drives straight to the goal you set |
-| L3 Waypoint | `waypoint` | Plans a path to the goal you set |
+| L3 Planned | `waypoint` | Plans a path to the goal you set |
 | L4 Explore | `explore` | Picks unmapped frontiers and drives to them, with no per-goal approval, and maps the buckets and balls it sees |
 | L5 Task | `task` | Its on-phone language model or MCP agent turns a task you type into waypoints, and asks you when unsure |
 
