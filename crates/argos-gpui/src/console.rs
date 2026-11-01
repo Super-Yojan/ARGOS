@@ -134,6 +134,11 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
         (Some(goal), None) => goal.state.clone(),
         (None, _) => "None".into(),
     };
+    let goal = if mark.goal_active && !mark.reporting.is_fresh() {
+        format!("{goal} · on hold, rover not reporting")
+    } else {
+        goal
+    };
     let requested = mark.requested_level.as_deref().map(level_label);
     let effective = mark.effective_level.as_deref().map(level_label);
     let autonomy = match (requested, effective) {
@@ -178,17 +183,12 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
             attention(mark).unwrap_or_else(|| "Clear".into()),
         ),
     ];
+    if let Some(step) = mark.reporting.next_step() {
+        rows.push(("Next step", step.into()));
+    }
     // A hold of one tick is gone before anyone reads the Autonomy row.
     if let Some(hold) = &mark.sensor_hold {
-        rows.push((
-            "Sensor hold",
-            format!(
-                "{} · {:.0} s ago · {} this run",
-                hold.label(),
-                hold.age_s,
-                hold.count
-            ),
-        ));
+        rows.push(("Sensor hold", hold.summary()));
     }
     rows
 }
@@ -319,6 +319,59 @@ pub fn field_notices(link: &str, detail: &str, maps: Option<&str>) -> Vec<String
         .collect()
 }
 
+/// The rover that has been silent longest, if any rover stopped reporting.
+fn quietest(marks: &[RoverMark]) -> Option<&RoverMark> {
+    marks
+        .iter()
+        .filter(|mark| !mark.reporting.is_fresh())
+        .max_by(|a, b| {
+            let silent = |m: &RoverMark| m.reporting.silent_s().unwrap_or(0.);
+            silent(a).total_cmp(&silent(b)).then(b.id.cmp(&a.id))
+        })
+}
+
+/// The top bar's link text. `Link healthy` only while every rover on the
+/// field still sends data; otherwise the rover that went quiet, so the
+/// operator never reads "healthy" next to a frozen rover.
+pub fn link_label(link: &str, marks: &[RoverMark]) -> String {
+    let quiet = marks.iter().filter(|m| !m.reporting.is_fresh()).count();
+    match quietest(marks).and_then(|mark| Some((mark.id, mark.reporting.label()?))) {
+        Some((id, label)) if link == "healthy" => {
+            let more = if quiet > 1 {
+                format!(" (+{} more)", quiet - 1)
+            } else {
+                String::new()
+            };
+            format!("Rover {id} {}{more}", lowercase_first(&label))
+        }
+        _ => format!("Link {link}"),
+    }
+}
+
+/// Field notices for rovers that stopped reporting, with the next step.
+pub fn reporting_notices(marks: &[RoverMark]) -> Vec<String> {
+    marks
+        .iter()
+        .filter_map(|mark| {
+            let label = mark.reporting.label()?;
+            let step = mark.reporting.next_step()?;
+            Some(format!(
+                "Rover {} {} · {step}",
+                mark.id,
+                lowercase_first(&label)
+            ))
+        })
+        .collect()
+}
+
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// Index into [`OPERATOR_LEVELS`] of the level this window last requested.
 /// Target search counts as L4, so the one L4 button stays selected.
 pub fn level_index(mark: &RoverMark) -> Option<usize> {
@@ -440,6 +493,11 @@ fn level(mark: &RoverMark) -> &str {
 fn attention(mark: &RoverMark) -> Option<String> {
     if mark.status == "offline" {
         return Some("Offline".into());
+    }
+    // Pose and hardware both stale: the phone has stopped sending, so say
+    // that once instead of two separate stale readings.
+    if let Some(label) = mark.reporting.label() {
+        return Some(label);
     }
     if mark.status == "pose stale" && mark.requested_level.as_deref() != Some("teleop") {
         return Some("Pose stale".into());

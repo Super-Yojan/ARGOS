@@ -865,7 +865,12 @@ impl Render for Dashboard {
         });
         let status = console::status_line(&self.note, &self.command).to_owned();
         let unlocated = console::unlocated(&self.marks, &self.presence);
-        let notices = console::field_notices(&self.link, &self.detail, self.maps_notice.as_deref());
+        let mut notices = console::reporting_notices(&self.marks);
+        notices.extend(console::field_notices(
+            &self.link,
+            &self.detail,
+            self.maps_notice.as_deref(),
+        ));
         let reversing_key = self.driving && self.held.contains("s");
         let handles: Vec<(u64, DragAnchor, Point<Pixels>)> = {
             let map = self.view.read(cx);
@@ -1310,9 +1315,15 @@ fn console_bar(
                     div()
                         .id("link-health")
                         .text_xs()
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(
+                            if dashboard.marks.iter().all(|mark| mark.reporting.is_fresh()) {
+                                cx.theme().muted_foreground
+                            } else {
+                                cx.theme().danger
+                            },
+                        )
                         .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
-                        .child(format!("Link {}", dashboard.link)),
+                        .child(console::link_label(&dashboard.link, &dashboard.marks)),
                 )
                 .child(
                     Button::new("export-session")
