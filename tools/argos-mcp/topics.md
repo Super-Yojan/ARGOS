@@ -20,7 +20,7 @@ You read them through ARGOS, not Zenoh directly, so sim and real look the same.
 | `unlocated` | `fleet/state` | Rovers in the fleet without a position yet |
 | `recommendations` | this station | Open cards and recent decisions with reasons |
 | `drive_grant` | this station | A raw-drive request and whether it was approved |
-| `operator` | this station | `has_control` (commands need it), selected rover, whether the operator is driving, the last note |
+| `operator` | this station | `has_control` (an Operator-mode command takes it), selected rover, whether the operator is driving, the last note |
 
 ## `read_rover(rover)`
 

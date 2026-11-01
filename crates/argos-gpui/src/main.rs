@@ -2022,6 +2022,44 @@ fn overview_tab(
     v_flex()
         .gap_5()
         .child(rows(console::trace(mark, stopped)))
+        // Found buckets and the dock sit up top: Dock is the next step once one is found.
+        .when(!mark.objects.is_empty(), |tab| {
+            let docking = mark.dock.as_ref().is_some_and(|dock| dock.active());
+            tab.child(
+                section("Found objects", cx).children(mark.objects.iter().map(|object| {
+                    let object_id = object.object.id;
+                    let bucket = object.object.class == "bucket";
+                    // The line wraps so a long GPS fix cannot push Dock out of the panel.
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(console::object_line(object)),
+                        )
+                        .when(bucket, |row| {
+                            row.child(
+                                div().flex_none().child(
+                                Button::new(("dock-start", id * 1000 + u64::from(object_id)))
+                                    .outline()
+                                    .small()
+                                    .label("Dock")
+                                    .disabled(stopped || docking)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.feed.start_dock(id, object_id);
+                                        this.note = "Docking on the bucket".into();
+                                        cx.notify();
+                                    })),
+                                ),
+                            )
+                        })
+                })),
+            )
+        })
+        .when_some(mark.dock.clone(), |tab, dock| tab.child(dock_section(id, dock, cx)))
         .child(
             section("Hardware", cx)
                 .child(div().text_sm().child(hardware_status.to_owned()))
@@ -2053,34 +2091,6 @@ fn overview_tab(
         )
         .child(study_section(dashboard, mark, cx))
         .child(explore_section(dashboard, mark, stopped, cx))
-        .when(!mark.objects.is_empty(), |tab| {
-            let docking = mark.dock.as_ref().is_some_and(|dock| dock.active());
-            tab.child(
-                section("Found objects", cx).children(mark.objects.iter().map(|object| {
-                    let object_id = object.object.id;
-                    let bucket = object.object.class == "bucket";
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(div().text_sm().child(console::object_line(object)))
-                        .when(bucket, |row| {
-                            row.child(
-                                Button::new(("dock-start", id * 1000 + u64::from(object_id)))
-                                    .outline()
-                                    .small()
-                                    .label("Dock")
-                                    .disabled(stopped || docking)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.feed.start_dock(id, object_id);
-                                        this.note = "Docking on the bucket".into();
-                                        cx.notify();
-                                    })),
-                            )
-                        })
-                })),
-            )
-        })
-        .when_some(mark.dock.clone(), |tab, dock| tab.child(dock_section(id, dock, cx)))
         .child(task_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)

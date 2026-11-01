@@ -32,3 +32,6 @@ __pycache__/
 docs/node_modules/
 docs/dist/
 docs/.astro/
+
+# OptiTrack mocap recording sessions.
+/mocap-*/

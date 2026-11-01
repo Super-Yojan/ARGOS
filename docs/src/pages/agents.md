@@ -69,7 +69,7 @@ Add the server to the client's MCP config, for example `.mcp.json` in your proje
 }
 ```
 
-Use `--profile operator` to give the agent the command tools as well; the panel's mode still decides what gets through, and commands other than Stop need this window to hold control (**Take control**). For a recommendation every minute in Claude Code, run `/loop 1m` with the server's `recommend_tick` prompt. That prompt carries the game rules, the autonomy ladder, what each field means, and the field right now.
+Use `--profile operator` to give the agent the command tools as well; the panel's mode still decides what gets through. In Operator mode a command takes this window's control lease itself, so nobody has to press **Take control** first. For a recommendation every minute in Claude Code, run `/loop 1m` with the server's `recommend_tick` prompt. That prompt carries the game rules, the autonomy ladder, what each field means, and the field right now.
 
 ### The built-in loop
 
