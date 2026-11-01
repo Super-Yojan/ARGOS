@@ -9,13 +9,17 @@ use super::{
     Dashboard, caution, gps_blocks, hint, interaction::geographic_gate, task_agent_choice,
 };
 use argos_core::{
-    AGENT_PROTOCOL, AgentCommand, AgentEnvelope, AgentGoal, AgentMode, AgentRequest, CommandSource,
-    DragAnchor, DragEnd, DragGate, DragSpace, DriveGrant, EXPLORE_BUDGETS_MIN, GoalDrag,
-    PlanarPoint, REJECT_REASONS, RecAction, RecBook, RecEntry, RecState, TASK_BUDGETS_MIN,
-    agent_permitted, approach_point, decode_recommendation, drive_block, drive_keys,
-    explore_refusal, level_label, level_permitted, recommendation_stale, task_refusal,
+    AGENT_CONNECT_GRACE_S, AGENT_PROTOCOL, AgentCommand, AgentEnvelope, AgentGoal, AgentLink,
+    AgentMode, AgentRequest, CommandSource, DragAnchor, DragEnd, DragGate, DragSpace, DriveGrant,
+    EXPLORE_BUDGETS_MIN, GoalDrag, PlanarPoint, REJECT_REASONS, RecAction, RecBook, RecEntry,
+    RecState, TASK_BUDGETS_MIN, agent_permitted, agent_status, approach_point,
+    decode_recommendation, drive_block, drive_keys, explore_refusal, level_label, level_permitted,
+    recommendation_stale, task_refusal,
 };
-use argos_gpui::{AGENT_PORT, AgentBridge, RoverMark};
+use argos_core::{AGENT_EARLY_TICK_MIN_S, AGENT_RUN_MAX_S, AGENT_TICK_S, tick_reasons};
+use argos_gpui::agent_mcp::McpProfile;
+use argos_gpui::agent_runner::{AgentCli, AgentRun};
+use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
     ActiveTheme, Selectable, Sizable, StyledExt, ThemeStyled,
@@ -47,11 +51,62 @@ struct Watched {
     seen_active: bool,
 }
 
+/// How often a picked engine looks at the field for early-tick reasons.
+const FIELD_CHECK_S: f64 = 5.;
+
+/// The coding-agent CLI the operator picked, run once per tick.
+struct CliRunner {
+    cli: AgentCli,
+    log: std::path::PathBuf,
+    run: Option<(AgentProcess, f64)>,
+    last_tick: Option<f64>,
+    last_check: f64,
+    last_state: Option<Value>,
+    ticks: u32,
+    /// Why the last run failed, or why it could not start.
+    error: Option<String>,
+    /// The last line of the last good run: usually its answer.
+    answer: Option<String>,
+}
+
+impl CliRunner {
+    fn new(cli: AgentCli) -> Self {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or_default();
+        Self {
+            cli,
+            log: argos_gpui::session_dir().join(format!(
+                "{}{}-{stamp}.log",
+                argos_gpui::AGENT_LOG_PREFIX,
+                cli.engine()
+            )),
+            run: None,
+            last_tick: None,
+            last_check: f64::NEG_INFINITY,
+            last_state: None,
+            ticks: 0,
+            error: None,
+            answer: None,
+        }
+    }
+}
+
 /// What the window keeps for agents.
 pub(super) struct AgentDesk {
     pub(super) mode: AgentMode,
     bridge: Option<AgentBridge>,
     bridge_note: String,
+    /// The agent ARGOS started from `ARGOS_AGENT_CMD`, if any.
+    process: Option<AgentProcess>,
+    /// The engine the operator picked (`ARGOS_AGENT_CLI` at start).
+    runner: Option<CliRunner>,
+    /// When the bridge opened, on the window's clock.
+    opened: f64,
+    /// Whether the session log already says the agent is missing / stopped.
+    missing_logged: bool,
+    exit_logged: bool,
     engine: Option<String>,
     last_call: Option<f64>,
     pub(super) book: RecBook,
@@ -66,6 +121,7 @@ pub(super) struct AgentDesk {
 
 impl AgentDesk {
     /// Open the bridge unless `ARGOS_AGENT=0`. `ARGOS_AGENT_PORT` picks the port.
+    /// With the bridge up, `ARGOS_AGENT_CMD` names an agent command to start.
     pub(super) fn start() -> Self {
         let disabled = std::env::var("ARGOS_AGENT").ok().as_deref() == Some("0");
         let port = std::env::var("ARGOS_AGENT_PORT")
@@ -83,6 +139,21 @@ impl AgentDesk {
                 Err(error) => (None, format!("Agent bridge not started: {error}")),
             }
         };
+        let mut bridge_note = bridge_note;
+        let process = bridge.as_ref().and_then(|bridge| {
+            let command = std::env::var("ARGOS_AGENT_CMD").ok()?;
+            let command = command.trim();
+            if command.is_empty() {
+                return None;
+            }
+            match AgentProcess::spawn(command, bridge.file(), &argos_gpui::session_dir()) {
+                Ok(process) => Some(process),
+                Err(error) => {
+                    bridge_note = format!("{bridge_note} · could not start `{command}`: {error}");
+                    None
+                }
+            }
+        });
         Self {
             mode: if disabled {
                 AgentMode::Off
@@ -91,6 +162,14 @@ impl AgentDesk {
             },
             bridge,
             bridge_note,
+            process,
+            runner: std::env::var("ARGOS_AGENT_CLI")
+                .ok()
+                .and_then(|name| AgentCli::parse(&name))
+                .map(CliRunner::new),
+            opened: 0.,
+            missing_logged: false,
+            exit_logged: false,
             engine: None,
             last_call: None,
             book: RecBook::default(),
@@ -100,6 +179,29 @@ impl AgentDesk {
             queued: Vec::new(),
             watched: Vec::new(),
         }
+    }
+}
+
+impl AgentDesk {
+    /// The panel's status line: who is connected, or what the operator should do.
+    fn status(&self, now: f64) -> argos_core::AgentStatus {
+        agent_status(&AgentLink {
+            bridge: self.bridge.as_ref().map(|_| self.bridge_note.as_str()),
+            bridge_error: &self.bridge_note,
+            since_open: now - self.opened,
+            engine: self.engine.as_deref(),
+            since_call: self.last_call.map(|at| now - at),
+            bad_tokens: self.bridge.as_ref().map_or(0, AgentBridge::bad_tokens),
+            command: self
+                .runner
+                .as_ref()
+                .map(|runner| runner.cli.label())
+                .or_else(|| self.process.as_ref().map(AgentProcess::command)),
+            command_exit: match &self.runner {
+                Some(runner) => runner.error.as_deref(),
+                None => self.process.as_ref().and_then(AgentProcess::exited),
+            },
+        })
     }
 }
 
@@ -683,6 +785,8 @@ impl Dashboard {
 
     fn agent_upkeep(&mut self) {
         let now = self.now;
+        self.agent_link_log(now);
+        self.agent_cli_tick(now);
         for rec_id in self.agent.book.expire(now) {
             self.log_decision(&rec_id);
         }
@@ -725,6 +829,163 @@ impl Dashboard {
         }
         self.agent_queued(now);
         self.agent_outcomes(now);
+    }
+
+    /// Put a missing or stopped agent in the session log once, so a study
+    /// run shows whether the advisor was there.
+    fn agent_link_log(&mut self, now: f64) {
+        if self.agent.bridge.is_none() {
+            return;
+        }
+        let command = self.agent.process.as_ref().map(|p| p.command().to_string());
+        let log = self
+            .agent
+            .process
+            .as_ref()
+            .map(|p| p.log().display().to_string());
+        let exit = self
+            .agent
+            .process
+            .as_mut()
+            .and_then(|process| process.poll().map(str::to_string));
+        if let Some(exit) = exit
+            && !self.agent.exit_logged
+        {
+            self.agent.exit_logged = true;
+            self.feed.record(json!({"kind": "agent_process", "event": "exited", "command": command, "exit": exit, "log": log}));
+        }
+        if self.agent.last_call.is_none()
+            && !self.agent.missing_logged
+            && now - self.agent.opened >= AGENT_CONNECT_GRACE_S
+        {
+            self.agent.missing_logged = true;
+            self.feed.record(json!({
+                "kind": "agent_missing",
+                "after_s": now - self.agent.opened,
+                "command": command,
+                "bad_tokens": self.agent.bridge.as_ref().map_or(0, AgentBridge::bad_tokens),
+            }));
+        }
+    }
+
+    /// Pick the engine ARGOS runs each tick, or none.
+    fn set_agent_cli(&mut self, cli: Option<AgentCli>) {
+        if self.agent.runner.as_ref().map(|runner| runner.cli) == cli {
+            return;
+        }
+        if let Some((mut process, _)) = self.agent.runner.take().and_then(|runner| runner.run) {
+            process.kill();
+        }
+        self.feed
+            .record(json!({"kind": "agent_engine", "engine": cli.map(AgentCli::engine)}));
+        self.agent.runner = cli.map(CliRunner::new);
+        self.agent.missing_logged = false;
+        self.agent.opened = self.now;
+        self.note = match cli {
+            Some(cli) => format!(
+                "ARGOS runs {} every {AGENT_TICK_S:.0} s, sooner when something changes",
+                cli.label()
+            ),
+            None => "No engine: connect an MCP client to `argos-gpui mcp` yourself".into(),
+        };
+    }
+
+    /// Run the picked engine once per tick: every 60 s, or after 15 s when
+    /// the field changed. One run at a time; a run over 180 s is stopped.
+    fn agent_cli_tick(&mut self, now: f64) {
+        let Some(bridge_file) = self.agent.bridge.as_ref().map(|b| b.file().to_path_buf()) else {
+            return;
+        };
+        let Some(runner) = self.agent.runner.as_mut() else {
+            return;
+        };
+        if let Some((process, started)) = runner.run.as_mut() {
+            let seconds = now - *started;
+            let ended = if process.poll().is_some() {
+                Some(process.succeeded() == Some(true))
+            } else if seconds > AGENT_RUN_MAX_S {
+                process.kill();
+                Some(false)
+            } else {
+                None
+            };
+            let Some(ok) = ended else {
+                return;
+            };
+            let exit = process.exited().unwrap_or_default().to_string();
+            let answer = exit.split_once(" · ").map(|(_, last)| last.to_string());
+            if ok {
+                runner.error = None;
+                runner.answer = answer;
+            } else if seconds > AGENT_RUN_MAX_S {
+                runner.error = Some(format!(
+                    "{} took over {AGENT_RUN_MAX_S:.0} s and was stopped",
+                    runner.cli.label()
+                ));
+            } else {
+                runner.error = Some(exit.clone());
+            }
+            let engine = runner.cli.engine();
+            runner.run = None;
+            self.feed.record(json!({"kind": "agent_run", "event": "ended", "engine": engine, "ok": ok, "seconds": seconds, "exit": exit}));
+            return;
+        }
+        if self.agent.mode == AgentMode::Off || now - runner.last_check < FIELD_CHECK_S {
+            return;
+        }
+        runner.last_check = now;
+        let state = self.field_state();
+        let runner = self.agent.runner.as_mut().expect("checked above");
+        let mut why = tick_reasons(runner.last_state.as_ref(), &state);
+        runner.last_state = Some(state);
+        let since = runner.last_tick.map_or(f64::INFINITY, |at| now - at);
+        let due = since >= AGENT_TICK_S || (!why.is_empty() && since >= AGENT_EARLY_TICK_MIN_S);
+        if !due {
+            return;
+        }
+        if why.is_empty() {
+            why.push("timer".into());
+        }
+        runner.last_tick = Some(now);
+        runner.ticks += 1;
+        let profile = if self.agent.mode == AgentMode::Operator {
+            McpProfile::Operator
+        } else {
+            McpProfile::Advise
+        };
+        let dir = argos_gpui::session_dir();
+        let started = std::env::current_exe().and_then(|exe| {
+            let command = runner.cli.command(&AgentRun {
+                exe: &exe,
+                bridge: &bridge_file,
+                profile,
+                dir: &dir,
+            })?;
+            if let Ok(mut log) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&runner.log)
+            {
+                use std::io::Write;
+                let _ = writeln!(log, "\n--- tick {} ({}) ---", runner.ticks, why.join(", "));
+            }
+            AgentProcess::start(command, runner.cli.label(), runner.log.clone())
+        });
+        let engine = runner.cli.engine();
+        match started {
+            Ok(process) => {
+                runner.run = Some((process, now));
+                self.feed.record(json!({"kind": "agent_run", "event": "started", "engine": engine, "tick": runner.ticks, "why": why, "profile": profile.wire()}));
+            }
+            Err(error) => {
+                runner.error = Some(if error.kind() == std::io::ErrorKind::NotFound {
+                    format!("`{}` is not installed or not on PATH", runner.cli.program())
+                } else {
+                    format!("could not start {}: {error}", runner.cli.label())
+                });
+                self.feed.record(json!({"kind": "agent_run", "event": "failed", "engine": engine, "error": runner.error}));
+            }
+        }
     }
 
     /// Send accepted goals once their rover reaches L2 or L3.
@@ -935,14 +1196,29 @@ fn urgency_tag(urgency: u8) -> Tag {
 
 /// The agent panel at the lower left of the map: mode, drive grant, cards.
 pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
-    let desk = &dashboard.agent;
     let now = dashboard.now;
+    let status = dashboard.agent.status(now);
+    let desk = &dashboard.agent;
+    let engine = desk.runner.as_ref().map(|runner| runner.cli);
+    let engine_note = desk.runner.as_ref().and_then(|runner| {
+        if desk.mode == AgentMode::Off {
+            return Some(format!(
+                "{} paused while the panel is Off",
+                runner.cli.label()
+            ));
+        }
+        match (&runner.run, &runner.answer) {
+            (Some((_, started)), _) => Some(format!(
+                "{} tick {} running · {:.0} s",
+                runner.cli.label(),
+                runner.ticks,
+                now - started
+            )),
+            (None, Some(answer)) => Some(format!("{} said: {answer}", runner.cli.label())),
+            (None, None) => None,
+        }
+    });
     let mode = desk.mode;
-    let status = match (&desk.engine, desk.last_call) {
-        (Some(engine), Some(at)) => format!("{engine} · last call {:.0} s ago", now - at),
-        _ if desk.bridge.is_some() => format!("{} · no agent yet", desk.bridge_note),
-        _ => desk.bridge_note.clone(),
-    };
     let grant = desk.grant.clone();
     let rejecting = desk.rejecting.clone();
     let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
@@ -979,7 +1255,34 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                         })),
                 ),
         )
-        .child(hint(status, cx))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(div().text_xs().child("Engine"))
+                .child(
+                    ButtonGroup::new("agent-engine")
+                        .outline()
+                        .xsmall()
+                        .child(Button::new(("agent-engine", 0u64)).label("None").selected(engine.is_none()))
+                        .children(AgentCli::ALL.iter().enumerate().map(|(index, cli)| {
+                            Button::new(("agent-engine", index as u64 + 1))
+                                .label(cli.label())
+                                .selected(engine == Some(*cli))
+                        }))
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                            if let Some(index) = clicks.first() {
+                                this.set_agent_cli(index.checked_sub(1).and_then(|i| AgentCli::ALL.get(i).copied()));
+                            }
+                            cx.notify();
+                        })),
+                ),
+        )
+        .child(if status.warn {
+            caution(status.text, cx)
+        } else {
+            hint(status.text, cx)
+        })
+        .when_some(engine_note, |panel, note| panel.child(hint(note, cx)))
         .when_some(grant, |panel, grant| {
             let pending = grant.pending();
             panel.child(

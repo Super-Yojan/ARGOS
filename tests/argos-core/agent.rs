@@ -238,3 +238,113 @@ fn book_expires_and_supersedes() {
     assert_eq!(closed, vec![id]);
     assert!(recommendation_stale(&book.get(&closed[0]).unwrap().rec, false, None).is_some());
 }
+
+#[test]
+fn status_tells_the_operator_when_no_agent_connects() {
+    let note = "Agent bridge on 127.0.0.1:7471";
+    let link = AgentLink {
+        bridge: Some(note),
+        since_open: 5.,
+        ..AgentLink::default()
+    };
+    let waiting = agent_status(&link);
+    assert!(!waiting.warn);
+    assert!(waiting.text.contains("waiting for an agent"));
+
+    let missing = agent_status(&AgentLink {
+        since_open: AGENT_CONNECT_GRACE_S,
+        ..link.clone()
+    });
+    assert!(missing.warn, "bridge up, no agent after the grace period");
+    assert!(missing.text.contains("Agent not connected"));
+    assert!(missing.text.contains("argos-gpui mcp"));
+
+    let launched = agent_status(&AgentLink {
+        since_open: 60.,
+        command: Some("my-agent --watch"),
+        ..link.clone()
+    });
+    assert!(launched.warn);
+    assert!(launched.text.contains("my-agent --watch"));
+
+    let stopped = agent_status(&AgentLink {
+        command: Some("my-agent --watch"),
+        command_exit: Some("exit status: 1 · ModuleNotFoundError: anthropic"),
+        ..link.clone()
+    });
+    assert!(stopped.warn);
+    assert!(stopped.text.contains("ModuleNotFoundError"));
+
+    let stale = agent_status(&AgentLink {
+        since_open: 60.,
+        bad_tokens: 2,
+        ..link.clone()
+    });
+    assert!(stale.warn);
+    assert!(stale.text.contains("stale token"));
+}
+
+#[test]
+fn status_shows_a_connected_agent_and_flags_a_silent_one() {
+    let link = AgentLink {
+        bridge: Some("Agent bridge on 127.0.0.1:7471"),
+        since_open: 600.,
+        engine: Some("loop:claude"),
+        since_call: Some(4.),
+        ..AgentLink::default()
+    };
+    let live = agent_status(&link);
+    assert!(!live.warn);
+    assert_eq!(live.text, "loop:claude · last call 4 s ago");
+
+    let silent = agent_status(&AgentLink {
+        since_call: Some(AGENT_SILENT_S + 1.),
+        ..link
+    });
+    assert!(silent.warn);
+    assert!(silent.text.contains("silent"));
+
+    let off = agent_status(&AgentLink {
+        bridge_error: "Agent bridge off (ARGOS_AGENT=0)",
+        ..AgentLink::default()
+    });
+    assert_eq!(off.text, "Agent bridge off (ARGOS_AGENT=0)");
+}
+
+#[test]
+fn ticks_early_when_the_field_changes() {
+    let before = json!({
+        "rovers": [{"id": 1, "objects": [{"id": 3}], "hold": null, "stopped": false,
+                    "exploration": {"phase": "running"}, "task": null, "goal": {"state": "active"}}],
+        "recommendations": {"recent": [{"rec_id": "r1", "state": "open"}]},
+    });
+    assert!(
+        tick_reasons(None, &before).is_empty(),
+        "first look has nothing to compare"
+    );
+    assert!(tick_reasons(Some(&before), &before).is_empty());
+    let after = json!({
+        "rovers": [
+            {"id": 1, "objects": [{"id": 3}, {"id": 4}], "hold": "obstacle", "stopped": true,
+             "exploration": {"phase": "ended"}, "task": {"question": "Which bucket?"}, "goal": {"state": "arrived"}},
+            {"id": 2}
+        ],
+        "recommendations": {"recent": [{"rec_id": "r1", "state": "accepted"}]},
+    });
+    let reasons = tick_reasons(Some(&before), &after);
+    for expected in [
+        "fleet changed",
+        "rover 1 found something",
+        "rover 1 holds",
+        "rover 1 stopped",
+        "rover 1 finished exploring",
+        "rover 1 asks a question",
+        "rover 1 arrived",
+        "operator decided a card",
+    ] {
+        assert!(
+            reasons.iter().any(|reason| reason == expected),
+            "{expected}: {reasons:?}"
+        );
+    }
+}

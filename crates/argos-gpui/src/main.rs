@@ -3007,7 +3007,11 @@ fn drive_key(key: &str) -> Option<&'static str> {
 }
 
 fn main() {
-    let mode = match LaunchMode::parse(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = argos_gpui::agent_mcp::agent_cli(&args) {
+        std::process::exit(code);
+    }
+    let mode = match LaunchMode::parse(args) {
         Ok(Some(mode)) => mode,
         Ok(None) => {
             print!("{}", argos_gpui::LAUNCH_HELP);
