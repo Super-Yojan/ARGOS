@@ -207,6 +207,24 @@ fn trace_names_the_hold_reason_when_no_level_is_in_effect() {
     )));
 }
 
+/// Issue Terra #109: route holds read in plain words, keeping the code for logs.
+#[test]
+fn route_holds_are_explained_in_plain_words() {
+    let mut rover = mark(5);
+    rover.requested_level = Some("waypoint".into());
+    rover.effective_level = None;
+    rover.autonomy_reason = Some("route_no_path".into());
+    assert!(trace(&rover, false).contains(&(
+        "Autonomy",
+        "requested L3 Waypoint · held: route_no_path (no gap wide enough: seen obstacles block every way to the goal)".into()
+    )));
+    rover.autonomy_reason = Some("route_goal_blocked".into());
+    assert!(trace(&rover, false).contains(&(
+        "Autonomy",
+        "requested L3 Waypoint · held: route_goal_blocked (goal is on an obstacle, or too close to one for the rover)".into()
+    )));
+}
+
 #[test]
 fn heading_hold_and_motor_fault_are_attention() {
     let mut rover = mark(6);

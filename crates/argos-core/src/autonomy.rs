@@ -164,6 +164,17 @@ pub const POSE_QUALITY_SCHEMA: u64 = 1;
 pub const HEADING_HOLD: &str = "heading_requires_spin_or_replan";
 pub const HEADING_HOLD_LABEL: &str = "Heading needs a spin or a replan";
 
+/// Plain words for Terra's L3/L5 route holds, shown next to the raw code.
+pub fn route_hold_label(reason: &str) -> Option<&'static str> {
+    match reason {
+        "route_goal_blocked" => Some("goal is on an obstacle, or too close to one for the rover"),
+        "route_no_path" => Some("no gap wide enough: seen obstacles block every way to the goal"),
+        "route_goal_outside_map" => Some("goal is outside the map"),
+        "route_start_outside_map" => Some("rover is outside its own map"),
+        _ => None,
+    }
+}
+
 /// Status fields the window displays. `assigned` is the study condition Terra enforces.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AutonomyReport {
