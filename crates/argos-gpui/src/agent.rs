@@ -328,15 +328,10 @@ impl Dashboard {
 
     fn agent_command(&mut self, command: &AgentCommand) -> Result<String, String> {
         let source = CommandSource::Agent;
-        // Stops always go through; everything else needs this window's operator
-        // lease, the same as the buttons.
-        if !matches!(command, AgentCommand::Stop { .. } | AgentCommand::StopAll)
-            && !self.claim.held(self.now)
-        {
-            return Err(
-                "This ARGOS window does not hold control; the operator must press Take control"
-                    .into(),
-            );
+        // Commands only arrive in Operator mode, which is the operator's grant.
+        // The agent takes this window's lease itself, as selecting a rover does.
+        if !matches!(command, AgentCommand::Stop { .. } | AgentCommand::StopAll) {
+            self.claim.take(self.now);
         }
         match command {
             AgentCommand::SetLevel {
