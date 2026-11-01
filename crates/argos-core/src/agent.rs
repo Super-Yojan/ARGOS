@@ -1,6 +1,6 @@
 //! Agents at the operator station.
 //!
-//! An MCP server (`tools/argos-mcp`) talks to the dashboard window over a local
+//! An MCP server (`argos-gpui mcp`) talks to the dashboard window over a local
 //! bridge, one JSON request per line. The operator picks how much the agent may
 //! do: **Off**, **Advise** (the default: read the field and propose
 //! recommendations the operator accepts or rejects) or **Operator** (also
@@ -37,9 +37,14 @@ pub const AGENT_CONNECT_GRACE_S: f64 = 20.;
 /// A connected agent that has not called for this long is shown as silent.
 /// The built-in loop reads every 5 s and an MCP client on `/loop 1m` every 60 s.
 pub const AGENT_SILENT_S: f64 = 180.;
-/// What the panel tells the operator to run when no agent connects.
-pub const AGENT_START_HINT: &str =
-    "python3 tools/argos-mcp/recommend_loop.py, or set ARGOS_AGENT_CMD so ARGOS starts it";
+/// What the panel tells the operator to do when no agent connects.
+pub const AGENT_START_HINT: &str = "pick an engine (Claude, Codex, OpenCode, Pi) below, or point an MCP client at `argos-gpui mcp`";
+/// A picked engine runs this often.
+pub const AGENT_TICK_S: f64 = 60.;
+/// Something changed: tick early, but not more often than this.
+pub const AGENT_EARLY_TICK_MIN_S: f64 = 15.;
+/// A run that takes longer is stopped.
+pub const AGENT_RUN_MAX_S: f64 = 180.;
 /// Reasons the operator can tap when rejecting a card.
 pub const REJECT_REASONS: &[(&str, &str)] = &[
     ("wrong_rover", "Wrong rover"),
@@ -1137,4 +1142,80 @@ pub fn agent_status(link: &AgentLink) -> AgentStatus {
             )),
         },
     }
+}
+
+/// Why the field changed enough to tick early, or empty. `before` and
+/// `after` are the window's field state, as `get_field_state` returns it.
+pub fn tick_reasons(before: Option<&Value>, after: &Value) -> Vec<String> {
+    let Some(before) = before else {
+        return Vec::new();
+    };
+    let rovers = |state: &Value| -> Vec<(u64, Value)> {
+        state["rovers"]
+            .as_array()
+            .map(|rovers| {
+                rovers
+                    .iter()
+                    .filter_map(|rover| Some((rover["id"].as_u64()?, rover.clone())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (old, new) = (rovers(before), rovers(after));
+    let mut reasons = Vec::new();
+    let ids = |list: &[(u64, Value)]| list.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    let (mut old_ids, mut new_ids) = (ids(&old), ids(&new));
+    old_ids.sort_unstable();
+    new_ids.sort_unstable();
+    if old_ids != new_ids {
+        reasons.push("fleet changed".to_string());
+    }
+    for (id, rover) in &new {
+        let Some((_, was)) = old.iter().find(|(old_id, _)| old_id == id) else {
+            continue;
+        };
+        let seen: Vec<&Value> = was["objects"]
+            .as_array()
+            .map(|objects| objects.iter().map(|object| &object["id"]).collect())
+            .unwrap_or_default();
+        if rover["objects"]
+            .as_array()
+            .is_some_and(|objects| objects.iter().any(|object| !seen.contains(&&object["id"])))
+        {
+            reasons.push(format!("rover {id} found something"));
+        }
+        let truthy = |value: &Value| !value.is_null() && *value != false && *value != "";
+        if truthy(&rover["hold"]) && rover["hold"] != was["hold"] {
+            reasons.push(format!("rover {id} holds"));
+        }
+        if rover["stopped"] == true && was["stopped"] != true {
+            reasons.push(format!("rover {id} stopped"));
+        }
+        if rover["exploration"]["phase"] == "ended" && was["exploration"]["phase"] != "ended" {
+            reasons.push(format!("rover {id} finished exploring"));
+        }
+        let question = &rover["task"]["question"];
+        if truthy(question) && *question != was["task"]["question"] {
+            reasons.push(format!("rover {id} asks a question"));
+        }
+        if rover["goal"]["state"] == "arrived" && was["goal"]["state"] != "arrived" {
+            reasons.push(format!("rover {id} arrived"));
+        }
+    }
+    let decided = |state: &Value| -> Vec<(Value, Value)> {
+        state["recommendations"]["recent"]
+            .as_array()
+            .map(|recent| {
+                recent
+                    .iter()
+                    .map(|rec| (rec["rec_id"].clone(), rec["state"].clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let earlier = decided(before);
+    if decided(after).iter().any(|item| !earlier.contains(item)) {
+        reasons.push("operator decided a card".to_string());
+    }
+    reasons
 }

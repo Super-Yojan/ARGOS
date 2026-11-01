@@ -205,19 +205,17 @@ pub struct AgentProcess {
     child: std::process::Child,
     log: PathBuf,
     exit: Option<String>,
+    success: Option<bool>,
 }
 
 impl AgentProcess {
     /// Run `command` through the platform shell, pointed at `bridge_file`.
     pub fn spawn(command: &str, bridge_file: &Path, dir: &Path) -> io::Result<Self> {
-        std::fs::create_dir_all(dir)?;
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs())
             .unwrap_or_default();
         let log = dir.join(format!("{AGENT_LOG_PREFIX}{stamp}.log"));
-        let out = std::fs::File::create(&log)?;
-        let err = out.try_clone()?;
         #[cfg(windows)]
         let mut shell = {
             let mut shell = std::process::Command::new("cmd");
@@ -230,8 +228,25 @@ impl AgentProcess {
             shell.args(["-c", command]);
             shell
         };
-        let child = shell
-            .env("ARGOS_AGENT_BRIDGE", bridge_file)
+        shell.env("ARGOS_AGENT_BRIDGE", bridge_file);
+        Self::start(shell, command, log)
+    }
+
+    /// Start `process`, appending its output to `log`. `label` names it in the panel.
+    pub fn start(
+        mut process: std::process::Command,
+        label: &str,
+        log: PathBuf,
+    ) -> io::Result<Self> {
+        if let Some(dir) = log.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let out = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)?;
+        let err = out.try_clone()?;
+        let child = process
             .env("ARGOS_AGENT_PARENT", std::process::id().to_string())
             .env("PYTHONUNBUFFERED", "1")
             .stdin(std::process::Stdio::null())
@@ -239,10 +254,11 @@ impl AgentProcess {
             .stderr(err)
             .spawn()?;
         Ok(Self {
-            command: command.to_string(),
+            command: label.to_string(),
             child,
             log,
             exit: None,
+            success: None,
         })
     }
     pub fn command(&self) -> &str {
@@ -250,6 +266,18 @@ impl AgentProcess {
     }
     pub fn log(&self) -> &Path {
         &self.log
+    }
+    /// Whether it exited cleanly, once it has.
+    pub fn succeeded(&self) -> Option<bool> {
+        self.success
+    }
+    /// Stop it now.
+    pub fn kill(&mut self) {
+        if self.exit.is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = self.poll();
+        }
     }
     /// How it ended, as of the last [`poll`](Self::poll).
     pub fn exited(&self) -> Option<&str> {
@@ -270,6 +298,7 @@ impl AgentProcess {
                 })
                 .unwrap_or_else(|| "no output".into());
             self.exit = Some(format!("{status} · {last}"));
+            self.success = Some(status.success());
         }
         self.exit.as_deref()
     }

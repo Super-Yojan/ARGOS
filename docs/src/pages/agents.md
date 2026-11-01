@@ -1,15 +1,15 @@
 ---
 layout: ../layouts/DocPage.astro
 title: Agents and recommendations
-description: Let Claude or any MCP agent advise the operator once a minute, or operate the fleet through the same checks as the window's buttons.
+description: Let Claude Code, Codex, OpenCode, Pi or any MCP agent advise the operator once a minute, or operate the fleet through the same checks as the window's buttons.
 ---
 
-ARGOS can take advice from an AI agent, and, when the operator allows it, take commands. The agent reaches ARGOS through an MCP server in `tools/argos-mcp`. That server talks to the open window, not to Zenoh, so the agent sees the same fleet you see and every command goes through the same checks as a button press. It works the same in **Sim** and **Real**.
+ARGOS can take advice from an AI agent, and, when the operator allows it, take commands. The agent reaches ARGOS through an MCP server built into the ARGOS binary, `argos-gpui mcp`. That server talks to the open window, not to Zenoh, so the agent sees the same fleet you see and every command goes through the same checks as a button press. It works the same in **Sim** and **Real**, and needs no Python.
 
 ```
-agent (Claude Code, Claude, a local model)
-   │  MCP over stdio
-tools/argos-mcp/argos_mcp.py
+agent CLI (Claude Code, Codex, OpenCode, Pi) or any MCP client
+   │  MCP over stdio                       (Pi: `argos-gpui call` from bash)
+argos-gpui mcp
    │  one JSON line per request, 127.0.0.1 only, token from agent-bridge.json
 ARGOS window  ── the operator's own checks ──▶  Zenoh  ──▶  Terra / Zorvane
 ```
@@ -46,53 +46,46 @@ In Operator mode an agent's commands run through the same code as the window's c
 
 **Raw drive** needs your approval every time. The agent asks for up to 60 s on one rover, with a reason; the panel shows the request in amber, and nothing moves until you press **Approve drive**. The rover must be in L0 Teleop. During the grant the agent sends short bursts (2 s at most) that press the same W/A/S/D keys you would, under your drive caps. **Deny drive** or **End drive** ends it at once. So does Stop, taking the wheel yourself, switching Sim and Real, or changing the agent mode. An unanswered request lapses after 60 s.
 
+
 ## Run an agent
 
-Start ARGOS first. It writes `agent-bridge.json` (port and a fresh token, readable only by you) into its session folder, `Documents/ARGOS Sessions` or `ARGOS_SESSION_DIR`. Then install the server's one dependency:
+### Pick an engine in the panel
 
-```sh
-pip install -r tools/argos-mcp/requirements.txt
-```
+The panel's **Engine** row picks a coding-agent CLI that ARGOS runs as its recommendation engine: **Claude** (Claude Code), **Codex**, **OpenCode** or **Pi**. **None** runs nothing. Install the CLI and sign in to it once; it brings its own login and model, so ARGOS needs no API key. `ARGOS_AGENT_CLI=claude|codex|opencode|pi` picks one at launch, which suits study runs.
 
-### Claude Code, or any MCP client
+ARGOS runs the CLI once per tick, headless, every 60 s, or sooner (at most every 15 s) when something changes: a rover finds an object, holds, stops, finishes exploring, arrives, or asks an L5 question, or you decide a card. One run at a time; a run over 180 s is stopped. Each run gets ARGOS's MCP server and a short prompt: read `get_briefing` (the rules, the ladder, what each field means, and the field now), then `propose` up to 3 cards or say "no recommendation". In Operator mode the run gets the operator tools too. Nothing runs while the panel is Off.
 
-Add the server to the client's MCP config, for example `.mcp.json` in your project:
+| Engine | How ARGOS runs it | Tested |
+| --- | --- | --- |
+| Claude | `claude -p … --mcp-config argos-mcp-claude.json --strict-mcp-config --allowedTools mcp__argos` | Yes, sim with no rovers |
+| Codex | `codex exec --skip-git-repo-check -c mcp_servers.argos.command=… -c mcp_servers.argos.args=[…] …` | No |
+| OpenCode | `OPENCODE_CONFIG=argos-mcp-opencode.json opencode run …` | No |
+| Pi | `pi --tools bash -p …`. Pi has no MCP client, so the prompt tells it to use `argos-gpui call briefing` and `argos-gpui call propose '{…}'` | No |
+
+A local model (Qwen through llama.cpp, vLLM or Ollama) runs through OpenCode or Pi with that CLI's own provider settings. Every run's output, including its final answer, goes to `argos-agent-<engine>-<time>.log` in the session folder, and the panel shows the last answer.
+
+### Any MCP client
+
+Point the client at the ARGOS binary. For example, `.mcp.json` for Claude Code:
 
 ```json
 {
   "mcpServers": {
     "argos": {
-      "command": "python3",
-      "args": ["tools/argos-mcp/argos_mcp.py", "--profile", "advise"]
+      "command": "/path/to/argos-gpui",
+      "args": ["mcp", "--profile", "advise"]
     }
   }
 }
 ```
 
-Use `--profile operator` to give the agent the command tools as well; the panel's mode still decides what gets through. In Operator mode a command takes this window's control lease itself, so nobody has to press **Take control** first. For a recommendation every minute in Claude Code, run `/loop 1m` with the server's `recommend_tick` prompt. That prompt carries the game rules, the autonomy ladder, what each field means, and the field right now.
+Start ARGOS first: it writes `agent-bridge.json` (port and a fresh token, readable only by you) into its session folder, `Documents/ARGOS Sessions` or `ARGOS_SESSION_DIR`. Use `--profile operator` to give the agent the command tools as well; the panel's mode still decides what gets through. In Operator mode a command takes this window's control lease itself, so nobody has to press **Take control** first. The server also offers the `recommend_tick` prompt and the `argos://rules` and `argos://topics` resources. `--engine NAME` sets the name the panel shows; `--bridge FILE` points at another `agent-bridge.json`.
 
-### The built-in loop
+From a shell, `argos-gpui call <op> [json]` makes one call: `argos-gpui call briefing`, `argos-gpui call state`, `argos-gpui call propose '{"recommendations": [...]}'`.
 
-`recommend_loop.py` runs a model as the recommendation engine without an MCP client. It reads the field every 5 s and asks the model every 60 s, or sooner (at most every 15 s) when something changes: a rover finds an object, holds, stops, finishes exploring, arrives, or asks an L5 question, or you decide a card.
+### A command of your own
 
-```sh
-python3 tools/argos-mcp/recommend_loop.py                    # Claude; needs the anthropic package and an API key
-python3 tools/argos-mcp/recommend_loop.py --backend local \
-    --base-url http://localhost:8080/v1 --model qwen3.5      # any OpenAI-style server: llama.cpp, vLLM, Ollama
-python3 tools/argos-mcp/recommend_loop.py --backend dry --once   # print the prompt; calls no model
-```
-
-The loop pauses while the panel is Off.
-
-### Start the agent with ARGOS
-
-For study runs, let ARGOS start the agent so nobody has to remember it. Set `ARGOS_AGENT_CMD` before you launch the window:
-
-```sh
-ARGOS_AGENT_CMD="python3 tools/argos-mcp/recommend_loop.py" cargo run -p argos-gpui -- --real
-```
-
-ARGOS runs the command once its bridge is up, with `ARGOS_AGENT_BRIDGE` pointing at this run's `agent-bridge.json`, writes its output to `argos-agent-<time>.log` in the session folder, and stops it when the window closes. Use a single command (a script is fine) so closing ARGOS stops all of it. A relative path is resolved from where you start ARGOS, so use an absolute path when you launch a release build from elsewhere.
+`ARGOS_AGENT_CMD` starts any long-running command once the bridge is up, with `ARGOS_AGENT_BRIDGE` and `ARGOS_AGENT_PARENT` set. Its output goes to `argos-agent-<time>.log`, and ARGOS stops it when the window closes. Use a single command (a script is fine) so closing ARGOS stops all of it.
 
 ### Is the agent connected?
 
@@ -102,9 +95,9 @@ The line under the mode buttons says:
 | --- | --- | --- |
 | `<engine> · last call N s ago` | Connected | Nothing |
 | `… · waiting for an agent` | First 20 s after launch | Wait |
-| **Agent not connected. Start one: …** (amber) | The bridge listens, but no agent has called in 20 s | Start `recommend_loop.py`, or set `ARGOS_AGENT_CMD` |
-| **Agent not connected after N s. ARGOS started …** (amber) | ARGOS's command is running but has not called in | Read its `argos-agent-<time>.log` |
-| **Agent command stopped: …** (amber) | ARGOS's command exited; the last line of its log follows | Fix the error and relaunch |
+| **Agent not connected. Start one: …** (amber) | The bridge listens, but no agent has called in 20 s | Pick an engine, or start your MCP client |
+| **Agent not connected after N s. ARGOS started …** (amber) | The engine runs but has not called in | Read its `argos-agent-…log` |
+| **Agent command stopped: …** (amber) | The last run failed (for example "`codex` is not installed or not on PATH", or the CLI's own error) | Fix it; the next tick tries again |
 | **An agent tried to connect with a stale token** (amber) | An agent still holds an earlier run's token | Restart the agent |
 | **`<engine>` · silent for N s** (amber) | Connected once, no call for 3 min | Check that the agent is still running |
 
@@ -115,13 +108,14 @@ Everything lands in the session log next to the rest of the run, so a study can 
 | Event | When |
 | --- | --- |
 | `agent_hello`, `agent_mode` | An agent connects; you change the mode |
-| `agent_missing`, `agent_process` | No agent called in the first 20 s; the command ARGOS started exited |
+| `agent_engine`, `agent_run` | You pick an engine; each run starts (with why) and ends (ok, seconds, last line) |
+| `agent_missing`, `agent_process` | No agent called in the first 20 s; the `ARGOS_AGENT_CMD` command exited |
 | `rec_shown`, `rec_decided`, `rec_dispatched`, `rec_outcome` | A card appears; you accept, reject or it expires; what was sent; whether the rover got there |
 | `agent_command` | Every Operator-mode command, with ARGOS's answer |
 | `drive_grant`, `agent_drive` | Raw drive requests, approvals, bursts and endings |
 | `intervention` | Now carries `source`: `operator`, `agent` or `recommendation` |
 
-Commands carry the source in their token too (`gpui-agent-…`, `gpui-rec-…`). The built-in loop also writes `argos-recommend-<time>.jsonl` with each tick's state, prompt hash, tool calls, answers and timing.
+Commands carry the source in their token too (`gpui-agent-…`, `gpui-rec-…`). Each engine run's full output is in its `argos-agent-<engine>-<time>.log`.
 
 ## Settings
 
@@ -132,4 +126,5 @@ Read from the environment only, not `.env`.
 | `ARGOS_AGENT` | on | `0` turns the agent bridge off; the panel then stays Off |
 | `ARGOS_AGENT_PORT` | 7471 | Local port for the bridge. `0` picks a free one |
 | `ARGOS_AGENT_BRIDGE` | the session folder's file | Where the MCP server looks for `agent-bridge.json` |
-| `ARGOS_AGENT_CMD` | unset | A command ARGOS starts once the bridge is up, for example `python3 tools/argos-mcp/recommend_loop.py` |
+| `ARGOS_AGENT_CLI` | none | Engine at launch: `claude`, `codex`, `opencode` or `pi` |
+| `ARGOS_AGENT_CMD` | unset | A long-running command ARGOS starts once the bridge is up |

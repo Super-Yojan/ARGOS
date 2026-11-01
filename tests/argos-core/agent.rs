@@ -257,18 +257,18 @@ fn status_tells_the_operator_when_no_agent_connects() {
     });
     assert!(missing.warn, "bridge up, no agent after the grace period");
     assert!(missing.text.contains("Agent not connected"));
-    assert!(missing.text.contains("recommend_loop.py"));
+    assert!(missing.text.contains("argos-gpui mcp"));
 
     let launched = agent_status(&AgentLink {
         since_open: 60.,
-        command: Some("python3 recommend_loop.py"),
+        command: Some("my-agent --watch"),
         ..link.clone()
     });
     assert!(launched.warn);
-    assert!(launched.text.contains("python3 recommend_loop.py"));
+    assert!(launched.text.contains("my-agent --watch"));
 
     let stopped = agent_status(&AgentLink {
-        command: Some("python3 recommend_loop.py"),
+        command: Some("my-agent --watch"),
         command_exit: Some("exit status: 1 · ModuleNotFoundError: anthropic"),
         ..link.clone()
     });
@@ -309,4 +309,42 @@ fn status_shows_a_connected_agent_and_flags_a_silent_one() {
         ..AgentLink::default()
     });
     assert_eq!(off.text, "Agent bridge off (ARGOS_AGENT=0)");
+}
+
+#[test]
+fn ticks_early_when_the_field_changes() {
+    let before = json!({
+        "rovers": [{"id": 1, "objects": [{"id": 3}], "hold": null, "stopped": false,
+                    "exploration": {"phase": "running"}, "task": null, "goal": {"state": "active"}}],
+        "recommendations": {"recent": [{"rec_id": "r1", "state": "open"}]},
+    });
+    assert!(
+        tick_reasons(None, &before).is_empty(),
+        "first look has nothing to compare"
+    );
+    assert!(tick_reasons(Some(&before), &before).is_empty());
+    let after = json!({
+        "rovers": [
+            {"id": 1, "objects": [{"id": 3}, {"id": 4}], "hold": "obstacle", "stopped": true,
+             "exploration": {"phase": "ended"}, "task": {"question": "Which bucket?"}, "goal": {"state": "arrived"}},
+            {"id": 2}
+        ],
+        "recommendations": {"recent": [{"rec_id": "r1", "state": "accepted"}]},
+    });
+    let reasons = tick_reasons(Some(&before), &after);
+    for expected in [
+        "fleet changed",
+        "rover 1 found something",
+        "rover 1 holds",
+        "rover 1 stopped",
+        "rover 1 finished exploring",
+        "rover 1 asks a question",
+        "rover 1 arrived",
+        "operator decided a card",
+    ] {
+        assert!(
+            reasons.iter().any(|reason| reason == expected),
+            "{expected}: {reasons:?}"
+        );
+    }
 }
