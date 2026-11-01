@@ -84,6 +84,30 @@ python3 tools/argos-mcp/recommend_loop.py --backend dry --once   # print the pro
 
 The loop pauses while the panel is Off.
 
+### Start the agent with ARGOS
+
+For study runs, let ARGOS start the agent so nobody has to remember it. Set `ARGOS_AGENT_CMD` before you launch the window:
+
+```sh
+ARGOS_AGENT_CMD="python3 tools/argos-mcp/recommend_loop.py" cargo run -p argos-gpui -- --real
+```
+
+ARGOS runs the command once its bridge is up, with `ARGOS_AGENT_BRIDGE` pointing at this run's `agent-bridge.json`, writes its output to `argos-agent-<time>.log` in the session folder, and stops it when the window closes. Use a single command (a script is fine) so closing ARGOS stops all of it. A relative path is resolved from where you start ARGOS, so use an absolute path when you launch a release build from elsewhere.
+
+### Is the agent connected?
+
+The line under the mode buttons says:
+
+| Panel says | Meaning | What to do |
+| --- | --- | --- |
+| `<engine> · last call N s ago` | Connected | Nothing |
+| `… · waiting for an agent` | First 20 s after launch | Wait |
+| **Agent not connected. Start one: …** (amber) | The bridge listens, but no agent has called in 20 s | Start `recommend_loop.py`, or set `ARGOS_AGENT_CMD` |
+| **Agent not connected after N s. ARGOS started …** (amber) | ARGOS's command is running but has not called in | Read its `argos-agent-<time>.log` |
+| **Agent command stopped: …** (amber) | ARGOS's command exited; the last line of its log follows | Fix the error and relaunch |
+| **An agent tried to connect with a stale token** (amber) | An agent still holds an earlier run's token | Restart the agent |
+| **`<engine>` · silent for N s** (amber) | Connected once, no call for 3 min | Check that the agent is still running |
+
 ## What is logged
 
 Everything lands in the session log next to the rest of the run, so a study can tell the operator's actions from the agent's:
@@ -91,6 +115,7 @@ Everything lands in the session log next to the rest of the run, so a study can 
 | Event | When |
 | --- | --- |
 | `agent_hello`, `agent_mode` | An agent connects; you change the mode |
+| `agent_missing`, `agent_process` | No agent called in the first 20 s; the command ARGOS started exited |
 | `rec_shown`, `rec_decided`, `rec_dispatched`, `rec_outcome` | A card appears; you accept, reject or it expires; what was sent; whether the rover got there |
 | `agent_command` | Every Operator-mode command, with ARGOS's answer |
 | `drive_grant`, `agent_drive` | Raw drive requests, approvals, bursts and endings |
@@ -107,3 +132,4 @@ Read from the environment only, not `.env`.
 | `ARGOS_AGENT` | on | `0` turns the agent bridge off; the panel then stays Off |
 | `ARGOS_AGENT_PORT` | 7471 | Local port for the bridge. `0` picks a free one |
 | `ARGOS_AGENT_BRIDGE` | the session folder's file | Where the MCP server looks for `agent-bridge.json` |
+| `ARGOS_AGENT_CMD` | unset | A command ARGOS starts once the bridge is up, for example `python3 tools/argos-mcp/recommend_loop.py` |

@@ -9,13 +9,14 @@ use super::{
     Dashboard, caution, gps_blocks, hint, interaction::geographic_gate, task_agent_choice,
 };
 use argos_core::{
-    AGENT_PROTOCOL, AgentCommand, AgentEnvelope, AgentGoal, AgentMode, AgentRequest, CommandSource,
-    DragAnchor, DragEnd, DragGate, DragSpace, DriveGrant, EXPLORE_BUDGETS_MIN, GoalDrag,
-    PlanarPoint, REJECT_REASONS, RecAction, RecBook, RecEntry, RecState, TASK_BUDGETS_MIN,
-    agent_permitted, approach_point, decode_recommendation, drive_block, drive_keys,
-    explore_refusal, level_label, level_permitted, recommendation_stale, task_refusal,
+    AGENT_CONNECT_GRACE_S, AGENT_PROTOCOL, AgentCommand, AgentEnvelope, AgentGoal, AgentLink,
+    AgentMode, AgentRequest, CommandSource, DragAnchor, DragEnd, DragGate, DragSpace, DriveGrant,
+    EXPLORE_BUDGETS_MIN, GoalDrag, PlanarPoint, REJECT_REASONS, RecAction, RecBook, RecEntry,
+    RecState, TASK_BUDGETS_MIN, agent_permitted, agent_status, approach_point,
+    decode_recommendation, drive_block, drive_keys, explore_refusal, level_label, level_permitted,
+    recommendation_stale, task_refusal,
 };
-use argos_gpui::{AGENT_PORT, AgentBridge, RoverMark};
+use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
     ActiveTheme, Selectable, Sizable, StyledExt, ThemeStyled,
@@ -52,6 +53,13 @@ pub(super) struct AgentDesk {
     pub(super) mode: AgentMode,
     bridge: Option<AgentBridge>,
     bridge_note: String,
+    /// The agent ARGOS started from `ARGOS_AGENT_CMD`, if any.
+    process: Option<AgentProcess>,
+    /// When the bridge opened, on the window's clock.
+    opened: f64,
+    /// Whether the session log already says the agent is missing / stopped.
+    missing_logged: bool,
+    exit_logged: bool,
     engine: Option<String>,
     last_call: Option<f64>,
     pub(super) book: RecBook,
@@ -66,6 +74,7 @@ pub(super) struct AgentDesk {
 
 impl AgentDesk {
     /// Open the bridge unless `ARGOS_AGENT=0`. `ARGOS_AGENT_PORT` picks the port.
+    /// With the bridge up, `ARGOS_AGENT_CMD` names an agent command to start.
     pub(super) fn start() -> Self {
         let disabled = std::env::var("ARGOS_AGENT").ok().as_deref() == Some("0");
         let port = std::env::var("ARGOS_AGENT_PORT")
@@ -83,6 +92,21 @@ impl AgentDesk {
                 Err(error) => (None, format!("Agent bridge not started: {error}")),
             }
         };
+        let mut bridge_note = bridge_note;
+        let process = bridge.as_ref().and_then(|bridge| {
+            let command = std::env::var("ARGOS_AGENT_CMD").ok()?;
+            let command = command.trim();
+            if command.is_empty() {
+                return None;
+            }
+            match AgentProcess::spawn(command, bridge.file(), &argos_gpui::session_dir()) {
+                Ok(process) => Some(process),
+                Err(error) => {
+                    bridge_note = format!("{bridge_note} · could not start `{command}`: {error}");
+                    None
+                }
+            }
+        });
         Self {
             mode: if disabled {
                 AgentMode::Off
@@ -91,6 +115,10 @@ impl AgentDesk {
             },
             bridge,
             bridge_note,
+            process,
+            opened: 0.,
+            missing_logged: false,
+            exit_logged: false,
             engine: None,
             last_call: None,
             book: RecBook::default(),
@@ -100,6 +128,22 @@ impl AgentDesk {
             queued: Vec::new(),
             watched: Vec::new(),
         }
+    }
+}
+
+impl AgentDesk {
+    /// The panel's status line: who is connected, or what the operator should do.
+    fn status(&self, now: f64) -> argos_core::AgentStatus {
+        agent_status(&AgentLink {
+            bridge: self.bridge.as_ref().map(|_| self.bridge_note.as_str()),
+            bridge_error: &self.bridge_note,
+            since_open: now - self.opened,
+            engine: self.engine.as_deref(),
+            since_call: self.last_call.map(|at| now - at),
+            bad_tokens: self.bridge.as_ref().map_or(0, AgentBridge::bad_tokens),
+            command: self.process.as_ref().map(AgentProcess::command),
+            command_exit: self.process.as_ref().and_then(AgentProcess::exited),
+        })
     }
 }
 
@@ -683,6 +727,7 @@ impl Dashboard {
 
     fn agent_upkeep(&mut self) {
         let now = self.now;
+        self.agent_link_log(now);
         for rec_id in self.agent.book.expire(now) {
             self.log_decision(&rec_id);
         }
@@ -725,6 +770,43 @@ impl Dashboard {
         }
         self.agent_queued(now);
         self.agent_outcomes(now);
+    }
+
+    /// Put a missing or stopped agent in the session log once, so a study
+    /// run shows whether the advisor was there.
+    fn agent_link_log(&mut self, now: f64) {
+        if self.agent.bridge.is_none() {
+            return;
+        }
+        let command = self.agent.process.as_ref().map(|p| p.command().to_string());
+        let log = self
+            .agent
+            .process
+            .as_ref()
+            .map(|p| p.log().display().to_string());
+        let exit = self
+            .agent
+            .process
+            .as_mut()
+            .and_then(|process| process.poll().map(str::to_string));
+        if let Some(exit) = exit
+            && !self.agent.exit_logged
+        {
+            self.agent.exit_logged = true;
+            self.feed.record(json!({"kind": "agent_process", "event": "exited", "command": command, "exit": exit, "log": log}));
+        }
+        if self.agent.last_call.is_none()
+            && !self.agent.missing_logged
+            && now - self.agent.opened >= AGENT_CONNECT_GRACE_S
+        {
+            self.agent.missing_logged = true;
+            self.feed.record(json!({
+                "kind": "agent_missing",
+                "after_s": now - self.agent.opened,
+                "command": command,
+                "bad_tokens": self.agent.bridge.as_ref().map_or(0, AgentBridge::bad_tokens),
+            }));
+        }
     }
 
     /// Send accepted goals once their rover reaches L2 or L3.
@@ -935,14 +1017,10 @@ fn urgency_tag(urgency: u8) -> Tag {
 
 /// The agent panel at the lower left of the map: mode, drive grant, cards.
 pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
-    let desk = &dashboard.agent;
     let now = dashboard.now;
+    let status = dashboard.agent.status(now);
+    let desk = &dashboard.agent;
     let mode = desk.mode;
-    let status = match (&desk.engine, desk.last_call) {
-        (Some(engine), Some(at)) => format!("{engine} · last call {:.0} s ago", now - at),
-        _ if desk.bridge.is_some() => format!("{} · no agent yet", desk.bridge_note),
-        _ => desk.bridge_note.clone(),
-    };
     let grant = desk.grant.clone();
     let rejecting = desk.rejecting.clone();
     let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
@@ -979,7 +1057,11 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                         })),
                 ),
         )
-        .child(hint(status, cx))
+        .child(if status.warn {
+            caution(status.text, cx)
+        } else {
+            hint(status.text, cx)
+        })
         .when_some(grant, |panel, grant| {
             let pending = grant.pending();
             panel.child(

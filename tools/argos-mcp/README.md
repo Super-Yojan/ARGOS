@@ -24,3 +24,8 @@ The window writes `agent-bridge.json` (port and token) to its session folder,
 `~/Documents/ARGOS Sessions` or `ARGOS_SESSION_DIR`; set `ARGOS_AGENT_BRIDGE`
 to point somewhere else. The panel's mode in the window always wins over the
 server's profile.
+
+ARGOS does not start an agent unless you ask it to: set
+`ARGOS_AGENT_CMD="python3 tools/argos-mcp/recommend_loop.py"` before launching
+the window and it starts the loop itself (output in `argos-agent-<time>.log`).
+Without an agent, the panel turns amber after 20 s and says what to run.

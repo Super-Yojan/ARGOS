@@ -32,6 +32,14 @@ pub const DRIVE_GRANT_MAX_S: f64 = 60.;
 pub const DRIVE_BURST_MAX_S: f64 = 2.;
 /// An unanswered drive request lapses after this long.
 pub const DRIVE_REQUEST_TIMEOUT_S: f64 = 60.;
+/// With the bridge up, the panel waits this long for an agent before it says one is missing.
+pub const AGENT_CONNECT_GRACE_S: f64 = 20.;
+/// A connected agent that has not called for this long is shown as silent.
+/// The built-in loop reads every 5 s and an MCP client on `/loop 1m` every 60 s.
+pub const AGENT_SILENT_S: f64 = 180.;
+/// What the panel tells the operator to run when no agent connects.
+pub const AGENT_START_HINT: &str =
+    "python3 tools/argos-mcp/recommend_loop.py, or set ARGOS_AGENT_CMD so ARGOS starts it";
 /// Reasons the operator can tap when rejecting a card.
 pub const REJECT_REASONS: &[(&str, &str)] = &[
     ("wrong_rover", "Wrong rover"),
@@ -1064,5 +1072,69 @@ pub fn recommendation_stale(
             Some("the rover is already running a task".into())
         }
         _ => None,
+    }
+}
+
+/// What the window knows about its agent link, for the panel's status line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AgentLink<'a> {
+    /// `Some(note)` when the bridge is listening; `None` when it is off or failed.
+    pub bridge: Option<&'a str>,
+    /// Why there is no bridge, when `bridge` is `None`.
+    pub bridge_error: &'a str,
+    /// Seconds since the bridge opened.
+    pub since_open: f64,
+    /// Engine name from the last hello.
+    pub engine: Option<&'a str>,
+    /// Seconds since the last accepted request.
+    pub since_call: Option<f64>,
+    /// Requests the bridge refused for a wrong or missing token.
+    pub bad_tokens: u32,
+    /// The command ARGOS started (`ARGOS_AGENT_CMD`), if any.
+    pub command: Option<&'a str>,
+    /// How that command ended, if it has.
+    pub command_exit: Option<&'a str>,
+}
+
+/// The panel's status line, and whether it needs the operator.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentStatus {
+    pub text: String,
+    pub warn: bool,
+}
+
+/// Turn the link into one status line. An agent that never connects, or
+/// stopped calling, gets an actionable warning instead of a neutral note.
+pub fn agent_status(link: &AgentLink) -> AgentStatus {
+    let ok = |text: String| AgentStatus { text, warn: false };
+    let warn = |text: String| AgentStatus { text, warn: true };
+    let Some(note) = link.bridge else {
+        return warn(link.bridge_error.to_string());
+    };
+    if let Some(exit) = link.command_exit {
+        return warn(format!("Agent command stopped: {exit}"));
+    }
+    match (link.engine, link.since_call) {
+        (Some(engine), Some(ago)) if ago >= AGENT_SILENT_S => warn(format!(
+            "{engine} · silent for {ago:.0} s; is the agent still running?"
+        )),
+        (Some(engine), Some(ago)) => ok(format!("{engine} · last call {ago:.0} s ago")),
+        _ if link.bad_tokens > 0 => warn(format!(
+            "An agent tried to connect with a stale token ({} refused). Restart it so it rereads agent-bridge.json",
+            link.bad_tokens
+        )),
+        _ if link.since_open < AGENT_CONNECT_GRACE_S => match link.command {
+            Some(_) => ok(format!("{note} · starting the agent")),
+            None => ok(format!("{note} · waiting for an agent")),
+        },
+        _ => match link.command {
+            Some(command) => warn(format!(
+                "Agent not connected after {:.0} s. ARGOS started `{command}`; see its argos-agent log in the session folder",
+                link.since_open
+            )),
+            None => warn(format!(
+                "Agent not connected. Start one: {AGENT_START_HINT}"
+            )),
+        },
     }
 }

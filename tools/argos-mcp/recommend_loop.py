@@ -20,7 +20,7 @@ import json
 import time
 import urllib.request
 
-from argos_bridge import Bridge, BridgeError, session_dir, state_digest, system_prompt, tick_prompt
+from argos_bridge import Bridge, BridgeError, exit_with_argos, session_dir, state_digest, system_prompt, tick_prompt
 
 CLAUDE_MODEL = "claude-opus-5-5"
 MAX_TURNS = 4
@@ -217,6 +217,7 @@ def main():
     else:
         engine = Dry()
     name = f"loop:{args.backend}:{args.model or (CLAUDE_MODEL if args.backend == 'claude' else args.backend)}"
+    exit_with_argos()
     bridge = Bridge(args.bridge, engine=name)
     system = system_prompt()
     log_path = session_dir() / f"argos-recommend-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"

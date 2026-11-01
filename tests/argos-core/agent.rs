@@ -238,3 +238,75 @@ fn book_expires_and_supersedes() {
     assert_eq!(closed, vec![id]);
     assert!(recommendation_stale(&book.get(&closed[0]).unwrap().rec, false, None).is_some());
 }
+
+#[test]
+fn status_tells_the_operator_when_no_agent_connects() {
+    let note = "Agent bridge on 127.0.0.1:7471";
+    let link = AgentLink {
+        bridge: Some(note),
+        since_open: 5.,
+        ..AgentLink::default()
+    };
+    let waiting = agent_status(&link);
+    assert!(!waiting.warn);
+    assert!(waiting.text.contains("waiting for an agent"));
+
+    let missing = agent_status(&AgentLink {
+        since_open: AGENT_CONNECT_GRACE_S,
+        ..link.clone()
+    });
+    assert!(missing.warn, "bridge up, no agent after the grace period");
+    assert!(missing.text.contains("Agent not connected"));
+    assert!(missing.text.contains("recommend_loop.py"));
+
+    let launched = agent_status(&AgentLink {
+        since_open: 60.,
+        command: Some("python3 recommend_loop.py"),
+        ..link.clone()
+    });
+    assert!(launched.warn);
+    assert!(launched.text.contains("python3 recommend_loop.py"));
+
+    let stopped = agent_status(&AgentLink {
+        command: Some("python3 recommend_loop.py"),
+        command_exit: Some("exit status: 1 · ModuleNotFoundError: anthropic"),
+        ..link.clone()
+    });
+    assert!(stopped.warn);
+    assert!(stopped.text.contains("ModuleNotFoundError"));
+
+    let stale = agent_status(&AgentLink {
+        since_open: 60.,
+        bad_tokens: 2,
+        ..link.clone()
+    });
+    assert!(stale.warn);
+    assert!(stale.text.contains("stale token"));
+}
+
+#[test]
+fn status_shows_a_connected_agent_and_flags_a_silent_one() {
+    let link = AgentLink {
+        bridge: Some("Agent bridge on 127.0.0.1:7471"),
+        since_open: 600.,
+        engine: Some("loop:claude"),
+        since_call: Some(4.),
+        ..AgentLink::default()
+    };
+    let live = agent_status(&link);
+    assert!(!live.warn);
+    assert_eq!(live.text, "loop:claude · last call 4 s ago");
+
+    let silent = agent_status(&AgentLink {
+        since_call: Some(AGENT_SILENT_S + 1.),
+        ..link
+    });
+    assert!(silent.warn);
+    assert!(silent.text.contains("silent"));
+
+    let off = agent_status(&AgentLink {
+        bridge_error: "Agent bridge off (ARGOS_AGENT=0)",
+        ..AgentLink::default()
+    });
+    assert_eq!(off.text, "Agent bridge off (ARGOS_AGENT=0)");
+}

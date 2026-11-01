@@ -11,6 +11,7 @@ import pathlib
 import socket
 import tempfile
 import threading
+import time
 
 BRIDGE_FILE = "agent-bridge.json"
 HERE = pathlib.Path(__file__).resolve().parent
@@ -28,6 +29,28 @@ def session_dir():
     if home:
         return pathlib.Path(home) / "Documents" / "ARGOS Sessions"
     return pathlib.Path(tempfile.gettempdir())
+
+
+def exit_with_argos(poll_s=2.0):
+    """When ARGOS started this process (ARGOS_AGENT_CMD), exit once ARGOS is gone.
+
+    ARGOS sets ``ARGOS_AGENT_PARENT``. If the window quits without stopping us,
+    we are re-parented, so a changed parent pid means ARGOS has closed.
+    """
+    if not os.environ.get("ARGOS_AGENT_PARENT") or not hasattr(os, "getppid"):
+        return None
+    parent = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(poll_s)
+            if os.getppid() != parent:
+                print("ARGOS closed; stopping", flush=True)
+                os._exit(0)
+
+    thread = threading.Thread(target=watch, name="argos-parent", daemon=True)
+    thread.start()
+    return thread
 
 
 def bridge_path():
