@@ -96,6 +96,9 @@ struct Dashboard {
     claim: ControlClaim,
     /// Stops this window sent and not yet reset: control and window clock.
     latched: BTreeMap<u64, (StopOrigin, f64)>,
+    /// Rovers last seen reporting `emergency_stop`, so each new rover-side
+    /// stop is logged once with its cause.
+    rover_stops: BTreeSet<u64>,
     /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
     explore_budget: usize,
     /// Typed L5 task, and the reply box for the model's questions.
@@ -204,6 +207,7 @@ impl Dashboard {
             now: 0.,
             claim: ControlClaim::new(),
             latched: BTreeMap::new(),
+            rover_stops: BTreeSet::new(),
             explore_budget: 1,
             task_input,
             task_reply,
@@ -257,6 +261,7 @@ impl Dashboard {
         self.claim.renew(self.now);
         let seen: BTreeSet<u64> = self.marks.iter().map(|mark| mark.id).collect();
         self.latched.retain(|id, _| seen.contains(id));
+        self.log_rover_stops();
         self.sync_markers(&seen, false, self.view.read(cx).ground_altitude());
         self.sync_markers(&seen, true, self.view.read(cx).ground_altitude());
         if seen.is_empty() {
@@ -594,7 +599,7 @@ impl Dashboard {
         self.stop_drive();
         self.drag = None;
         self.latched.insert(id, (origin, self.now));
-        self.note = match self.feed.emergency_stop(id) {
+        self.note = match self.feed.emergency_stop(id, origin.name()) {
             Ok(()) => format!("Stop sent to rover {id}"),
             Err(error) => error,
         };
@@ -659,7 +664,7 @@ impl Dashboard {
         let mut failed = Vec::new();
         for id in &ids {
             self.latched.insert(*id, (origin, self.now));
-            if let Err(error) = self.feed.emergency_stop(*id) {
+            if let Err(error) = self.feed.emergency_stop(*id, origin.name()) {
                 failed.push(format!("rover {id} ({error})"));
             }
         }
@@ -691,6 +696,7 @@ impl Dashboard {
         self.selected = None;
         self.claim.release();
         self.latched.clear();
+        self.rover_stops.clear();
         self.framed.clear();
         self.framed_center = None;
         self.feed.shutdown();
@@ -714,6 +720,31 @@ impl Dashboard {
     }
     fn is_stopped(&self, mark: &RoverMark) -> bool {
         self.latched.contains_key(&mark.id) || mark.safety == "emergency_stop"
+    }
+    /// Log each rover's new `emergency_stop` once, naming whether this
+    /// window sent it and the rover's reason, so the session log keeps the
+    /// cause the callout showed.
+    fn log_rover_stops(&mut self) {
+        let mut now_stopped = BTreeSet::new();
+        for mark in &self.marks {
+            if mark.safety != "emergency_stop" {
+                continue;
+            }
+            now_stopped.insert(mark.id);
+            if self.rover_stops.contains(&mark.id) {
+                continue;
+            }
+            let sent = self.latched.get(&mark.id);
+            self.feed.record(serde_json::json!({
+                "kind": "stop_observed",
+                "rover_id": mark.id,
+                "sent_here": sent.is_some(),
+                "origin": sent.map(|(origin, _)| origin.name()),
+                "reason": mark.autonomy_reason,
+                "label": self.stop_cause(mark).map(|cause| cause.label()),
+            }));
+        }
+        self.rover_stops = now_stopped;
     }
     /// Who stopped this rover, if it is stopped.
     fn stop_cause(&self, mark: &RoverMark) -> Option<StopCause> {

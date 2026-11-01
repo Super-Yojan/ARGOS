@@ -80,6 +80,15 @@ impl StopOrigin {
             Self::Agent => "ARGOS agent",
         }
     }
+    /// Name in the session log.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Button => "stop_button",
+            Self::Space => "space_key",
+            Self::StopAll => "stop_all",
+            Self::Agent => "agent",
+        }
+    }
 }
 
 /// Why a rover is in a safety stop.

@@ -602,3 +602,17 @@ fn a_rover_stop_this_window_did_not_send_names_the_rover_reason() {
         "Stopped by rover: no reason reported"
     );
 }
+
+#[test]
+fn stop_origins_have_distinct_log_names() {
+    let names: BTreeSet<_> = [
+        StopOrigin::Button,
+        StopOrigin::Space,
+        StopOrigin::StopAll,
+        StopOrigin::Agent,
+    ]
+    .map(StopOrigin::name)
+    .into_iter()
+    .collect();
+    assert_eq!(names.len(), 4);
+}

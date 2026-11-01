@@ -1706,12 +1706,21 @@ impl FleetFeed {
         self.picture.lock().unwrap().command = format!("Reset sent to rover {id}");
         Ok(())
     }
-    pub fn emergency_stop(&self, id: u64) -> Result<(), String> {
+    /// Safety stop one rover. `origin` names the control that sent it
+    /// (see `console::StopOrigin::name`); the session log gets a
+    /// `stop_origin` record with the same token as the `action_sent`.
+    pub fn emergency_stop(&self, id: u64, origin: &str) -> Result<(), String> {
         let client = self.connected()?;
         client.clear_teleop_guard();
-        client
+        let token = client
             .action(id, "safety", serde_json::json!({"action": "stop"}))
             .map_err(|error| error.to_string())?;
+        client.record_event(serde_json::json!({
+            "kind": "stop_origin",
+            "rover_id": id,
+            "origin": origin,
+            "token": token,
+        }));
         self.picture.lock().unwrap().command = format!("Stop sent to rover {id}");
         Ok(())
     }
