@@ -24,7 +24,7 @@ use argos_core::{
     PlanarPoint, STUDY_LEVELS, TASK_BUDGETS_MIN, drag_disabled_reason, drive_block,
     explore_refusal, level_label, level_permitted, phase_label, task_refusal,
 };
-use argos_gpui::console::{self, CalloutTag, InspectorTab};
+use argos_gpui::console::{self, CalloutTag, InspectorTab, StopCause, StopOrigin};
 use argos_gpui::{
     DashboardConfig, FleetFeed, FpvController, FpvPhase, LaunchMode, RoverMark, RoverPresence,
     model_position, position_label, reframing_target,
@@ -94,7 +94,11 @@ struct Dashboard {
     started: Instant,
     now: f64,
     claim: ControlClaim,
-    latched: BTreeSet<u64>,
+    /// Stops this window sent and not yet reset: control and window clock.
+    latched: BTreeMap<u64, (StopOrigin, f64)>,
+    /// Rovers last seen reporting `emergency_stop`, so each new rover-side
+    /// stop is logged once with its cause.
+    rover_stops: BTreeSet<u64>,
     /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
     explore_budget: usize,
     /// Typed L5 task, and the reply box for the model's questions.
@@ -202,7 +206,8 @@ impl Dashboard {
             started: Instant::now(),
             now: 0.,
             claim: ControlClaim::new(),
-            latched: BTreeSet::new(),
+            latched: BTreeMap::new(),
+            rover_stops: BTreeSet::new(),
             explore_budget: 1,
             task_input,
             task_reply,
@@ -255,7 +260,8 @@ impl Dashboard {
         self.now = self.started.elapsed().as_secs_f64();
         self.claim.renew(self.now);
         let seen: BTreeSet<u64> = self.marks.iter().map(|mark| mark.id).collect();
-        self.latched.retain(|id| seen.contains(id));
+        self.latched.retain(|id, _| seen.contains(id));
+        self.log_rover_stops();
         self.sync_markers(&seen, false, self.view.read(cx).ground_altitude());
         self.sync_markers(&seen, true, self.view.read(cx).ground_altitude());
         if seen.is_empty() {
@@ -588,12 +594,12 @@ impl Dashboard {
             Err(error) => self.note = error,
         }
     }
-    fn stop_rover(&mut self, id: u64) {
+    fn stop_rover(&mut self, id: u64, origin: StopOrigin) {
         self.end_agent_drive("stop");
         self.stop_drive();
         self.drag = None;
-        self.latched.insert(id);
-        self.note = match self.feed.emergency_stop(id) {
+        self.latched.insert(id, (origin, self.now));
+        self.note = match self.feed.emergency_stop(id, origin.name()) {
             Ok(()) => format!("Stop sent to rover {id}"),
             Err(error) => error,
         };
@@ -604,7 +610,7 @@ impl Dashboard {
             self.note = "Select a rover before driving".into();
             return;
         };
-        if self.latched.contains(&id)
+        if self.latched.contains_key(&id)
             || self
                 .selected_mark()
                 .is_some_and(|mark| mark.safety == "emergency_stop")
@@ -643,22 +649,22 @@ impl Dashboard {
     }
     fn estop(&mut self) {
         if let Some(id) = self.selected {
-            self.stop_rover(id);
+            self.stop_rover(id, StopOrigin::Space);
         } else {
             self.stop_drive();
         }
     }
     /// Safety stop for every fleet member, located or not. Each rover then
     /// needs its own Reset stop; nothing here re-arms or resumes.
-    fn stop_all(&mut self) {
+    fn stop_all(&mut self, origin: StopOrigin) {
         self.end_agent_drive("stop");
         self.stop_drive();
         self.drag = None;
         let ids = console::fleet_ids(&self.marks, &self.presence);
         let mut failed = Vec::new();
         for id in &ids {
-            self.latched.insert(*id);
-            if let Err(error) = self.feed.emergency_stop(*id) {
+            self.latched.insert(*id, (origin, self.now));
+            if let Err(error) = self.feed.emergency_stop(*id, origin.name()) {
                 failed.push(format!("rover {id} ({error})"));
             }
         }
@@ -690,6 +696,7 @@ impl Dashboard {
         self.selected = None;
         self.claim.release();
         self.latched.clear();
+        self.rover_stops.clear();
         self.framed.clear();
         self.framed_center = None;
         self.feed.shutdown();
@@ -712,7 +719,36 @@ impl Dashboard {
         self.map.set_mode(mode);
     }
     fn is_stopped(&self, mark: &RoverMark) -> bool {
-        self.latched.contains(&mark.id) || mark.safety == "emergency_stop"
+        self.latched.contains_key(&mark.id) || mark.safety == "emergency_stop"
+    }
+    /// Log each rover's new `emergency_stop` once, naming whether this
+    /// window sent it and the rover's reason, so the session log keeps the
+    /// cause the callout showed.
+    fn log_rover_stops(&mut self) {
+        let mut now_stopped = BTreeSet::new();
+        for mark in &self.marks {
+            if mark.safety != "emergency_stop" {
+                continue;
+            }
+            now_stopped.insert(mark.id);
+            if self.rover_stops.contains(&mark.id) {
+                continue;
+            }
+            let sent = self.latched.get(&mark.id);
+            self.feed.record(serde_json::json!({
+                "kind": "stop_observed",
+                "rover_id": mark.id,
+                "sent_here": sent.is_some(),
+                "origin": sent.map(|(origin, _)| origin.name()),
+                "reason": mark.autonomy_reason,
+                "label": self.stop_cause(mark).map(|cause| cause.label()),
+            }));
+        }
+        self.rover_stops = now_stopped;
+    }
+    /// Who stopped this rover, if it is stopped.
+    fn stop_cause(&self, mark: &RoverMark) -> Option<StopCause> {
+        console::stop_cause(mark, self.latched.get(&mark.id).copied(), self.now)
     }
     fn start_explore(&mut self, id: u64) {
         let Some(mark) = self.marks.iter().find(|mark| mark.id == id) else {
@@ -908,7 +944,7 @@ impl Render for Dashboard {
                     (
                         mark.id,
                         map.project_local(mark.latitude, mark.longitude),
-                        console::callout(mark, self.is_stopped(mark), driving_here),
+                        console::callout(mark, self.stop_cause(mark).as_ref(), driving_here),
                     )
                 })
                 .collect()
@@ -1336,7 +1372,7 @@ fn console_bar(
                         .label("Stop all")
                         .tooltip("Safety stop every rover. Each needs Reset stop to move again.")
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.stop_all();
+                            this.stop_all(StopOrigin::StopAll);
                             this.focus.focus(window, cx);
                             cx.notify();
                         })),
@@ -1759,10 +1795,11 @@ fn rover_inspector(
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let id = mark.id;
-    let stopped = dashboard.is_stopped(mark);
+    let stop = dashboard.stop_cause(mark);
+    let stopped = stop.is_some();
     let driving = dashboard.driving;
     let tab = dashboard.inspector_tab;
-    let callout = console::callout(mark, stopped, driving);
+    let callout = console::callout(mark, stop.as_ref(), driving);
     let manual = mark.requested_level.as_deref() == Some("teleop");
     let primary = if stopped {
         Button::new(("inspector-reset", id))
@@ -1826,39 +1863,46 @@ fn rover_inspector(
                 .p_4()
                 .pb_2()
                 .gap_3()
+                // Stop sits top right, on the title row: away from Take over
+                // and two rows above the tab strip, so a reach for the tabs
+                // cannot land on it. Still one click, plus Space anywhere.
                 .child(
                     h_flex()
                         .justify_between()
                         .child(
-                            div()
-                                .text_sm()
-                                .font_semibold()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(format!("Rover {id}")),
-                        )
-                        .child(
                             h_flex()
-                                .gap_1()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_semibold()
+                                        .font_family(cx.theme().mono_font_family.clone())
+                                        .child(format!("Rover {id}")),
+                                )
                                 .when(reversing, |tags| {
                                     tags.child(Tag::warning().small().child("Reversing"))
                                 })
                                 .children(callout.tag.map(callout_tag)),
+                        )
+                        .child(
+                            Button::new(("inspector-stop", id))
+                                .danger()
+                                .label("Stop")
+                                .tooltip("Safety stop this rover (Space). Reset stop resumes.")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.stop_rover(id, StopOrigin::Button);
+                                    this.focus.focus(window, cx);
+                                    cx.notify();
+                                })),
                         ),
                 )
                 .child(div().text_base().font_medium().child(callout.state))
-                .child(
-                    h_flex().gap_2().child(primary.outline().small()).child(
-                        Button::new(("inspector-stop", id))
-                            .danger()
-                            .small()
-                            .label("Stop")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.stop_rover(id);
-                                this.focus.focus(window, cx);
-                                cx.notify();
-                            })),
-                    ),
-                ),
+                // Above the tabs, so the way out shows on Overview and Video alike.
+                .when_some(callout.recovery, |header, recovery| {
+                    header.child(caution(recovery, cx))
+                })
+                .child(h_flex().gap_2().child(primary.outline().small()))
+                .child(div().h_2()),
         )
         .child(
             TabBar::new("inspector-tabs")
