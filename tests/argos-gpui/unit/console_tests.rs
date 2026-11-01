@@ -89,7 +89,7 @@ fn outdoor(phase: &str, hold: Option<&str>, remaining: Option<f64>) -> OutdoorRe
 
 #[test]
 fn an_idle_rover_names_its_level_and_carries_no_tag() {
-    let callout = callout(&mark(1), false, false);
+    let callout = callout(&mark(1), None, false);
     assert_eq!(callout.tag, None);
     assert_eq!(callout.state, "L3 Waypoint · idle");
     assert_eq!(callout.attention, None);
@@ -99,14 +99,20 @@ fn an_idle_rover_names_its_level_and_carries_no_tag() {
 fn a_stop_outranks_driving_and_attention_but_trace_keeps_the_reason() {
     let mut rover = mark(2);
     rover.status = "offline".into();
-    let stopped = callout(&rover, true, true);
+    let stop = StopCause::Operator {
+        origin: StopOrigin::Button,
+        age_s: 3.,
+    };
+    let stopped = callout(&rover, Some(&stop), true);
     assert_eq!(stopped.tag, Some(CalloutTag::Stopped));
     assert_eq!(stopped.attention, None);
+    assert_eq!(stopped.recovery, Some(STOP_RECOVERY));
     let rows = trace(&rover, true);
     assert!(rows.contains(&("Hardware", "Stop active".into())));
     assert!(rows.contains(&("Attention", "Offline".into())));
-    assert_eq!(callout(&rover, false, true).tag, Some(CalloutTag::Driving));
-    let offline = callout(&rover, false, false);
+    assert_eq!(callout(&rover, None, true).tag, Some(CalloutTag::Driving));
+    let offline = callout(&rover, None, false);
+    assert_eq!(offline.recovery, None);
     assert_eq!(offline.tag, Some(CalloutTag::Attention));
     assert_eq!(offline.attention.as_deref(), Some("Offline"));
 }
@@ -115,17 +121,17 @@ fn a_stop_outranks_driving_and_attention_but_trace_keeps_the_reason() {
 fn a_stale_pose_needs_a_person_except_under_manual_control() {
     let mut rover = mark(3);
     rover.status = "pose stale".into();
-    assert_eq!(callout(&rover, false, false).state, "Pose stale");
+    assert_eq!(callout(&rover, None, false).state, "Pose stale");
     rover.requested_level = Some("teleop".into());
     rover.effective_level = Some("teleop".into());
-    assert_eq!(callout(&rover, false, false).tag, None);
+    assert_eq!(callout(&rover, None, false).tag, None);
 }
 
 #[test]
 fn outdoor_holds_and_missions_read_as_the_vehicle_reports_them() {
     let mut rover = mark(4);
     rover.outdoor = Some(outdoor("holding", Some("gps_stale"), Some(42.4)));
-    let held = callout(&rover, false, false);
+    let held = callout(&rover, None, false);
     assert_eq!(held.tag, Some(CalloutTag::Attention));
     assert_eq!(held.state, "GPS stale");
     rover.outdoor = Some(outdoor("active", None, Some(42.4)));
@@ -136,7 +142,7 @@ fn outdoor_holds_and_missions_read_as_the_vehicle_reports_them() {
         longitude: None,
         state: "active".into(),
     });
-    let going = callout(&rover, false, false);
+    let going = callout(&rover, None, false);
     assert_eq!(going.tag, Some(CalloutTag::Goal));
     assert_eq!(going.state, "Phase active (provisional) · 42 m left");
     assert!(trace(&rover, false).contains(&("Goal", "active · 42 m left".into())));
@@ -149,13 +155,13 @@ fn local_source_ignores_outdoor_gps_readiness() {
     report.acknowledged = false;
     report.source = "local".into();
     rover.outdoor = Some(report.clone());
-    let local = callout(&rover, false, false);
+    let local = callout(&rover, None, false);
     assert_eq!(local.tag, None);
     assert!(trace(&rover, false).contains(&("Attention", "Clear".into())));
     report.acknowledged = true;
     report.source = "outdoor_gps".into();
     rover.outdoor = Some(report);
-    assert_eq!(callout(&rover, false, false).state, "GPS stale");
+    assert_eq!(callout(&rover, None, false).state, "GPS stale");
 }
 
 #[test]
@@ -211,11 +217,11 @@ fn trace_names_the_hold_reason_when_no_level_is_in_effect() {
 fn heading_hold_and_motor_fault_are_attention() {
     let mut rover = mark(6);
     rover.hold = Some(HEADING_HOLD.into());
-    assert_eq!(callout(&rover, false, false).state, HEADING_HOLD_LABEL);
+    assert_eq!(callout(&rover, None, false).state, HEADING_HOLD_LABEL);
     rover.hold = None;
     rover.hardware.fault = Some("Left motor over current".into());
     assert_eq!(
-        callout(&rover, false, false).attention.as_deref(),
+        callout(&rover, None, false).attention.as_deref(),
         Some("Left motor over current")
     );
 }
@@ -502,14 +508,14 @@ fn callout_names_the_exploration_state_instead_of_idle() {
             reason: reason.map(Into::into),
         };
     rover.exploration = Some(report("running", None, Some("frontier_retry")));
-    let running = callout(&rover, false, false);
+    let running = callout(&rover, None, false);
     assert_eq!(running.tag, Some(CalloutTag::Goal));
     assert_eq!(
         running.state,
         "Stuck · retrying another frontier · 2 min left"
     );
     rover.exploration = Some(report("ended", Some("no_frontiers_left"), None));
-    let ended = callout(&rover, false, false);
+    let ended = callout(&rover, None, false);
     assert_eq!(ended.tag, None);
     assert_eq!(ended.state, "Done · no frontiers left");
 }
@@ -547,5 +553,52 @@ fn object_line_names_local_and_gps_positions() {
     assert_eq!(
         object_line(&no_gps),
         "Orange bucket #2 · x 2.04, y -1.50 m · seen 5×"
+    );
+}
+
+#[test]
+fn an_operator_stop_says_who_pressed_it_and_how_long_ago() {
+    let rover = mark(3);
+    // The rover echoes this window's stop; the window's own record wins.
+    let mut echoed = rover.clone();
+    echoed.safety = "emergency_stop".into();
+    echoed.autonomy_reason = Some("operator_stop".into());
+    for (origin, label) in [
+        (StopOrigin::Button, "Stop button"),
+        (StopOrigin::Space, "Space key"),
+        (StopOrigin::StopAll, "Stop all"),
+    ] {
+        let cause = stop_cause(&echoed, Some((origin, 10.)), 22.).unwrap();
+        let line = callout(&echoed, Some(&cause), false);
+        assert_eq!(line.state, format!("Stopped by you ({label}) · 12 s ago"));
+        assert_eq!(line.recovery, Some("Press Reset stop to resume"));
+    }
+    let agent = stop_cause(&rover, Some((StopOrigin::Agent, 0.)), 130.).unwrap();
+    assert_eq!(agent.label(), "Stopped by the ARGOS agent · 2 min ago");
+}
+
+#[test]
+fn a_rover_stop_this_window_did_not_send_names_the_rover_reason() {
+    let mut rover = mark(4);
+    assert_eq!(stop_cause(&rover, None, 5.), None);
+    rover.safety = "emergency_stop".into();
+    rover.autonomy_reason = Some("operator_stop".into());
+    let cause = stop_cause(&rover, None, 5.).unwrap();
+    let line = callout(&rover, Some(&cause), false);
+    assert_eq!(line.tag, Some(CalloutTag::Stopped));
+    assert_eq!(
+        line.state,
+        "Stopped by rover: stop request not sent from this window"
+    );
+    assert_eq!(line.recovery, Some(STOP_RECOVERY));
+    rover.autonomy_reason = Some("dock_fault".into());
+    assert_eq!(
+        stop_cause(&rover, None, 5.).unwrap().label(),
+        "Stopped by rover: dock fault"
+    );
+    rover.autonomy_reason = None;
+    assert_eq!(
+        stop_cause(&rover, None, 5.).unwrap().label(),
+        "Stopped by rover: no reason reported"
     );
 }

@@ -59,6 +59,102 @@ impl CalloutTag {
     }
 }
 
+/// The control in this window that sent a stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopOrigin {
+    /// The inspector's Stop button.
+    Button,
+    /// The Space key.
+    Space,
+    /// Stop all on the console bar.
+    StopAll,
+    /// The ARGOS operator agent's Stop or Stop all.
+    Agent,
+}
+impl StopOrigin {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Button => "Stop button",
+            Self::Space => "Space key",
+            Self::StopAll => "Stop all",
+            Self::Agent => "ARGOS agent",
+        }
+    }
+}
+
+/// Why a rover is in a safety stop.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StopCause {
+    /// This window sent the stop, `age_s` seconds ago.
+    Operator { origin: StopOrigin, age_s: f64 },
+    /// The rover reports a stop this window did not send. `reason` is the
+    /// rover's autonomy reason, when it gives one.
+    Rover { reason: Option<String> },
+}
+
+/// What the operator does to leave any safety stop.
+pub const STOP_RECOVERY: &str = "Press Reset stop to resume";
+
+impl StopCause {
+    /// One line naming who stopped the rover, for the callout.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Operator {
+                origin: StopOrigin::Agent,
+                age_s,
+            } => format!("Stopped by the ARGOS agent · {}", ago(*age_s)),
+            Self::Operator { origin, age_s } => {
+                format!("Stopped by you ({}) · {}", origin.label(), ago(*age_s))
+            }
+            Self::Rover { reason } => {
+                format!("Stopped by rover: {}", rover_stop_reason(reason.as_deref()))
+            }
+        }
+    }
+}
+
+/// Terra reports `operator_stop` for any stop request it holds. When this
+/// window did not send it, it came from another ARGOS window, the phone, or
+/// an agent.
+fn rover_stop_reason(reason: Option<&str>) -> String {
+    match reason.map(str::trim) {
+        Some("operator_stop") => "stop request not sent from this window".into(),
+        Some(reason) if !reason.is_empty() && reason != "idle" => reason.replace('_', " "),
+        _ => "no reason reported".into(),
+    }
+}
+
+fn ago(age_s: f64) -> String {
+    let age = age_s.max(0.);
+    if age < 60. {
+        format!("{age:.0} s ago")
+    } else {
+        format!("{:.0} min ago", (age / 60.).floor())
+    }
+}
+
+/// Why the rover is stopped, if it is. This window's own stop wins: the rover
+/// echoes it back as its own `emergency_stop`. `sent` is this window's stop
+/// and the window clock when it was sent; `now` is the same clock.
+pub fn stop_cause(
+    mark: &RoverMark,
+    sent: Option<(StopOrigin, f64)>,
+    now: f64,
+) -> Option<StopCause> {
+    if let Some((origin, at)) = sent {
+        Some(StopCause::Operator {
+            origin,
+            age_s: now - at,
+        })
+    } else if mark.safety == "emergency_stop" {
+        Some(StopCause::Rover {
+            reason: mark.autonomy_reason.clone(),
+        })
+    } else {
+        None
+    }
+}
+
 /// One rover's line on the field.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -67,14 +163,17 @@ pub struct Callout {
     pub state: String,
     /// Why a person should look, while the rover is not stopped.
     pub attention: Option<String>,
+    /// What to do to get moving again, while the rover is stopped.
+    pub recovery: Option<&'static str>,
 }
 
-/// `stopped` is this window's latch or the rover's own reported stop;
+/// `stop` is why the rover is stopped (see [`stop_cause`]);
 /// `driving` is this window's manual drive of that rover.
-pub fn callout(mark: &RoverMark, stopped: bool, driving: bool) -> Callout {
+pub fn callout(mark: &RoverMark, stop: Option<&StopCause>, driving: bool) -> Callout {
     let attention = attention(mark);
-    let (tag, state) = if stopped {
-        (Some(CalloutTag::Stopped), "Safety stop active".to_string())
+    let stopped = stop.is_some();
+    let (tag, state) = if let Some(stop) = stop {
+        (Some(CalloutTag::Stopped), stop.label())
     } else if driving {
         (Some(CalloutTag::Driving), "Manual · you are driving".into())
     } else if let Some(reason) = &attention {
@@ -114,6 +213,7 @@ pub fn callout(mark: &RoverMark, stopped: bool, driving: bool) -> Callout {
         tag,
         state,
         attention: attention.filter(|_| !stopped),
+        recovery: stopped.then_some(STOP_RECOVERY),
     }
 }
 
