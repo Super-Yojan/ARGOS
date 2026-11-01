@@ -91,7 +91,7 @@ fn geographic_drag_release_sends_wgs84_and_freezes_the_radius() {
     }
     assert_eq!(
         drag_disabled_reason(direct),
-        Some("Outdoor GPS missions require L3 Waypoint")
+        Some("Outdoor GPS missions require L3 Planned")
     );
 
     // A Terra that lists goal_levels takes a GPS destination at L2–L5.
@@ -109,7 +109,7 @@ fn geographic_drag_release_sends_wgs84_and_freezes_the_radius() {
     for level in ["teleop", "assisted_teleop", "target_search"] {
         assert_eq!(
             drag_disabled_reason(geo_gate(&every, level)),
-            Some("GPS goals need L2 Direct, L3 Waypoint, L4 Explore or L5 Task"),
+            Some("GPS goals need L2 Direct, L3 Planned, L4 Explore or L5 Task"),
             "{level}"
         );
     }

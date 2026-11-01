@@ -91,7 +91,7 @@ fn outdoor(phase: &str, hold: Option<&str>, remaining: Option<f64>) -> OutdoorRe
 fn an_idle_rover_names_its_level_and_carries_no_tag() {
     let callout = callout(&mark(1), false, false);
     assert_eq!(callout.tag, None);
-    assert_eq!(callout.state, "L3 Waypoint · idle");
+    assert_eq!(callout.state, "L3 Planned · idle");
     assert_eq!(callout.attention, None);
 }
 
@@ -169,7 +169,7 @@ fn trace_separates_requested_from_effective_autonomy() {
     rover.effective_level = Some("waypoint".into());
     assert!(trace(&rover, false).contains(&(
         "Autonomy",
-        "requested L0 Manual · effective L3 Waypoint".into()
+        "requested L0 Manual · effective L3 Planned".into()
     )));
 }
 
@@ -367,7 +367,7 @@ fn level_group_selects_the_requested_level_not_the_effective_one() {
     rover.assigned_level = Some("waypoint".into());
     assert_eq!(
         level_line(&rover),
-        "L3 Waypoint · study fixed at L3 Waypoint"
+        "L3 Planned · study fixed at L3 Planned"
     );
 }
 

@@ -258,9 +258,9 @@ impl OutdoorReport {
     /// Operator wording for the levels that take a GPS goal.
     pub fn goal_level_refusal(&self) -> &'static str {
         if self.goal_levels.iter().any(|l| l != "waypoint") {
-            "GPS goals need L2 Direct, L3 Waypoint, L4 Explore or L5 Task"
+            "GPS goals need L2 Direct, L3 Planned, L4 Explore or L5 Task"
         } else {
-            "Outdoor GPS missions require L3 Waypoint"
+            "Outdoor GPS missions require L3 Planned"
         }
     }
 
