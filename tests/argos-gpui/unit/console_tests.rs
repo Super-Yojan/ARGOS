@@ -680,3 +680,29 @@ fn sensor_hold_row_shows_how_long_terra_has_held_and_a_dropped_goal() {
     hold.goal_dropped = true;
     assert!(hold.summary().contains("goal dropped after timeout"));
 }
+
+#[test]
+fn reporting_changes_are_logged_once_per_transition() {
+    let fresh = mark(0);
+    let quiet_5 = quiet(0, 5.);
+    let quiet_6 = quiet(0, 6.);
+    let lost = quiet(0, 20.);
+    let records = reporting_changes(&[fresh.clone()], &[quiet_5.clone()]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "rover_reporting");
+    assert_eq!(records[0]["rover_id"], 0);
+    assert_eq!(records[0]["state"], "not_reporting");
+    assert_eq!(records[0]["from"], "fresh");
+    assert_eq!(records[0]["silent_s"], 5.);
+    // The timer ticking is not a new transition.
+    assert!(reporting_changes(&[quiet_5], &[quiet_6.clone()]).is_empty());
+    assert_eq!(
+        reporting_changes(&[quiet_6], &[lost.clone()])[0]["state"],
+        "link_lost"
+    );
+    let back = reporting_changes(&[lost], &[fresh.clone()]);
+    assert_eq!(back[0]["state"], "fresh");
+    assert_eq!(back[0]["from"], "link_lost");
+    assert_eq!(back[0]["silent_s"], 20.);
+    assert!(reporting_changes(&[], &[fresh]).is_empty());
+}

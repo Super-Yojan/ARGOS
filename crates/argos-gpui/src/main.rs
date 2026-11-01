@@ -223,6 +223,9 @@ impl Dashboard {
         if !picture.command.is_empty() {
             self.command.clone_from(&picture.command);
         }
+        for change in console::reporting_changes(&self.marks, &picture.marks) {
+            self.feed.record(change);
+        }
         self.marks = picture.marks;
         self.presence = picture.presence;
         if self

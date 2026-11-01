@@ -348,6 +348,32 @@ pub fn link_label(link: &str, marks: &[RoverMark]) -> String {
     }
 }
 
+/// Session-log records for rovers whose reporting state changed since the
+/// last sync, so a trial log shows when each rover went quiet, escalated
+/// and came back, and for how long.
+pub fn reporting_changes(before: &[RoverMark], after: &[RoverMark]) -> Vec<serde_json::Value> {
+    after
+        .iter()
+        .filter_map(|mark| {
+            let old = before
+                .iter()
+                .find(|old| old.id == mark.id)
+                .map_or(argos_core::Reporting::Fresh, |old| old.reporting);
+            (old.wire() != mark.reporting.wire()).then(|| {
+                serde_json::json!({
+                    "kind": "rover_reporting",
+                    "rover_id": mark.id,
+                    "state": mark.reporting.wire(),
+                    "from": old.wire(),
+                    // How long it was silent: now for a new state, at the
+                    // last sync for a recovery.
+                    "silent_s": mark.reporting.silent_s().or(old.silent_s()),
+                })
+            })
+        })
+        .collect()
+}
+
 /// Field notices for rovers that stopped reporting, with the next step.
 pub fn reporting_notices(marks: &[RoverMark]) -> Vec<String> {
     marks

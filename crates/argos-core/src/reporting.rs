@@ -46,6 +46,14 @@ impl Reporting {
             Self::NotReporting { silent_s }
         }
     }
+    /// Wire name for the session log: `fresh`, `not_reporting` or `link_lost`.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::NotReporting { .. } => "not_reporting",
+            Self::LinkLost { .. } => "link_lost",
+        }
+    }
     pub fn is_fresh(self) -> bool {
         self == Self::Fresh
     }
