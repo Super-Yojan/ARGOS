@@ -199,6 +199,12 @@ pub struct SensorHold {
     pub age_s: f64,
     /// Holds in this run.
     pub count: u64,
+    /// Seconds the current hold has lasted; 0 once it clears (Terra#110).
+    pub held_s: f64,
+    /// Data is back after a long hold and the rover waits a short settle period.
+    pub settling: bool,
+    /// The hold outlasted Terra's timeout and the L2/L3 goal was dropped.
+    pub goal_dropped: bool,
 }
 
 impl SensorHold {
@@ -208,6 +214,20 @@ impl SensorHold {
             Some(age) => format!("{} · pose {age:.2} s old", self.cause),
             None => self.cause.clone(),
         }
+    }
+    /// The inspector's Sensor hold row, such as
+    /// `stale_vio · pose 0.41 s old · holding 12 s · 3 this run`.
+    pub fn summary(&self) -> String {
+        let state = if self.goal_dropped {
+            "goal dropped after timeout".to_string()
+        } else if self.settling {
+            "data back · settling".to_string()
+        } else if self.held_s > 0. {
+            format!("holding {:.0} s", self.held_s.floor())
+        } else {
+            format!("{:.0} s ago", self.age_s)
+        };
+        format!("{} · {state} · {} this run", self.label(), self.count)
     }
 }
 
@@ -222,6 +242,12 @@ fn sensor_hold(value: &Value) -> Option<SensorHold> {
         pose_age_s: hold["pose_age_s"].as_f64().filter(|age| age.is_finite()),
         age_s,
         count: hold["count"].as_u64().unwrap_or(0),
+        held_s: hold["held_s"]
+            .as_f64()
+            .filter(|s| s.is_finite() && *s >= 0.)
+            .unwrap_or(0.),
+        settling: hold["settling"] == true,
+        goal_dropped: hold["goal_dropped"] == true,
     })
 }
 

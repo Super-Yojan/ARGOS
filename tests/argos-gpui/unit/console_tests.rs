@@ -18,6 +18,7 @@ fn mark(id: u64) -> RoverMark {
         yaw: 0.,
         sequence: 1,
         status: "online".into(),
+        reporting: argos_core::Reporting::Fresh,
         occupancy: String::new(),
         grid: None,
         requested_level: Some("waypoint".into()),
@@ -195,6 +196,9 @@ fn trace_names_the_hold_reason_when_no_level_is_in_effect() {
         pose_age_s: Some(0.41),
         age_s: 0.,
         count: 3,
+        held_s: 0.,
+        settling: false,
+        goal_dropped: false,
     });
     let rows = trace(&rover, false);
     assert!(rows.contains(&(
@@ -548,4 +552,157 @@ fn object_line_names_local_and_gps_positions() {
         object_line(&no_gps),
         "Orange bucket #2 · x 2.04, y -1.50 m · seen 5×"
     );
+}
+
+/// A rover whose pose and hardware status are both `silent` seconds old.
+fn quiet(id: u64, silent: f64) -> RoverMark {
+    let mut rover = mark(id);
+    rover.status = "pose stale".into();
+    rover.hardware = HardwareObservation {
+        present: true,
+        connected: true,
+        ready: true,
+        age: silent,
+        ..HardwareObservation::default()
+    };
+    rover.reporting = argos_core::Reporting::classify(Some(silent + 0.4), &rover.hardware);
+    rover
+}
+
+#[test]
+fn pose_stale_alone_keeps_the_pose_stale_callout() {
+    let mut rover = mark(3);
+    rover.status = "pose stale".into();
+    rover.hardware = HardwareObservation {
+        present: true,
+        connected: true,
+        ready: true,
+        age: 0.2,
+        ..HardwareObservation::default()
+    };
+    rover.reporting = argos_core::Reporting::classify(Some(4.), &rover.hardware);
+    assert!(rover.reporting.is_fresh());
+    assert_eq!(callout(&rover, false, false).state, "Pose stale");
+    assert_eq!(link_label("healthy", &[rover.clone()]), "Link healthy");
+    assert!(reporting_notices(&[rover]).is_empty());
+}
+
+#[test]
+fn pose_and_hardware_stale_reads_as_not_reporting_with_a_timer() {
+    let mut rover = quiet(0, 12.3);
+    rover.goal_active = true;
+    rover.goal = Some(GoalMark {
+        x: 1.,
+        y: 0.,
+        latitude: None,
+        longitude: None,
+        state: "active".into(),
+    });
+    let callout = callout(&rover, false, false);
+    assert_eq!(callout.tag, Some(CalloutTag::Attention));
+    assert_eq!(callout.state, "Not reporting · holding · 12 s");
+    let rows = trace(&rover, false);
+    assert!(rows.contains(&("Goal", "active · on hold, rover not reporting".into())));
+    assert!(
+        rows.iter()
+            .any(|(name, step)| *name == "Next step" && step.contains("holds still"))
+    );
+    // The top bar never says healthy next to a rover that stopped reporting.
+    assert_eq!(
+        link_label("healthy", &[mark(1), rover.clone()]),
+        "Rover 0 not reporting · holding · 12 s"
+    );
+    let notices = reporting_notices(&[rover]);
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].starts_with("Rover 0 not reporting · holding · 12 s · Waiting"));
+}
+
+#[test]
+fn a_long_silence_escalates_to_link_lost_with_a_next_step() {
+    let rover = quiet(2, 40.);
+    assert_eq!(callout(&rover, false, false).state, "Link lost · 40 s");
+    assert_eq!(
+        link_label("healthy", &[rover.clone()]),
+        "Rover 2 link lost · 40 s"
+    );
+    let notices = reporting_notices(&[rover]);
+    assert!(
+        notices[0].contains("TerraPhone is open in the foreground and on Wi-Fi"),
+        "{notices:?}"
+    );
+}
+
+#[test]
+fn the_top_bar_names_the_quietest_rover_and_counts_the_rest() {
+    let marks = [quiet(1, 5.), quiet(4, 20.), mark(2)];
+    assert_eq!(
+        link_label("healthy", &marks),
+        "Rover 4 link lost · 20 s (+1 more)"
+    );
+    // A router problem still reads as the link itself.
+    assert_eq!(link_label("disconnected", &marks), "Link disconnected");
+}
+
+#[test]
+fn reporting_recovers_by_itself_when_data_returns() {
+    let mut rover = quiet(0, 30.);
+    assert!(!rover.reporting.is_fresh());
+    rover.hardware.age = 0.1;
+    rover.status = "online".into();
+    rover.reporting = argos_core::Reporting::classify(Some(0.1), &rover.hardware);
+    assert!(rover.reporting.is_fresh());
+    assert_eq!(callout(&rover, false, false).attention, None);
+    assert_eq!(link_label("healthy", &[rover.clone()]), "Link healthy");
+    assert!(
+        !trace(&rover, false)
+            .iter()
+            .any(|(name, _)| *name == "Next step")
+    );
+}
+
+#[test]
+fn sensor_hold_row_shows_how_long_terra_has_held_and_a_dropped_goal() {
+    let mut hold = argos_core::SensorHold {
+        cause: "stale_imu".into(),
+        pose_age_s: Some(12.),
+        age_s: 0.,
+        count: 1,
+        held_s: 11.6,
+        settling: false,
+        goal_dropped: false,
+    };
+    assert_eq!(
+        hold.summary(),
+        "stale_imu · pose 12.00 s old · holding 11 s · 1 this run"
+    );
+    hold.settling = true;
+    assert!(hold.summary().contains("data back · settling"));
+    hold.goal_dropped = true;
+    assert!(hold.summary().contains("goal dropped after timeout"));
+}
+
+#[test]
+fn reporting_changes_are_logged_once_per_transition() {
+    let fresh = mark(0);
+    let quiet_5 = quiet(0, 5.);
+    let quiet_6 = quiet(0, 6.);
+    let lost = quiet(0, 20.);
+    let records = reporting_changes(&[fresh.clone()], &[quiet_5.clone()]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "rover_reporting");
+    assert_eq!(records[0]["rover_id"], 0);
+    assert_eq!(records[0]["state"], "not_reporting");
+    assert_eq!(records[0]["from"], "fresh");
+    assert_eq!(records[0]["silent_s"], 5.);
+    // The timer ticking is not a new transition.
+    assert!(reporting_changes(&[quiet_5], &[quiet_6.clone()]).is_empty());
+    assert_eq!(
+        reporting_changes(&[quiet_6], &[lost.clone()])[0]["state"],
+        "link_lost"
+    );
+    let back = reporting_changes(&[lost], &[fresh.clone()]);
+    assert_eq!(back[0]["state"], "fresh");
+    assert_eq!(back[0]["from"], "link_lost");
+    assert_eq!(back[0]["silent_s"], 20.);
+    assert!(reporting_changes(&[], &[fresh]).is_empty());
 }
