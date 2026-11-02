@@ -24,14 +24,14 @@ pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("assisted_teleop", "L1 Assisted"),
     ("waypoint_direct", "L2 Direct"),
     ("waypoint", "L3 Planned"),
-    ("explore", "L4 Explore"),
+    ("explore", "L4 Explore + search"),
     ("task", "L5 Task"),
 ];
 
 /// Levels Terra may report and the wire still accepts, with no button of
 /// their own. `target_search` is L4's bounded area search, started on the
 /// phone; the L4 button stays selected while it runs.
-pub const OTHER_LEVELS: &[(&str, &str)] = &[("target_search", "L4 Explore · search")];
+pub const OTHER_LEVELS: &[(&str, &str)] = &[("target_search", "L4 Explore + search")];
 
 /// The button a reported level belongs to: `target_search` maps to L4 `explore`.
 pub fn operator_level(level: &str) -> &str {
