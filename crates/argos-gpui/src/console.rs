@@ -122,15 +122,23 @@ impl StopCause {
     }
 }
 
-/// Terra reports `operator_stop` for any stop request it holds. When this
-/// window did not send it, it came from another ARGOS window, the phone, or
-/// an agent.
+/// Terra reports `operator_stop` for any stop request it holds, whoever sent
+/// it, so the label says only that the rover holds a stop this window did not
+/// send.
 fn rover_stop_reason(reason: Option<&str>) -> String {
     match reason.map(str::trim) {
-        Some("operator_stop") => "stop request not sent from this window".into(),
-        Some(reason) if !reason.is_empty() && reason != "idle" => reason.replace('_', " "),
+        Some("operator_stop") => "stop held on rover (not from this window)".into(),
+        Some(reason) if specific_stop_reason(Some(reason)) => reason.replace('_', " "),
         _ => "no reason reported".into(),
     }
+}
+
+/// A rover stop reason that says more than "a stop request is held":
+/// anything but `operator_stop`, `idle`, or nothing.
+fn specific_stop_reason(reason: Option<&str>) -> bool {
+    reason
+        .map(str::trim)
+        .is_some_and(|reason| !matches!(reason, "" | "idle" | "operator_stop"))
 }
 
 fn ago(age_s: f64) -> String {
@@ -142,20 +150,27 @@ fn ago(age_s: f64) -> String {
     }
 }
 
-/// Why the rover is stopped, if it is. This window's own stop wins: the rover
-/// echoes it back as its own `emergency_stop`. `sent` is this window's stop
-/// and the window clock when it was sent; `now` is the same clock.
+/// Why the rover is stopped, if it is. A specific rover reason (for example
+/// `tilt_stop`) wins, even over a stop this window sent. Otherwise this
+/// window's own stop wins over the rover's `operator_stop` echo of it.
+/// `sent` is this window's stop and the window clock when it was sent; `now`
+/// is the same clock.
 pub fn stop_cause(
     mark: &RoverMark,
     sent: Option<(StopOrigin, f64)>,
     now: f64,
 ) -> Option<StopCause> {
-    if let Some((origin, at)) = sent {
+    let rover_stopped = mark.safety == "emergency_stop";
+    if rover_stopped && specific_stop_reason(mark.autonomy_reason.as_deref()) {
+        Some(StopCause::Rover {
+            reason: mark.autonomy_reason.clone(),
+        })
+    } else if let Some((origin, at)) = sent {
         Some(StopCause::Operator {
             origin,
             age_s: now - at,
         })
-    } else if mark.safety == "emergency_stop" {
+    } else if rover_stopped {
         Some(StopCause::Rover {
             reason: mark.autonomy_reason.clone(),
         })

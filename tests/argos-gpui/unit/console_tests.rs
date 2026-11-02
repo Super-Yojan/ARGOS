@@ -588,7 +588,7 @@ fn a_rover_stop_this_window_did_not_send_names_the_rover_reason() {
     assert_eq!(line.tag, Some(CalloutTag::Stopped));
     assert_eq!(
         line.state,
-        "Stopped by rover: stop request not sent from this window"
+        "Stopped by rover: stop held on rover (not from this window)"
     );
     assert_eq!(line.recovery, Some(STOP_RECOVERY));
     rover.autonomy_reason = Some("dock_fault".into());
@@ -615,4 +615,29 @@ fn stop_origins_have_distinct_log_names() {
     .into_iter()
     .collect();
     assert_eq!(names.len(), 4);
+}
+
+#[test]
+fn a_specific_rover_reason_outranks_this_windows_stop() {
+    let mut rover = mark(5);
+    rover.safety = "emergency_stop".into();
+    rover.autonomy_reason = Some("tilt_stop".into());
+    let sent = Some((StopOrigin::Button, 0.));
+    assert_eq!(
+        stop_cause(&rover, sent, 4.).unwrap().label(),
+        "Stopped by rover: tilt stop"
+    );
+    // operator_stop is the echo of this window's own stop.
+    rover.autonomy_reason = Some("operator_stop".into());
+    assert_eq!(
+        stop_cause(&rover, sent, 4.).unwrap().label(),
+        "Stopped by you (Stop button) · 4 s ago"
+    );
+    // Before the rover reports the stop, the latch alone shows it.
+    rover.safety = "clear".into();
+    rover.autonomy_reason = None;
+    assert!(matches!(
+        stop_cause(&rover, sent, 4.),
+        Some(StopCause::Operator { .. })
+    ));
 }

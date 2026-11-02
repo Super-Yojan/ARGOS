@@ -96,9 +96,9 @@ struct Dashboard {
     claim: ControlClaim,
     /// Stops this window sent and not yet reset: control and window clock.
     latched: BTreeMap<u64, (StopOrigin, f64)>,
-    /// Rovers last seen reporting `emergency_stop`, so each new rover-side
-    /// stop is logged once with its cause.
-    rover_stops: BTreeSet<u64>,
+    /// Rovers last seen reporting `emergency_stop`, with their reason, so each
+    /// new rover-side stop or change of reason is logged once.
+    rover_stops: BTreeMap<u64, Option<String>>,
     /// Index into `EXPLORE_BUDGETS_MIN` for the next L4 Explore request.
     explore_budget: usize,
     /// Typed L5 task, and the reply box for the model's questions.
@@ -207,7 +207,7 @@ impl Dashboard {
             now: 0.,
             claim: ControlClaim::new(),
             latched: BTreeMap::new(),
-            rover_stops: BTreeSet::new(),
+            rover_stops: BTreeMap::new(),
             explore_budget: 1,
             task_input,
             task_reply,
@@ -721,17 +721,18 @@ impl Dashboard {
     fn is_stopped(&self, mark: &RoverMark) -> bool {
         self.latched.contains_key(&mark.id) || mark.safety == "emergency_stop"
     }
-    /// Log each rover's new `emergency_stop` once, naming whether this
+    /// Log each rover's new `emergency_stop`, and each change of its reason,
+    /// once, naming whether this
     /// window sent it and the rover's reason, so the session log keeps the
     /// cause the callout showed.
     fn log_rover_stops(&mut self) {
-        let mut now_stopped = BTreeSet::new();
+        let mut now_stopped = BTreeMap::new();
         for mark in &self.marks {
             if mark.safety != "emergency_stop" {
                 continue;
             }
-            now_stopped.insert(mark.id);
-            if self.rover_stops.contains(&mark.id) {
+            now_stopped.insert(mark.id, mark.autonomy_reason.clone());
+            if self.rover_stops.get(&mark.id) == Some(&mark.autonomy_reason) {
                 continue;
             }
             let sent = self.latched.get(&mark.id);
