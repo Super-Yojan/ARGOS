@@ -403,6 +403,18 @@ fn tool_op(profile: McpProfile, name: &str) -> Option<&'static str> {
         .map(|tool| tool.op)
 }
 
+/// Whether `profile` may send bridge `op`. Advise allows only the read and
+/// card tools; the window still applies its own mode on top.
+pub fn op_permitted(profile: McpProfile, op: &str) -> Result<(), String> {
+    match TOOLS.iter().find(|tool| tool.op == op) {
+        Some(tool) if tool.operator && profile != McpProfile::Operator => Err(format!(
+            "{op} needs the operator profile (--profile operator)"
+        )),
+        Some(_) => Ok(()),
+        None => Err(format!("Unknown op `{op}`")),
+    }
+}
+
 /// Run one bridge op; `briefing` is composed here from the field state.
 pub fn bridge_op(
     call: &mut dyn FnMut(&str, Value) -> Result<Value, String>,
@@ -567,7 +579,7 @@ fn resource(uri: &str, text: &str) -> Value {
     json!({"contents": [{"uri": uri, "mimeType": "text/markdown", "text": text}]})
 }
 
-pub const AGENT_CLI_HELP: &str = "Usage:\n  argos-gpui mcp [--profile advise|operator] [--engine NAME] [--bridge FILE]\n      MCP server over stdio for Claude Code, Codex, OpenCode or any MCP client\n  argos-gpui call OP [JSON]\n      One bridge call from a shell, e.g. `argos-gpui call briefing` or\n      `argos-gpui call propose '{\"recommendations\": [...]}'`\n";
+pub const AGENT_CLI_HELP: &str = "Usage:\n  argos-gpui mcp [--profile advise|operator] [--engine NAME] [--bridge FILE]\n      MCP server over stdio for Claude Code, Codex, OpenCode or any MCP client\n  argos-gpui call OP [JSON] [--profile advise|operator]\n      One bridge call from a shell, e.g. `argos-gpui call briefing` or\n      `argos-gpui call propose '{\"recommendations\": [...]}'`\n";
 
 /// Handle `mcp` and `call`. `None` means the arguments are for the window.
 pub fn agent_cli(args: &[String]) -> Option<i32> {
@@ -613,6 +625,10 @@ pub fn agent_cli(args: &[String]) -> Option<i32> {
                 },
                 None => json!({}),
             };
+            if let Err(error) = op_permitted(profile, op) {
+                eprintln!("ARGOS: {error}");
+                return Some(1);
+            }
             let mut client = BridgeClient::new(bridge, engine.as_deref().unwrap_or("cli-agent"));
             let mut call = |op: &str, fields: Value| client.call(op, fields);
             Some(match bridge_op(&mut call, op, fields) {

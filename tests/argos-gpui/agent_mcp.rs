@@ -1,3 +1,4 @@
+use argos_core::{AgentMode, agent_permitted};
 use argos_gpui::agent_mcp::{BridgeClient, McpProfile, McpServer, RULES, agent_cli};
 use argos_gpui::agent_runner::{AgentCli, AgentRun};
 use argos_gpui::{AGENT_BRIDGE_FILE, AgentBridge};
@@ -234,7 +235,10 @@ fn each_engine_gets_argos_mcp_its_own_way() {
     assert_eq!(config["mcpServers"]["argos"]["args"][4], "claude-code");
 
     let codex = args(&AgentCli::Codex.command(&run).unwrap());
-    assert_eq!(&codex[..2], ["exec", "--skip-git-repo-check"]);
+    assert_eq!(
+        &codex[..4],
+        ["exec", "--skip-git-repo-check", "--sandbox", "read-only"]
+    );
     assert!(codex.contains(&"mcp_servers.argos.command=\"/opt/argos/argos-gpui\"".to_string()));
     assert!(
         codex
@@ -251,8 +255,102 @@ fn each_engine_gets_argos_mcp_its_own_way() {
     assert_eq!(config["mcp"]["argos"]["type"], "local");
     assert_eq!(config["mcp"]["argos"]["command"][1], "mcp");
 
-    let pi = args(&AgentCli::Pi.command(&run).unwrap());
-    assert_eq!(&pi[..3], ["--tools", "bash", "-p"]);
-    assert!(pi[3].contains("\"/opt/argos/argos-gpui\" call briefing"));
+    assert_eq!(config["permission"]["bash"], "deny");
+    assert_eq!(config["permission"]["edit"], "deny");
+    assert_eq!(AgentCli::parse("pi"), None, "no engine gets a shell");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn engines_start_from_a_cleared_environment() {
+    // SAFETY: tests in this binary that read the environment do not race this one.
+    unsafe {
+        std::env::set_var("ZENOH_CONFIG_SECRET", "router-password");
+        std::env::set_var("ARGOS_FLEET_PASSWORD", "fleet-password");
+    }
+    let dir = std::env::temp_dir().join(format!("argos-env-{}", std::process::id()));
+    let bridge = dir.join(AGENT_BRIDGE_FILE);
+    for cli in AgentCli::ALL {
+        let command = cli
+            .command(&AgentRun {
+                exe: std::path::Path::new("/opt/argos/argos-gpui"),
+                bridge: &bridge,
+                profile: McpProfile::Advise,
+                dir: &dir,
+            })
+            .unwrap();
+        let envs: Vec<(String, Option<String>)> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        for (key, _) in &envs {
+            assert!(
+                !key.starts_with("ZENOH") && key != "ARGOS_FLEET_PASSWORD",
+                "{} sees {key}",
+                cli.label()
+            );
+        }
+        assert!(
+            envs.iter().any(|(key, _)| key == "ARGOS_AGENT_BRIDGE"),
+            "{} needs the bridge file",
+            cli.label()
+        );
+        assert!(cli.env_allowed().contains(&"PATH".to_string()));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A window that answers like the real one in Advise mode.
+fn advise_window(bridge: AgentBridge) -> std::thread::JoinHandle<Vec<String>> {
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            for call in bridge.take_calls() {
+                let result = call.envelope.request.clone().and_then(|request| {
+                    seen.push(format!("{request:?}"));
+                    agent_permitted(AgentMode::Advise, &request)
+                        .map(|_| json!({}))
+                        .map_err(str::to_string)
+                });
+                call.answer(result);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        seen
+    })
+}
+
+#[test]
+fn call_refuses_operator_ops_under_the_advise_profile() {
+    let dir = std::env::temp_dir().join(format!("argos-call-advise-{}", std::process::id()));
+    let bridge = AgentBridge::start(&dir, 0).unwrap();
+    let file = dir.join(AGENT_BRIDGE_FILE).display().to_string();
+    let window = advise_window(bridge);
+    let call = |extra: &[&str]| {
+        let mut args: Vec<String> = ["call", "stop", "{\"rover\": 1}", "--bridge", &file]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect();
+        args.extend(extra.iter().map(|arg| arg.to_string()));
+        agent_cli(&args)
+    };
+    // Advise (the default): refused before anything reaches the window.
+    assert_eq!(call(&[]), Some(1));
+    // Operator profile: the call goes out, and the window in Advise refuses it.
+    assert_eq!(call(&["--profile", "operator"]), Some(1));
+    let seen = window.join().unwrap();
+    assert_eq!(
+        seen.iter()
+            .filter(|request| request.contains("Stop"))
+            .count(),
+        1,
+        "only the operator-profile call reached the window: {seen:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

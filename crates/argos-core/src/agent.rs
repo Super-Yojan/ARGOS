@@ -38,7 +38,8 @@ pub const AGENT_CONNECT_GRACE_S: f64 = 20.;
 /// The built-in loop reads every 5 s and an MCP client on `/loop 1m` every 60 s.
 pub const AGENT_SILENT_S: f64 = 180.;
 /// What the panel tells the operator to do when no agent connects.
-pub const AGENT_START_HINT: &str = "pick an engine (Claude, Codex, OpenCode, Pi) below, or point an MCP client at `argos-gpui mcp`";
+pub const AGENT_START_HINT: &str =
+    "pick an engine (Claude, Codex, OpenCode) below, or point an MCP client at `argos-gpui mcp`";
 /// A picked engine runs this often.
 pub const AGENT_TICK_S: f64 = 60.;
 /// Something changed: tick early, but not more often than this.

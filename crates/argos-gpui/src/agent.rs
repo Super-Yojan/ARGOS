@@ -102,6 +102,9 @@ pub(super) struct AgentDesk {
     process: Option<AgentProcess>,
     /// The engine the operator picked (`ARGOS_AGENT_CLI` at start).
     runner: Option<CliRunner>,
+    /// The operator let the engine command rovers this session. Off at
+    /// start and whenever the mode leaves Operator or the engine changes.
+    engine_commands: bool,
     /// When the bridge opened, on the window's clock.
     opened: f64,
     /// Whether the session log already says the agent is missing / stopped.
@@ -167,6 +170,7 @@ impl AgentDesk {
                 .ok()
                 .and_then(|name| AgentCli::parse(&name))
                 .map(CliRunner::new),
+            engine_commands: false,
             opened: 0.,
             missing_logged: false,
             exit_logged: false,
@@ -868,6 +872,34 @@ impl Dashboard {
         }
     }
 
+    /// Let the picked engine use the operator tools. Needs the operator's own
+    /// click each session; logged with who was signed in to this computer.
+    fn set_engine_commands(&mut self, on: bool) {
+        if self.agent.engine_commands == on {
+            return;
+        }
+        self.agent.engine_commands = on;
+        let engine = self.agent.runner.as_ref().map(|runner| runner.cli.engine());
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+        self.feed.record(json!({
+            "kind": "agent_engine_commands",
+            "enabled": on,
+            "engine": engine,
+            "by": "operator (Agent panel)",
+            "os_user": user,
+        }));
+        self.note = if on {
+            format!(
+                "{} may now command rovers, through the same checks as you",
+                engine.unwrap_or("The engine")
+            )
+        } else {
+            "The engine only advises".into()
+        };
+    }
+
     /// Pick the engine ARGOS runs each tick, or none.
     fn set_agent_cli(&mut self, cli: Option<AgentCli>) {
         if self.agent.runner.as_ref().map(|runner| runner.cli) == cli {
@@ -879,6 +911,7 @@ impl Dashboard {
         self.feed
             .record(json!({"kind": "agent_engine", "engine": cli.map(AgentCli::engine)}));
         self.agent.runner = cli.map(CliRunner::new);
+        self.set_engine_commands(false);
         self.agent.missing_logged = false;
         self.agent.opened = self.now;
         self.note = match cli {
@@ -948,7 +981,7 @@ impl Dashboard {
         }
         runner.last_tick = Some(now);
         runner.ticks += 1;
-        let profile = if self.agent.mode == AgentMode::Operator {
+        let profile = if self.agent.mode == AgentMode::Operator && self.agent.engine_commands {
             McpProfile::Operator
         } else {
             McpProfile::Advise
@@ -1171,6 +1204,7 @@ impl Dashboard {
         if mode != AgentMode::Operator {
             self.end_agent_drive("agent mode changed");
             self.agent.queued.clear();
+            self.set_engine_commands(false);
         }
         self.feed.record(
             json!({"kind": "agent_mode", "from": self.agent.mode.wire(), "to": mode.wire()}),
@@ -1200,24 +1234,33 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
     let status = dashboard.agent.status(now);
     let desk = &dashboard.agent;
     let engine = desk.runner.as_ref().map(|runner| runner.cli);
-    let engine_note = desk.runner.as_ref().and_then(|runner| {
+    let engine_note = desk.runner.as_ref().map(|runner| {
+        let label = runner.cli.label();
         if desk.mode == AgentMode::Off {
-            return Some(format!(
-                "{} paused while the panel is Off",
-                runner.cli.label()
-            ));
+            return format!(
+                "{label} paused while the panel is Off · {} runs this session",
+                runner.ticks
+            );
         }
         match (&runner.run, &runner.answer) {
-            (Some((_, started)), _) => Some(format!(
-                "{} tick {} running · {:.0} s",
-                runner.cli.label(),
+            (Some((_, started)), _) => format!(
+                "{label} run {} this session · running {:.0} s",
                 runner.ticks,
                 now - started
-            )),
-            (None, Some(answer)) => Some(format!("{} said: {answer}", runner.cli.label())),
-            (None, None) => None,
+            ),
+            (None, Some(answer)) => {
+                format!("{} runs this session · last said: {answer}", runner.ticks)
+            }
+            (None, None) => format!("{} runs this session", runner.ticks),
         }
     });
+    let commands_toggle = (desk.mode == AgentMode::Operator)
+        .then(|| {
+            desk.runner
+                .as_ref()
+                .map(|runner| (runner.cli.label(), desk.engine_commands))
+        })
+        .flatten();
     let mode = desk.mode;
     let grant = desk.grant.clone();
     let rejecting = desk.rejecting.clone();
@@ -1283,6 +1326,27 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
             hint(status.text, cx)
         })
         .when_some(engine_note, |panel, note| panel.child(hint(note, cx)))
+        .when_some(commands_toggle, |panel, (label, on)| {
+            panel.child(
+                h_flex()
+                    .gap_2()
+                    .child(if on {
+                        caution(format!("{label} may command rovers this session"), cx)
+                    } else {
+                        hint(format!("{label} only advises, even in Operator mode"), cx)
+                    })
+                    .child(
+                        Button::new("agent-engine-commands")
+                            .xsmall()
+                            .outline()
+                            .label(if on { "Advise only" } else { "Let it command" })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_engine_commands(!on);
+                                cx.notify();
+                            })),
+                    ),
+            )
+        })
         .when_some(grant, |panel, grant| {
             let pending = grant.pending();
             panel.child(

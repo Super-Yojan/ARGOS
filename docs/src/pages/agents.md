@@ -1,14 +1,14 @@
 ---
 layout: ../layouts/DocPage.astro
 title: Agents and recommendations
-description: Let Claude Code, Codex, OpenCode, Pi or any MCP agent advise the operator once a minute, or operate the fleet through the same checks as the window's buttons.
+description: Let Claude Code, Codex, OpenCode or any MCP agent advise the operator once a minute, or operate the fleet through the same checks as the window's buttons.
 ---
 
 ARGOS can take advice from an AI agent, and, when the operator allows it, take commands. The agent reaches ARGOS through an MCP server built into the ARGOS binary, `argos-gpui mcp`. That server talks to the open window, not to Zenoh, so the agent sees the same fleet you see and every command goes through the same checks as a button press. It works the same in **Sim** and **Real**, and needs no Python.
 
 ```
-agent CLI (Claude Code, Codex, OpenCode, Pi) or any MCP client
-   │  MCP over stdio                       (Pi: `argos-gpui call` from bash)
+agent CLI (Claude Code, Codex, OpenCode) or any MCP client
+   │  MCP over stdio
 argos-gpui mcp
    │  one JSON line per request, 127.0.0.1 only, token from agent-bridge.json
 ARGOS window  ── the operator's own checks ──▶  Zenoh  ──▶  Terra / Zorvane
@@ -51,18 +51,28 @@ In Operator mode an agent's commands run through the same code as the window's c
 
 ### Pick an engine in the panel
 
-The panel's **Engine** row picks a coding-agent CLI that ARGOS runs as its recommendation engine: **Claude** (Claude Code), **Codex**, **OpenCode** or **Pi**. **None** runs nothing. Install the CLI and sign in to it once; it brings its own login and model, so ARGOS needs no API key. `ARGOS_AGENT_CLI=claude|codex|opencode|pi` picks one at launch, which suits study runs.
+The panel's **Engine** row picks a coding-agent CLI that ARGOS runs as its recommendation engine: **Claude** (Claude Code), **Codex** or **OpenCode**. **None** runs nothing. Install the CLI and sign in to it once; it brings its own login and model, so ARGOS needs no API key. `ARGOS_AGENT_CLI=claude|codex|opencode` picks one at launch.
 
-ARGOS runs the CLI once per tick, headless, every 60 s, or sooner (at most every 15 s) when something changes: a rover finds an object, holds, stops, finishes exploring, arrives, or asks an L5 question, or you decide a card. One run at a time; a run over 180 s is stopped. Each run gets ARGOS's MCP server and a short prompt: read `get_briefing` (the rules, the ladder, what each field means, and the field now), then `propose` up to 3 cards or say "no recommendation". In Operator mode the run gets the operator tools too. Nothing runs while the panel is Off.
+ARGOS runs the CLI once per tick, headless, every 60 s, or sooner (at most every 15 s) when something changes: a rover finds an object, holds, stops, finishes exploring, arrives, or asks an L5 question, or you decide a card. One run at a time; a run over 180 s is stopped. Each run gets ARGOS's MCP server and a short prompt: read `get_briefing` (the rules, the ladder, what each field means, and the field now), then `propose` up to 3 cards or say "no recommendation". Nothing runs while the panel is Off.
+
+The engine only advises, even in Operator mode, until you press **Let it command** in the panel. That click lasts for this session: it resets when you leave Operator mode, change engine or restart ARGOS, and each change is logged (`agent_engine_commands`, with the computer's user name). For the pilot study, leave it advising.
+
+**What the CLI can touch.** Each engine is held to the argos tools:
+
+- **Claude** gets only the argos MCP server (`--strict-mcp-config`) and only its tools (`--allowedTools mcp__argos`).
+- **Codex** runs with `--sandbox read-only`.
+- **OpenCode** gets a config that denies edit, bash and webfetch.
+- Every CLI starts from an **empty environment** plus an allow-list: `PATH`, `HOME`, locale, proxy and temp variables, and the CLI's own login variables (for example `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CODEX_HOME`). Fleet and Zenoh credentials in ARGOS's environment never reach it. `ARGOS_AGENT_ENV=NAME1,NAME2` passes more, for a provider not on the list; names starting with `ZENOH` or `ARGOS` are never passed.
+
+Pi is not offered. It has no MCP client, so its only way to reach ARGOS would be its bash tool, which is a full shell on the operator's computer.
 
 | Engine | How ARGOS runs it | Tested |
 | --- | --- | --- |
 | Claude | `claude -p … --mcp-config argos-mcp-claude.json --strict-mcp-config --allowedTools mcp__argos` | Yes, sim with no rovers |
-| Codex | `codex exec --skip-git-repo-check -c mcp_servers.argos.command=… -c mcp_servers.argos.args=[…] …` | No |
+| Codex | `codex exec --skip-git-repo-check --sandbox read-only -c mcp_servers.argos.command=… -c mcp_servers.argos.args=[…] …` | No |
 | OpenCode | `OPENCODE_CONFIG=argos-mcp-opencode.json opencode run …` | No |
-| Pi | `pi --tools bash -p …`. Pi has no MCP client, so the prompt tells it to use `argos-gpui call briefing` and `argos-gpui call propose '{…}'` | No |
 
-A local model (Qwen through llama.cpp, vLLM or Ollama) runs through OpenCode or Pi with that CLI's own provider settings. Every run's output, including its final answer, goes to `argos-agent-<engine>-<time>.log` in the session folder, and the panel shows the last answer.
+A local model (Qwen through llama.cpp, vLLM or Ollama) runs through OpenCode with its own provider settings. Every run's output, including its final answer, goes to `argos-agent-<engine>-<time>.log` in the session folder. The panel shows the last answer and how many runs this session has made, since each run costs model time.
 
 ### Any MCP client
 
@@ -81,7 +91,7 @@ Point the client at the ARGOS binary. For example, `.mcp.json` for Claude Code:
 
 Start ARGOS first: it writes `agent-bridge.json` (port and a fresh token, readable only by you) into its session folder, `Documents/ARGOS Sessions` or `ARGOS_SESSION_DIR`. Use `--profile operator` to give the agent the command tools as well; the panel's mode still decides what gets through. In Operator mode a command takes this window's control lease itself, so nobody has to press **Take control** first. The server also offers the `recommend_tick` prompt and the `argos://rules` and `argos://topics` resources. `--engine NAME` sets the name the panel shows; `--bridge FILE` points at another `agent-bridge.json`.
 
-From a shell, `argos-gpui call <op> [json]` makes one call: `argos-gpui call briefing`, `argos-gpui call state`, `argos-gpui call propose '{"recommendations": [...]}'`.
+From a shell, `argos-gpui call <op> [json]` makes one call: `argos-gpui call briefing`, `argos-gpui call state`, `argos-gpui call propose '{"recommendations": [...]}'`. It uses the advise profile unless you add `--profile operator`, and the window's mode applies on top.
 
 ### A command of your own
 
@@ -108,7 +118,7 @@ Everything lands in the session log next to the rest of the run, so a study can 
 | Event | When |
 | --- | --- |
 | `agent_hello`, `agent_mode` | An agent connects; you change the mode |
-| `agent_engine`, `agent_run` | You pick an engine; each run starts (with why) and ends (ok, seconds, last line) |
+| `agent_engine`, `agent_engine_commands`, `agent_run` | You pick an engine; you let it command or take that back; each run starts (with why) and ends (ok, seconds, last line) |
 | `agent_missing`, `agent_process` | No agent called in the first 20 s; the `ARGOS_AGENT_CMD` command exited |
 | `rec_shown`, `rec_decided`, `rec_dispatched`, `rec_outcome` | A card appears; you accept, reject or it expires; what was sent; whether the rover got there |
 | `agent_command` | Every Operator-mode command, with ARGOS's answer |
@@ -126,5 +136,6 @@ Read from the environment only, not `.env`.
 | `ARGOS_AGENT` | on | `0` turns the agent bridge off; the panel then stays Off |
 | `ARGOS_AGENT_PORT` | 7471 | Local port for the bridge. `0` picks a free one |
 | `ARGOS_AGENT_BRIDGE` | the session folder's file | Where the MCP server looks for `agent-bridge.json` |
-| `ARGOS_AGENT_CLI` | none | Engine at launch: `claude`, `codex`, `opencode` or `pi` |
+| `ARGOS_AGENT_CLI` | none | Engine at launch: `claude`, `codex` or `opencode` |
+| `ARGOS_AGENT_ENV` | none | More variable names an engine may see, comma-separated |
 | `ARGOS_AGENT_CMD` | unset | A long-running command ARGOS starts once the bridge is up |
