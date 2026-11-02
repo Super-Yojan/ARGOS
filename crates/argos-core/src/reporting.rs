@@ -86,10 +86,10 @@ impl Reporting {
         match self {
             Self::Fresh => None,
             Self::NotReporting { .. } => Some(
-                "Waiting for the rover. It holds still and carries on by itself when its data returns.",
+                "Waiting for the rover. It holds still, and a goal carries on by itself when its data returns. In teleop, release and press the drive keys again.",
             ),
             Self::LinkLost { .. } => Some(
-                "Check that TerraPhone is open in the foreground and on Wi-Fi. The rover drops an L2/L3 goal after 30 s without data, so resend the goal or take over once it reports again.",
+                "Check that TerraPhone is open in the foreground and on Wi-Fi. When it reports again, resend the goal if the rover dropped it, or take over. In teleop, release and press the drive keys again.",
             ),
         }
     }
