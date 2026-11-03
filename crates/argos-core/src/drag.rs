@@ -64,10 +64,10 @@ pub fn drag_disabled_reason(gate: DragGate<'_>) -> Option<&'static str> {
         } else if let Some(reason) = geographic_goal_refusal(gate.outdoor) {
             return Some(reason);
         } else if gate.level != Some("waypoint") {
-            return Some("Outdoor goals need L3 Waypoint");
+            return Some("Outdoor goals need L3 Planned");
         }
     } else if !matches!(gate.level, Some("waypoint" | "waypoint_direct")) {
-        return Some("Drag a goal from L2 Direct or L3 Waypoint");
+        return Some("Drag a goal from L2 Direct or L3 Planned");
     }
     if gate.degraded {
         return Some("pose is degraded; not sending a goal");

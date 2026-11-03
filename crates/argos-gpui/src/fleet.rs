@@ -1714,12 +1714,27 @@ impl FleetFeed {
         self.picture.lock().unwrap().command = format!("Reset sent to rover {id}");
         Ok(())
     }
-    pub fn emergency_stop(&self, id: u64) -> Result<(), String> {
+    /// Safety stop one rover. `origin` names the control that sent it
+    /// (see `console::StopOrigin::name`); the session log gets a
+    /// `stop_origin` record with `sent`, and the `action_sent` token when it
+    /// went out. With no client connected there is no log to write.
+    pub fn emergency_stop(&self, id: u64, origin: &str) -> Result<(), String> {
         let client = self.connected()?;
         client.clear_teleop_guard();
-        client
+        let sent = client
             .action(id, "safety", serde_json::json!({"action": "stop"}))
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string());
+        // A failed send is logged too, so the record never claims a stop the
+        // rover did not get. `sent: false` has no token.
+        client.record_event(serde_json::json!({
+            "kind": "stop_origin",
+            "rover_id": id,
+            "origin": origin,
+            "sent": sent.is_ok(),
+            "token": sent.as_ref().ok(),
+            "error": sent.as_ref().err(),
+        }));
+        sent?;
         self.picture.lock().unwrap().command = format!("Stop sent to rover {id}");
         Ok(())
     }

@@ -15,6 +15,7 @@ use argos_core::{
     agent_permitted, approach_point, decode_recommendation, drive_block, drive_keys,
     explore_refusal, level_label, level_permitted, recommendation_stale, task_refusal,
 };
+use argos_gpui::console::StopOrigin;
 use argos_gpui::{AGENT_PORT, AgentBridge, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
@@ -371,7 +372,7 @@ impl Dashboard {
                 }
                 self.end_agent_drive("stop");
                 let previous = self.feed.swap_source(source);
-                self.stop_rover(*rover);
+                self.stop_rover(*rover, StopOrigin::Agent);
                 self.feed.swap_source(previous);
                 Ok(format!(
                     "Stop sent to rover {rover} · the operator must press Reset stop"
@@ -380,7 +381,7 @@ impl Dashboard {
             AgentCommand::StopAll => {
                 self.end_agent_drive("stop");
                 let previous = self.feed.swap_source(source);
-                self.stop_all();
+                self.stop_all(StopOrigin::Agent);
                 self.feed.swap_source(previous);
                 Ok(self.note.clone())
             }

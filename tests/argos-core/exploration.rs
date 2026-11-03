@@ -14,7 +14,7 @@ fn explore_request_carries_a_budget() {
     assert!(encode_explore_request("", 300.).is_err());
     // The budgetless encoder cannot start a run Terra would reject.
     assert!(encode_level_request("explore", "explore-1").is_err());
-    assert_eq!(level_label("explore"), "L4 Explore");
+    assert_eq!(level_label("explore"), "L4 Explore + search");
 }
 
 #[test]

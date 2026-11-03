@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 /// Levels the operator station can publish. Wire values are Terra's `Level`.
 ///
 /// L0 `teleop`, L1 `assisted_teleop`, L2 `waypoint_direct` (no avoidance),
-/// L3 `waypoint` (local planner), L4 `explore` (frontier exploration on a time
+/// L3 `waypoint` ("Planned": A* route with obstacle avoidance), L4 `explore` (frontier exploration on a time
 /// budget), L5 `task` (the phone's language model picks waypoints for a typed
 /// task). L4 is one button: explore and target search together, since
 /// explore maps the buckets and balls it sees. Terra's bounded
@@ -23,15 +23,15 @@ pub const OPERATOR_LEVELS: &[(&str, &str)] = &[
     ("teleop", "L0 Manual"),
     ("assisted_teleop", "L1 Assisted"),
     ("waypoint_direct", "L2 Direct"),
-    ("waypoint", "L3 Waypoint"),
-    ("explore", "L4 Explore"),
+    ("waypoint", "L3 Planned"),
+    ("explore", "L4 Explore + search"),
     ("task", "L5 Task"),
 ];
 
 /// Levels Terra may report and the wire still accepts, with no button of
 /// their own. `target_search` is L4's bounded area search, started on the
 /// phone; the L4 button stays selected while it runs.
-pub const OTHER_LEVELS: &[(&str, &str)] = &[("target_search", "L4 Search")];
+pub const OTHER_LEVELS: &[(&str, &str)] = &[("target_search", "L4 Explore + search")];
 
 /// The button a reported level belongs to: `target_search` maps to L4 `explore`.
 pub fn operator_level(level: &str) -> &str {
@@ -163,6 +163,17 @@ pub const POSE_QUALITY_SCHEMA: u64 = 1;
 /// Heading-only maneuver that cannot run while in-place spins are disabled.
 pub const HEADING_HOLD: &str = "heading_requires_spin_or_replan";
 pub const HEADING_HOLD_LABEL: &str = "Heading needs a spin or a replan";
+
+/// Plain words for Terra's L3/L5 route holds, shown next to the raw code.
+pub fn route_hold_label(reason: &str) -> Option<&'static str> {
+    match reason {
+        "route_goal_blocked" => Some("goal is on an obstacle and there's no free spot near it"),
+        "route_no_path" => Some("no gap wide enough: seen obstacles block every way to the goal"),
+        "route_goal_outside_map" => Some("goal is outside the map"),
+        "route_start_outside_map" => Some("rover is outside its own map"),
+        _ => None,
+    }
+}
 
 /// Status fields the window displays. `assigned` is the study condition Terra enforces.
 #[derive(Clone, Debug, PartialEq)]

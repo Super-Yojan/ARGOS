@@ -66,8 +66,8 @@ The autonomy buttons ask the rover to change level. The inspector shows the leve
 | L0 Manual | `teleop` | Only what you drive |
 | L1 Assisted | `assisted_teleop` | Your driving, through its obstacle and braking checks |
 | L2 Direct | `waypoint_direct` | Drives straight to the goal you set |
-| L3 Waypoint | `waypoint` | Plans a path to the goal you set |
-| L4 Explore | `explore` | Picks unmapped frontiers and drives to them, with no per-goal approval, and maps the buckets and balls it sees |
+| L3 Planned | `waypoint` | Plans a path to the goal you set |
+| L4 Explore + search | `explore` | Picks unmapped frontiers and drives to them, with no per-goal approval, and maps the buckets and balls it sees |
 | L5 Task | `task` | Its on-phone language model or MCP agent turns a task you type into waypoints, and asks you when unsure |
 
 **L4 Explore** runs for the budget you pick under **Exploration · L4**: 3, 5 or 10 min. The inspector shows elapsed and remaining time, the current frontier, area covered, and why the run ended. Stop, Cancel goal, or choosing another level ends it. ARGOS does not send L4 while a stop is latched or while Outdoor GPS is the navigation source.
