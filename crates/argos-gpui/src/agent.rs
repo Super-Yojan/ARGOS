@@ -19,6 +19,7 @@ use argos_core::{
 use argos_core::{AGENT_EARLY_TICK_MIN_S, AGENT_RUN_MAX_S, AGENT_TICK_S, tick_reasons};
 use argos_gpui::agent_mcp::McpProfile;
 use argos_gpui::agent_runner::{AgentCli, AgentRun};
+use argos_gpui::console::StopOrigin;
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
@@ -477,7 +478,7 @@ impl Dashboard {
                 }
                 self.end_agent_drive("stop");
                 let previous = self.feed.swap_source(source);
-                self.stop_rover(*rover);
+                self.stop_rover(*rover, StopOrigin::Agent);
                 self.feed.swap_source(previous);
                 Ok(format!(
                     "Stop sent to rover {rover} · the operator must press Reset stop"
@@ -486,7 +487,7 @@ impl Dashboard {
             AgentCommand::StopAll => {
                 self.end_agent_drive("stop");
                 let previous = self.feed.swap_source(source);
-                self.stop_all();
+                self.stop_all(StopOrigin::Agent);
                 self.feed.swap_source(previous);
                 Ok(self.note.clone())
             }

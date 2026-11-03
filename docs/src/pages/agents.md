@@ -33,7 +33,7 @@ Each card names a rover, what to do and why, with a tag: **NOW**, **SOON** or **
 | Card | What Accept does |
 | --- | --- |
 | Set level | Sends the level. L4 Explore carries its 3, 5 or 10 min budget |
-| Go to | Sends a goal. If the rover is not in L2 or L3 it first switches to L3 Waypoint |
+| Go to | Sends a goal. If the rover is not in L2 or L3 it first switches to L3 Planned |
 | Task | Starts an L5 task with the agent's instruction and budget |
 | Hand off at bucket | Drives to 1.5 m short of a found bucket, then tells you it is your turn. It never dumps; you line up and dump by hand |
 | Needs you | Nothing is sent. **Got it** closes the card |
