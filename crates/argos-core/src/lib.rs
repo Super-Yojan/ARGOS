@@ -45,6 +45,8 @@ pub use dock::*;
 
 mod hardware;
 pub use hardware::*;
+mod reporting;
+pub use reporting::*;
 
 pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};
 mod runtime;

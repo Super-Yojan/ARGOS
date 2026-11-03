@@ -400,6 +400,9 @@ pub struct RoverMark {
     pub sequence: u64,
     /// `online`, `pose stale`, or `offline`.
     pub status: String,
+    /// Whether the rover still sends pose or hardware status. The router
+    /// link can look healthy while the phone has stopped publishing.
+    pub reporting: argos_core::Reporting,
     pub occupancy: String,
     pub grid: Option<LocalMap>,
     pub requested_level: Option<String>,
@@ -747,6 +750,11 @@ pub fn fleet_marks(
                 yaw: pose.yaw,
                 sequence: pose.sequence,
                 status: status.into(),
+                reporting: if status == "offline" {
+                    argos_core::Reporting::Fresh
+                } else {
+                    argos_core::Reporting::classify(rover.pose_age, &hardware)
+                },
                 occupancy: grid
                     .as_ref()
                     .map(|(grid, age)| occupancy_summary(grid, *age))

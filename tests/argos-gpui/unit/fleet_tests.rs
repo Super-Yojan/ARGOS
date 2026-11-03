@@ -657,3 +657,50 @@ fn retirement_rejects_cached_report_on_reused_id_and_display_override_applies() 
     );
     assert!(position_label(&marks[0]).starts_with("Last known GPS"));
 }
+
+/// ARGOS#109: pose stale alone is a pose problem; pose and hardware status
+/// both stale means the rover stopped reporting, and an offline rover keeps
+/// its own Offline state.
+#[test]
+fn rover_reporting_follows_pose_and_hardware_age() {
+    let origin = LocalFrame::origin(0., 0.).unwrap();
+    let hardware = |age: f64| {
+        serde_json::json!({"3": {"hardware": {
+            "schema_version": 1, "control_mode": "streamed_relay", "connected": true,
+            "ready": true, "output_active": false, "fault": null, "reason": "ready", "age": age
+        }}})
+    };
+    let marks_for = |membership: &str, pose_age: f64, hardware_age: f64| {
+        let snapshot = Snapshot {
+            link: "healthy".into(),
+            fleet_age: Some(0.1),
+            rovers: vec![rover(3, membership, Some(pose(0., 0., 0.)), Some(pose_age))],
+            notice: None,
+        };
+        fleet_marks(
+            &snapshot,
+            &Value::Null,
+            &hardware(hardware_age),
+            |_| None,
+            origin,
+        )
+    };
+    assert_eq!(
+        marks_for("online", 0.1, 0.1)[0].reporting,
+        argos_core::Reporting::Fresh
+    );
+    let pose_only = &marks_for("online", 5., 0.2)[0];
+    assert_eq!(pose_only.status, "pose stale");
+    assert_eq!(pose_only.reporting, argos_core::Reporting::Fresh);
+    assert_eq!(
+        marks_for("online", 12.5, 12.)[0].reporting,
+        argos_core::Reporting::NotReporting { silent_s: 12. }
+    );
+    assert_eq!(
+        marks_for("online", 45., 44.)[0].reporting,
+        argos_core::Reporting::LinkLost { silent_s: 44. }
+    );
+    // Recovery: fresh data again clears it with no operator action.
+    assert!(marks_for("online", 0.05, 0.05)[0].reporting.is_fresh());
+    assert!(marks_for("offline", 45., 44.)[0].reporting.is_fresh());
+}

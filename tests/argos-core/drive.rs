@@ -321,6 +321,14 @@ fn autonomy_status_carries_terra_sensor_hold() {
     assert_eq!(hold.cause, "stale_vio");
     assert_eq!(hold.count, 3);
     assert_eq!(hold.label(), "stale_vio · pose 0.41 s old");
+    // Terra before #118 sends no held_s/settling/goal_dropped: safe defaults.
+    assert_eq!(
+        (hold.held_s, hold.settling, hold.goal_dropped),
+        (0., false, false)
+    );
+    let newer = br#"{"requested_level":"waypoint","reason":"sensor_unhealthy","sensor_hold":{"cause":"stale_imu","age_s":0.0,"count":1,"held_s":31.5,"settling":false,"goal_dropped":true}}"#;
+    let hold = decode_autonomy_status(newer).unwrap().sensor_hold.unwrap();
+    assert_eq!((hold.held_s, hold.goal_dropped), (31.5, true));
     let older = br#"{"requested_level":"waypoint","reason":"sensor_unhealthy"}"#;
     assert!(decode_autonomy_status(older).unwrap().sensor_hold.is_none());
 }
