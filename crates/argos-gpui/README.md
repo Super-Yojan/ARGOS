@@ -32,7 +32,11 @@ The code is in two halves. `src/main.rs` plus `src/ui/` is the window. Every oth
 
 | File | Responsibility |
 | --- | --- |
-| `src/fleet.rs` | Connection configuration, fleet observations, and outgoing commands |
+| `src/fleet/config.rs` | Defaults, `.env` loading, `DashboardConfig`, log and capture folders |
+| `src/fleet/marks.rs` | Zenoh snapshot → one `RoverMark` per rover, presence rows, camera framing |
+| `src/fleet/feed.rs` | `FleetFeed`, the window's handle: start, latest picture, teleop limits |
+| `src/fleet/commands.rs` | Every command sent to a rover (levels, study, task, dock, goals, drive, stops, capture) |
+| `src/fleet/poll.rs` | The `argos-fleet` thread: connect, reconnect, refresh every 100 ms |
 | `src/console.rs` | C3 console presentation: each rover's field callout, attention, inspector trace and sections, unlocated fleet members, and field notices |
 | `src/model_drag.rs` | Pure conversion from a drag destination to the preview model position |
 | `src/occupancy.rs` | Lossless occupancy spans that reduce rendering work |

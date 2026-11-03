@@ -22,7 +22,7 @@
 //! | `palette.rs` | Console colors |
 //!
 //! Fleet data, `.env` settings, and sending commands live in the library
-//! (`fleet.rs`, `console.rs`), not here.
+//! (`fleet/`, `console.rs`), not here.
 
 mod actions;
 pub(crate) mod agent;
