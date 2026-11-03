@@ -339,8 +339,11 @@ fn study_condition_locks_levels_like_terra() {
         .iter()
         .filter(|(_, label)| label.starts_with("L4"))
         .collect();
-    assert_eq!(l4, [&("explore", "L4 Explore")]);
-    assert_eq!(argos_core::level_label("target_search"), "L4 Search");
+    assert_eq!(l4, [&("explore", "L4 Explore + search")]);
+    assert_eq!(
+        argos_core::level_label("target_search"),
+        "L4 Explore + search"
+    );
     assert!(!level_permitted(Some("waypoint"), "target_search"));
     let set: serde_json::Value =
         serde_json::from_slice(&encode_assignment_request(Some("explore"), "s-1").unwrap())
@@ -357,4 +360,25 @@ fn study_condition_locks_levels_like_terra() {
     );
     assert!(encode_assignment_request(Some("supervised"), "s-3").is_err());
     assert!(encode_assignment_request(Some("waypoint"), "bad token").is_err());
+}
+
+/// The level names participants see. The same strings are pinned in Terra's
+/// phone pickers and the thesis tables (#112), so change all three together.
+#[test]
+fn level_labels_match_the_thesis() {
+    assert_eq!(
+        argos_core::OPERATOR_LEVELS,
+        &[
+            ("teleop", "L0 Manual"),
+            ("assisted_teleop", "L1 Assisted"),
+            ("waypoint_direct", "L2 Direct"),
+            ("waypoint", "L3 Planned"),
+            ("explore", "L4 Explore + search"),
+            ("task", "L5 Task"),
+        ]
+    );
+    assert_eq!(
+        argos_core::level_label("target_search"),
+        "L4 Explore + search"
+    );
 }
