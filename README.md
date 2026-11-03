@@ -173,6 +173,8 @@ Live transport tests need permission to bind loopback sockets. The Unity spike i
 
 ## Workspace
 
+New to the code? Start with [CODE_MAP.md](CODE_MAP.md): diagrams, file layout, and which file to open for a change.
+
 | Crate | Role |
 | --- | --- |
 | `crates/argos-gpui` | Dashboard. Mounts `MapView`, subscribes to Zenoh, and publishes goals, autonomy, and teleop for the selected rover. |
