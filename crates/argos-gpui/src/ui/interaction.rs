@@ -1,6 +1,6 @@
 //! Click-to-place destinations, the confirm popup's actions, and goal
 //! submission. A proposal is only a preview; only Send goal publishes it.
-use super::{ActiveDrag, Dashboard};
+use crate::{ActiveDrag, Dashboard};
 use argos_core::{
     DragAnchor, DragEnd, DragGate, DragSpace, GoalDrag, OutdoorAdmission, PlanarPoint,
     drag_disabled_reason, drive_block,

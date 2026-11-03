@@ -5,9 +5,11 @@
 //! through the same checks as the buttons (study lock, stop, Outdoor GPS,
 //! L5 support, the goal gate, hardware) and the same `FleetFeed` calls. Tokens
 //! mark the source, and each step is a session-log event.
-use super::{
-    Dashboard, caution, gps_blocks, hint, interaction::geographic_gate, task_agent_choice,
-};
+use super::interaction::geographic_gate;
+use super::levels::gps_blocks;
+use super::task::task_agent_choice;
+use super::widgets::{caution, hint};
+use crate::Dashboard;
 use argos_core::{
     AGENT_CONNECT_GRACE_S, AGENT_PROTOCOL, AgentCommand, AgentEnvelope, AgentGoal, AgentLink,
     AgentMode, AgentRequest, CommandSource, DragAnchor, DragEnd, DragGate, DragSpace, DriveGrant,
@@ -95,7 +97,7 @@ impl CliRunner {
 }
 
 /// What the window keeps for agents.
-pub(super) struct AgentDesk {
+pub(crate) struct AgentDesk {
     pub(super) mode: AgentMode,
     bridge: Option<AgentBridge>,
     bridge_note: String,
