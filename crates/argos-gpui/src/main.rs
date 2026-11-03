@@ -69,6 +69,9 @@ struct Dashboard {
     marks: Vec<RoverMark>,
     presence: Vec<RoverPresence>,
     selected: Option<u64>,
+    /// A selected rover that dropped out of the fleet keeps its map focus
+    /// and is selected again when it returns.
+    selection_hold: argos_gpui::SelectionHold,
     map_mode: MapMode,
     drag: Option<ActiveDrag>,
     /// Where the left button went down on the map, to tell a click from an
@@ -185,6 +188,7 @@ impl Dashboard {
             marks: Vec::new(),
             presence: Vec::new(),
             selected: None,
+            selection_hold: argos_gpui::SelectionHold::default(),
             map_mode: MapMode::default(),
             drag: None,
             press: None,
@@ -233,16 +237,28 @@ impl Dashboard {
         }
         self.marks = picture.marks;
         self.presence = picture.presence;
-        if self
+        let now = self.started.elapsed().as_secs_f64();
+        if let Some(id) = self
             .selected
-            .is_some_and(|id| !self.marks.iter().any(|mark| mark.id == id))
+            .filter(|id| !self.marks.iter().any(|mark| mark.id == *id))
         {
             self.stop_drive();
             self.selected = None;
             self.drag = None;
+            self.selection_hold.lose(id, now);
+        } else if self.selected.is_none()
+            && let Some(id) = self
+                .selection_hold
+                .restore(now, |id| self.marks.iter().any(|mark| mark.id == id))
+        {
+            // Back from a dropout: reopen its panel. Driving stays stopped.
+            self.selected = Some(id);
+            self.note = format!("Rover {id} is reporting again");
         }
         // Only the selected rover's grid is drawn, so only it is subscribed.
-        self.feed.focus(self.selected);
+        // A rover in a dropout stays subscribed so its map is kept.
+        self.feed
+            .focus(self.selection_hold.focus(self.selected, now));
         if self.driving
             && let Some(id) = self.selected
             && !self.held.is_empty()
@@ -584,6 +600,7 @@ impl Dashboard {
             self.drag = None;
             self.selected = Some(id);
         }
+        self.selection_hold.clear();
         self.claim.take(self.now);
         self.note = format!("Rover {id} selected · control active in this window");
     }
@@ -697,6 +714,7 @@ impl Dashboard {
         self.stop_drive();
         self.drag = None;
         self.selected = None;
+        self.selection_hold.clear();
         self.claim.release();
         self.latched.clear();
         self.rover_stops.clear();
@@ -1342,6 +1360,7 @@ fn console_bar(
                                 this.stop_drive();
                                 this.drag = None;
                                 this.selected = None;
+                                this.selection_hold.clear();
                                 this.note = "Control released".into();
                             } else {
                                 this.claim.take(this.now);

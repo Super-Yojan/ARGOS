@@ -27,6 +27,9 @@ pub use occupancy::occupancy_runs;
 
 pub mod console;
 
+mod selection;
+pub use selection::{SELECTION_HOLD_SECONDS, SelectionHold};
+
 mod model_drag;
 pub use model_drag::model_position;
 
