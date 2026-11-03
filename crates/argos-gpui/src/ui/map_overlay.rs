@@ -1,6 +1,6 @@
 //! Geographic occupancy, route, and destination overlays on the 3D map.
-use super::Dashboard;
 use super::local_map::{cell_color, stroke};
+use crate::Dashboard;
 use argos_core::point_capture::{LiveCloud, PointLabel, label_color};
 use argos_core::{CellClass, DragSpace, LocalFrame, Travel, geodesic_metres};
 use argos_gpui::{RoverMark, occupancy_runs};
