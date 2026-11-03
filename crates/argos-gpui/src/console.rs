@@ -154,6 +154,9 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
                     mark.degrade_reason
                 )
             }
+            Some(reason) if let Some(text) = argos_core::route_hold_label(reason) => {
+                format!("requested {requested} · held: {reason} ({text})")
+            }
             Some(reason) if reason != "idle" => format!("requested {requested} · held: {reason}"),
             _ => format!("requested {requested} · not confirmed"),
         },
