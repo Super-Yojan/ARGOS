@@ -9,17 +9,32 @@
 //! before issuing commands. `router` manages the local router; `session_log`
 //! writes session evidence off the command path. [`Client::disconnect`] retires
 //! the session and stops its worker rather than replaying input on reconnect.
+//!
+//! | File | What it holds |
+//! | --- | --- |
+//! | `lib.rs` | `Client`: connect, focus, snapshots, and every send |
+//! | `subscriptions.rs` | Each subscription opened on connect, one function each |
+//! | `teleop_worker.rs` | The 50 ms held-key worker that publishes teleop twists |
+//! | `command_checks.rs` | What `operator_command` checks before it publishes |
+//! | `session_log.rs` | The session log file and export |
+//! | `point_capture.rs` | 3D point capture and the live point stream |
+//! | `router.rs` | A local Zenoh router for tests and Zorvane |
 
+mod command_checks;
 mod content_heartbeat;
 pub mod observability;
 mod point_capture;
 pub use point_capture::{CaptureStatus, LIVE_RATE_HZ, LIVE_STRIDE, LiveStatus};
 pub mod router;
 mod session_log;
+mod subscriptions;
+mod teleop_worker;
 use argos_core::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use zenoh::Wait;
+type SharedLocalizations =
+    Arc<Mutex<std::collections::BTreeMap<u64, (serde_json::Value, Instant)>>>;
 type SharedMaps = Arc<Mutex<std::collections::BTreeMap<u64, (OccupancyGrid, f64, Option<String>)>>>;
 type SharedTelemetry =
     Arc<Mutex<std::collections::BTreeMap<(u64, String), (serde_json::Value, Instant)>>>;
@@ -78,7 +93,6 @@ struct InputState {
     lease_until: f64,
     last_step: f64,
 }
-/// One native session; subscriptions retain only latest parsed telemetry.
 /// Default folder for session logs: `ARGOS_SESSION_DIR`, else the temp folder.
 /// Desktop apps pass a lasting folder to [`Client::connect_logged`] instead.
 pub fn session_dir() -> std::path::PathBuf {
@@ -88,6 +102,7 @@ pub fn session_dir() -> std::path::PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
+/// One native session; subscriptions retain only latest parsed telemetry.
 pub struct Client {
     session: Arc<Mutex<Option<zenoh::Session>>>,
     subscribers: Mutex<Vec<zenoh::pubsub::Subscriber<()>>>,
@@ -141,399 +156,46 @@ impl Client {
     ) -> Result<Self> {
         terra_observability::initialize_runtime("argos");
         let topics = Topics::new(prefix)?;
-        if endpoint.len() > 512
-            || !(endpoint.starts_with("tcp/") || endpoint.starts_with("tls/"))
-            || endpoint.parse::<zenoh::config::EndPoint>().is_err()
-        {
-            return Err(invalid(
-                "endpoint must be a valid tcp/host:port or tls/host:port",
-            ));
-        }
-        let mut config = zenoh::Config::default();
-        config
-            .insert_json5("mode", "\"client\"")
-            .map_err(|e| Error(e.to_string()))?;
-        config
-            .insert_json5(
-                "connect/endpoints",
-                &serde_json::to_string(&vec![endpoint]).unwrap(),
-            )
-            .map_err(|e| Error(e.to_string()))?;
-        config
-            .insert_json5("scouting/multicast/enabled", "false")
-            .map_err(|e| Error(e.to_string()))?;
-        config
-            .insert_json5("connect/timeout_ms", "3000")
-            .map_err(|e| Error(e.to_string()))?;
-        if let Some((user, password)) = credentials {
-            for (key, value) in [
-                ("transport/auth/usrpwd/user", user),
-                ("transport/auth/usrpwd/password", password),
-            ] {
-                config
-                    .insert_json5(key, &serde_json::to_string(value).unwrap())
-                    .map_err(|e| Error(e.to_string()))?;
-            }
-        }
+        let config = subscriptions::client_config(endpoint, credentials)?;
         let session = zenoh::open(config)
             .wait()
             .map_err(|e| Error(format!("could not connect: {e}")))?;
         let cache = Arc::new(Mutex::new(FleetCache::default()));
         let start = Instant::now();
-        let fleet_cache = cache.clone();
-        let fleet = session
-            .declare_subscriber(topics.fleet())
-            .callback(move |sample| {
-                let payload = sample.payload().to_bytes();
-                let mut cache = fleet_cache.lock().unwrap();
-                match decode_fleet(&payload) {
-                    Ok(f) => cache.fleet(f, start.elapsed().as_secs_f64()),
-                    Err(e) => cache.notice(e.to_string()),
-                }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
-        let fleet_cache = cache.clone();
-        let subscribed_topics = topics.clone();
-        let status = session
-            .declare_subscriber(topics.statuses())
-            .callback(move |sample| {
-                let Some(id) =
-                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/goal/status")
-                else {
-                    return;
-                };
-                let payload = sample.payload().to_bytes();
-                let mut cache = fleet_cache.lock().unwrap();
-                match decode_status(&payload) {
-                    Ok(s) => cache.status(id, s, start.elapsed().as_secs_f64()),
-                    Err(e) => cache.notice(e.to_string()),
-                }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+        let fleet = subscriptions::subscribe_fleet(&session, &topics, &cache, start)?;
+        let status = subscriptions::subscribe_goal_status(&session, &topics, &cache, start)?;
         let tracking: SharedTracking = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
-        let fleet_cache = cache.clone();
-        let subscribed_topics = topics.clone();
-        let depth_tracking = tracking.clone();
-        let depth: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
-            let Some(id) =
-                subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/camera/depth")
-            else {
-                return;
-            };
-            let payload = sample.payload().to_bytes();
-            let flag = serde_json::from_slice::<serde_json::Value>(&payload)
-                .ok()
-                .as_ref()
-                .and_then(pose_tracking_flag);
-            let mut cache = fleet_cache.lock().unwrap();
-            match decode_pose(&payload) {
-                Ok(Some(p)) => {
-                    depth_tracking.lock().unwrap().insert(id, flag);
-                    cache.pose(id, p, start.elapsed().as_secs_f64());
-                }
-                Ok(None) => {}
-                Err(e) => cache.notice(e.to_string()),
-            }
-        });
-        let direct_cache = cache.clone();
-        let direct_topics = topics.clone();
-        let pose_tracking = tracking.clone();
-        let direct_pose = session
-            .declare_subscriber(format!("{}/*/pose", topics.prefix))
-            .callback(move |sample| {
-                let bytes = sample.payload().to_bytes();
-                if let Some(id) = direct_topics.rover_from_key(sample.key_expr().as_str(), "/pose")
-                    && let Ok(pose) = decode_topic_pose(&bytes, Some(id))
-                {
-                    let flag = serde_json::from_slice::<serde_json::Value>(&bytes)
-                        .ok()
-                        .as_ref()
-                        .and_then(pose_tracking_flag);
-                    pose_tracking.lock().unwrap().insert(id, flag);
-                    direct_cache
-                        .lock()
-                        .unwrap()
-                        .pose(id, pose, start.elapsed().as_secs_f64());
-                }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
-        let localizations = Arc::new(Mutex::new(std::collections::BTreeMap::<
-            u64,
-            (serde_json::Value, Instant),
-        >::new()));
-        let map_frames = localizations.clone();
-        let maps = Arc::new(Mutex::new(std::collections::BTreeMap::<
-            u64,
-            (OccupancyGrid, f64, Option<String>),
-        >::new()));
-        let grids = maps.clone();
-        let map_topics = topics.clone();
-        let occupancy: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
-            let Some(id) = map_topics.rover_from_key(sample.key_expr().as_str(), "/map/occupancy")
-            else {
-                return;
-            };
-            let Ok(grid) = decode_occupancy(&sample.payload().to_bytes()) else {
-                return;
-            };
-            if grid.rover_id != id {
-                return;
-            }
-            let frames = map_frames.lock().unwrap();
-            let frame_id = frames
-                .get(&id)
-                .and_then(|(v, _)| v["frameID"].as_str())
-                .map(String::from);
-            let mut maps = grids.lock().unwrap();
-            if maps.get(&id).is_some_and(|(old, _, _)| {
-                old.run_id == grid.run_id && old.sequence >= grid.sequence
-            }) {
-                return;
-            }
-            // Keep memory bounded even if an endpoint publishes unlisted IDs.
-            if !maps.contains_key(&id) && maps.len() >= 256 {
-                return;
-            }
-            maps.insert(id, (grid, start.elapsed().as_secs_f64(), frame_id));
-        });
+        let depth = subscriptions::depth_handler(&topics, &cache, &tracking, start);
+        let direct_pose =
+            subscriptions::subscribe_pose(&session, &topics, &cache, &tracking, start)?;
+        let localizations: SharedLocalizations =
+            Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+        let maps: SharedMaps = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+        let occupancy = subscriptions::occupancy_handler(&topics, &localizations, &maps, start);
         let operator = Arc::new(Mutex::new(OperatorCache::default()));
         let held = Arc::new(Mutex::new(InputState::default()));
-        let restart_input = held.clone();
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let _ = std::fs::create_dir_all(log_dir);
-        let log_path = log_dir.join(format!("argos-session-{session_id}.jsonl"));
-        let recorder = Arc::new(
-            session_log::RunRecorder::create(
-                &log_path,
-                serde_json::json!({
-                    "session_id": session_id,
-                    "utc": utc(),
-                    "platform": "argos",
-                    "clock": "session_relative_monotonic",
-                }),
-                8192,
-            )
-            .unwrap_or_else(|_| session_log::RunRecorder::unavailable()),
+        let (session_id, log_path, recorder) = subscriptions::open_session_log(log_dir);
+        let authority = subscriptions::authority_handler(
+            &topics,
+            &cache,
+            &operator,
+            &held,
+            &recorder,
+            &session_id,
+            start,
         );
-        let authority_cache = operator.clone();
-        let log = recorder.clone();
-        let subscribed_topics = topics.clone();
-        let fleet_cache = cache.clone();
-        let callback_session_id = session_id.clone();
-        let authority: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
-            for kind in AUTHORITY_TOPICS {
-                let Some(id) = subscribed_topics
-                    .rover_from_key(sample.key_expr().as_str(), &format!("/{kind}"))
-                else {
-                    continue;
-                };
-                if !fleet_cache
-                    .lock()
-                    .unwrap()
-                    .snapshot(start.elapsed().as_secs_f64())
-                    .rovers
-                    .iter()
-                    .any(|r| r.id == id && r.membership != "absent")
-                {
-                    return;
-                }
-                let bytes = sample.payload().to_bytes();
-                let now = start.elapsed().as_secs_f64();
-                let (ok, changed) = {
-                    let mut state = authority_cache.lock().unwrap();
-                    let previous = state.run_id(id);
-                    let ok = state.apply(id, kind, &bytes, now).is_ok();
-                    (ok, previous != state.run_id(id))
-                };
-                if changed {
-                    let mut input = restart_input.lock().unwrap();
-                    if input.rover_id == Some(id) {
-                        input.rover_id = None;
-                        input.keys.clear();
-                        input.authority_generation = None;
-                    }
-                }
-                if ok {
-                    let _ = log.record(serde_json::json!({
-                        "kind": "state_observed",
-                        "topic": kind,
-                        "rover_id": id,
-                        "time": now,
-                        "utc": utc(),
-                        "session_id": callback_session_id,
-                        "payload": serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-                    }));
-                }
-                return;
-            }
-        });
-        let l = localizations.clone();
-        let frame_grids = maps.clone();
-        let subscribed_topics = topics.clone();
-        let localization = session
-            .declare_subscriber(format!("{}/*/localization", topics.prefix))
-            .callback(move |sample| {
-                let Some(id) =
-                    subscribed_topics.rover_from_key(sample.key_expr().as_str(), "/localization")
-                else {
-                    return;
-                };
-                let bytes = sample.payload().to_bytes();
-                if bytes.len() > 4096 {
-                    return;
-                }
-                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                    return;
-                };
-                if value.get("version").and_then(|v| v.as_u64()) != Some(1) || !value.is_object() {
-                    return;
-                }
-                let mut entries = l.lock().unwrap();
-                let previous = entries.get(&id).and_then(|(v, _)| v["frameID"].as_str());
-                if previous != value["frameID"].as_str() {
-                    frame_grids.lock().unwrap().remove(&id);
-                }
-                entries.retain(|_, (_, received): &mut (serde_json::Value, Instant)| {
-                    received.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
-                });
-                if entries.len() < 4096 || entries.contains_key(&id) {
-                    entries.insert(id, (value, Instant::now()));
-                }
-            })
-            .wait()
-            .map_err(|e| Error(e.to_string()))?;
+        let localization =
+            subscriptions::subscribe_localization(&session, &topics, &localizations, &maps)?;
         let operator_states: SharedTelemetry =
             Arc::new(Mutex::new(std::collections::BTreeMap::new()));
-        let telemetry_cache = operator_states.clone();
-        let heartbeat_maps = maps.clone();
-        let subscribed_topics = topics.clone();
-        let search_log = recorder.clone();
-        let search_session = session_id.clone();
-        let operator_feed: Handler = Arc::new(move |sample: zenoh::sample::Sample| {
-            let key = sample.key_expr().as_str();
-            let suffix = if key.ends_with("/map/occupancy/heartbeat") {
-                "/map/occupancy/heartbeat"
-            } else if key.ends_with("/pointcloud/heartbeat") {
-                "/pointcloud/heartbeat"
-            } else if key.ends_with("/hardware/status") {
-                "/hardware/status"
-            } else if key.ends_with("/pointcloud") {
-                "/pointcloud"
-            } else if key.ends_with("/autonomy/status") {
-                "/autonomy/status"
-            } else if key.ends_with("/pose/quality") {
-                "/pose/quality"
-            } else if key.ends_with("/navigation/outdoor") {
-                "/navigation/outdoor"
-            } else if key.ends_with("/search/report") {
-                "/search/report"
-            } else if key.ends_with("/search/status") {
-                "/search/status"
-            } else if key.ends_with("/objects") {
-                "/objects"
-            } else {
-                return;
-            };
-            let Some(id) = subscribed_topics.rover_from_key(key, suffix) else {
-                return;
-            };
-            let bytes = sample.payload().to_bytes();
-            if suffix == "/map/occupancy/heartbeat" {
-                if let Some(heartbeat) = content_heartbeat::occupancy_identity(&bytes, id)
-                    && let Some(cached) = heartbeat_maps.lock().unwrap().get_mut(&id)
-                {
-                    content_heartbeat::refresh_grid(
-                        cached,
-                        &heartbeat,
-                        start.elapsed().as_secs_f64(),
-                    );
-                }
-                return;
-            }
-            if suffix == "/pointcloud/heartbeat" {
-                if let Some(heartbeat) = content_heartbeat::cloud_identity(&bytes, id)
-                    && let Some(cached) = telemetry_cache
-                        .lock()
-                        .unwrap()
-                        .get_mut(&(id, "cloud".into()))
-                {
-                    content_heartbeat::refresh_cloud(cached, &heartbeat, Instant::now());
-                }
-                return;
-            }
-            if bytes.len() > 262144 {
-                return;
-            }
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                return;
-            };
-            if !value.is_object() {
-                return;
-            }
-            if matches!(
-                suffix,
-                "/search/status" | "/search/report" | "/hardware/status"
-            ) {
-                let _ = search_log.record(serde_json::json!({
-                    "kind": "state_observed",
-                    "topic": suffix.trim_start_matches('/'),
-                    "rover_id": id,
-                    "time": start.elapsed().as_secs_f64(),
-                    "utc": utc(),
-                    "session_id": search_session,
-                    "payload": value,
-                }));
-            }
-            let kind = if suffix == "/search/report" {
-                let Some(search) = value["search_id"].as_str() else {
-                    return;
-                };
-                if !valid_token(search) {
-                    return;
-                }
-                // Each search retains one report; batches replay on the canonical topic.
-                let kind = format!("search_report:{search}");
-                let mut entries = telemetry_cache.lock().unwrap();
-                entries.retain(|_, (_, at)| at.elapsed().as_secs_f64() < 2.5);
-                if entries.len() < 4096 || entries.contains_key(&(id, kind.clone())) {
-                    entries.insert((id, kind), (value, Instant::now()));
-                }
-                return;
-            } else if suffix == "/search/status" {
-                "search"
-            } else if suffix == "/hardware/status" {
-                "hardware"
-            } else if suffix == "/pointcloud" {
-                "cloud"
-            } else if suffix == "/map/occupancy" {
-                "occupancy"
-            } else if suffix == "/pose/quality" {
-                "pose_quality"
-            } else if suffix == "/navigation/outdoor" {
-                "outdoor"
-            } else if suffix == "/objects" {
-                "objects"
-            } else {
-                "authority"
-            };
-            let mut entries = telemetry_cache.lock().unwrap();
-            entries.retain(|_, (_, at): &mut (serde_json::Value, Instant)| {
-                at.elapsed().as_secs_f64() < SUPERVISION_STALE_SECONDS
-            });
-            if kind == "cloud"
-                && entries
-                    .get(&(id, kind.into()))
-                    .is_some_and(|(old, _)| !content_heartbeat::accepts_cloud(old, &value))
-            {
-                return;
-            }
-            if entries.len() < 4096 || entries.contains_key(&(id, kind.into())) {
-                entries.insert((id, kind.into()), (value, Instant::now()));
-            }
-        });
+        let operator_feed = subscriptions::telemetry_handler(
+            &topics,
+            &operator_states,
+            &maps,
+            &recorder,
+            &session_id,
+            start,
+        );
         let mut subscribers = vec![fleet, status, direct_pose, localization];
         for topic in AUTHORITY_TOPICS {
             subscribers.push(listen(
@@ -552,112 +214,19 @@ impl Client {
         let session = Arc::new(Mutex::new(Some(session)));
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let teleop_sequence = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let worker = {
-            let packet_sequence = teleop_sequence.clone();
-            let session = session.clone();
-            let held = held.clone();
-            let authority_cache = operator.clone();
-            let hardware_cache = operator_states.clone();
-            let fleet_cache = cache.clone();
-            let stop = shutdown.clone();
-            let prefix = topics.prefix.clone();
-            let callback_session_id = session_id.clone();
-            let log = recorder.clone();
-            std::thread::spawn(move || {
-                let mut last: Option<u64> = None;
-                while !stop.load(std::sync::atomic::Ordering::Acquire) {
-                    let now = start.elapsed().as_secs_f64();
-                    let mut input = held.lock().unwrap();
-                    let active = input.rover_id.filter(|id| {
-                        let authority = authority_cache.lock().unwrap();
-                        let permitted = authority.can_drive(*id, now)
-                            && input
-                                .authority_generation
-                                .as_ref()
-                                .is_none_or(|(run, revision)| {
-                                    authority.matches_authority(*id, run, *revision)
-                                });
-                        drop(authority);
-                        let hardware_ready = hardware_cache
-                            .lock()
-                            .unwrap()
-                            .get(&(*id, "hardware".into()))
-                            .is_some_and(|(value, at)| require_relay(value, at, false).is_ok());
-                        permitted
-                            && hardware_ready
-                            && fleet_cache.lock().unwrap().snapshot(now).link == "healthy"
-                    });
-                    if active.is_none() {
-                        input.rover_id = None;
-                        input.keys.clear();
-                        if let Some(guard) = input.guard.as_mut() {
-                            guard.reset();
-                        }
-                    }
-                    if input.deadman && input.lease_until > 0. && now >= input.lease_until {
-                        input.keys.clear();
-                    }
-                    let dt = if input.last_step > 0. {
-                        now - input.last_step
-                    } else {
-                        0.05
-                    };
-                    input.last_step = now;
-                    let (unit_linear, unit_angular) = input.keys.sample();
-                    // Defense in depth; Terra enforces the real limits.
-                    let sample = if let Some(guard) = input.guard.as_mut() {
-                        guard.step(unit_linear, unit_angular, dt)
-                    } else {
-                        (unit_linear, unit_angular)
-                    };
-                    if let Some(id) = active {
-                        if sample != (0., 0.) || last.is_some() {
-                            let sequence = packet_sequence
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                                + 1;
-                            let payload = serde_json::json!({
-                                "linear": sample.0,
-                                "angular": sample.1,
-                                "operator_session_id": callback_session_id,
-                                "sequence": sequence,
-                                "run_id": input.authority_generation.as_ref().map(|g|&g.0),
-                                "authority_revision": input.authority_generation.as_ref().map(|g|g.1),
-                            });
-                            if let Some(s) = session.lock().unwrap().as_ref() {
-                                let _ = s
-                                    .put(format!("{prefix}/{id}/teleop"), payload.to_string())
-                                    .wait();
-                            }
-                            let _ = log.record(serde_json::json!({
-                                "kind": "teleop_sent",
-                                "rover_id": id,
-                                "time": now,
-                                "utc": utc(),
-                                "sequence": sequence,
-                                "session_id": callback_session_id,
-                                "payload": payload,
-                            }));
-                            last = if sample == (0., 0.) { None } else { Some(id) };
-                        }
-                    } else if let Some(id) = last.take()
-                        && let Some(s) = session.lock().unwrap().as_ref()
-                    {
-                        let _ = s
-                            .put(
-                                format!("{prefix}/{id}/teleop"),
-                                zero_payload(
-                                    &callback_session_id,
-                                    &packet_sequence,
-                                    input.authority_generation.as_ref(),
-                                ),
-                            )
-                            .wait();
-                    }
-                    drop(input);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            })
-        };
+        let worker = teleop_worker::spawn_teleop_worker(
+            &session,
+            &held,
+            &operator,
+            &operator_states,
+            &cache,
+            &shutdown,
+            &teleop_sequence,
+            &topics,
+            &session_id,
+            &recorder,
+            start,
+        );
         Ok(Self {
             session,
             subscribers: Mutex::new(subscribers),
@@ -884,94 +453,9 @@ impl Client {
         }
         let value: serde_json::Value =
             serde_json::from_str(payload).map_err(|_| invalid("invalid command JSON"))?;
-        if kind == "navigation/settings" {
-            if value["token"]
-                .as_str()
-                .is_none_or(|v| v.is_empty() || v.len() > 64)
-                || !value["run_id"].is_string()
-                || value["authority_revision"].as_u64().is_none()
-                || value["settings_revision"].as_u64().is_none()
-                || !value["parameters"].is_object()
-            {
-                return Err(invalid("invalid navigation settings request"));
-            }
-        } else if matches!(kind, "navigation/source" | "navigation/resume") {
-            if value["schema_version"] != 1
-                || value["token"].as_str().is_none_or(|t| !valid_token(t))
-                || !value["run_id"].is_string()
-                || value["navigation_revision"].as_u64().is_none()
-            {
-                return Err(invalid("invalid navigation request"));
-            }
-        } else if kind.starts_with("search") {
-            validate_search_command(kind, payload)?;
-        } else if kind == "task/action" {
-            argos_core::validate_task_action(payload)?;
-        } else if kind == "dock" {
-            argos_core::validate_dock_action(payload)?;
-        } else if kind == "teleop" {
-            let linear = value["linear"]
-                .as_f64()
-                .ok_or_else(|| invalid("missing linear"))?;
-            let angular = value["angular"]
-                .as_f64()
-                .ok_or_else(|| invalid("missing angular"))?;
-            if !linear.is_finite()
-                || !angular.is_finite()
-                || linear.abs() > 0.5
-                || angular.abs() > 1.
-            {
-                return Err(invalid("drive exceeds dashboard limits"));
-            }
-        } else if kind == "autonomy" && value.get("assigned_level").is_some() {
-            let level = value["assigned_level"].as_str();
-            if !(value["assigned_level"].is_null()
-                || level.is_some_and(|level| {
-                    argos_core::STUDY_LEVELS
-                        .iter()
-                        .any(|(wire, _)| *wire == level)
-                }))
-                || value["token"].as_str().is_none_or(|t| !valid_token(t))
-                || value.as_object().is_some_and(|o| o.len() != 2)
-            {
-                return Err(invalid("invalid study condition"));
-            }
-        } else if !matches!(
-            value["level"].as_str(),
-            Some(
-                "teleop"
-                    | "assisted_teleop"
-                    | "waypoint"
-                    | "waypoint_direct"
-                    | "supervised"
-                    | "target_search"
-                    | "explore"
-                    | "task"
-            )
-        ) {
-            return Err(invalid("unsupported autonomy level"));
-        } else if value["level"] == "explore"
-            && value["budget_seconds"]
-                .as_f64()
-                .is_none_or(|seconds| !argos_core::valid_explore_budget(seconds))
-        {
-            return Err(invalid("explore needs a budget"));
-        } else if value["level"] == "task"
-            && value["task"]["instruction"]
-                .as_str()
-                .is_none_or(|text| argos_core::task_text(text).is_err())
-        {
-            return Err(invalid("L5 needs a task"));
-        }
+        command_checks::check_command_shape(kind, payload, &value)?;
         // Neutral may still be sent during telemetry loss; moving commands require fresh fleet and pose.
-        let neutral = kind == "search/report/ack"
-            || (kind == "search/action"
-                && matches!(value["action"].as_str(), Some("cancel" | "pause")))
-            || (kind == "task/action" && value["action"] == "cancel")
-            || (kind == "dock" && value["action"] == "cancel")
-            || kind == "teleop"
-                && value["linear"].as_f64() == Some(0.)
-                && value["angular"].as_f64() == Some(0.);
+        let neutral = command_checks::is_neutral(kind, &value);
         let freshness = if kind == "autonomy"
             && matches!(
                 value["level"].as_str(),
@@ -1011,150 +495,7 @@ impl Client {
             }
         }
         if !neutral {
-            let states = self.operator_states.lock().unwrap();
-            let (authority, received) = states
-                .get(&(id, "authority".into()))
-                .ok_or_else(|| invalid("vehicle authority unavailable"))?;
-            if received.elapsed().as_secs_f64() >= freshness {
-                return Err(invalid("vehicle authority is stale"));
-            }
-            if kind.starts_with("search") {
-                if value["run_id"] != authority["run_id"]
-                    || authority["requested_level"] != "target_search"
-                {
-                    return Err(invalid("search authority changed"));
-                }
-            } else if kind == "task/action" {
-                if authority["requested_level"] != "task" {
-                    return Err(invalid("Select L5 before replying to a task"));
-                }
-            } else if kind == "navigation/settings" {
-                let (hardware, at) = states
-                    .get(&(id, "hardware".into()))
-                    .ok_or_else(|| invalid("hardware status unavailable"))?;
-                require_relay(hardware, at, true)?;
-                if value["run_id"] != authority["run_id"]
-                    || value["authority_revision"] != authority["revision"]
-                    || value["settings_revision"] != authority["navigation"]["revision"]
-                    || authority["navigation"]["schema_version"] != 1
-                    || !matches!(authority["safety"].as_str(), Some("clear" | "hold"))
-                {
-                    return Err(invalid("Settings require current vehicle authority"));
-                }
-            } else if kind == "navigation/resume" {
-                let (raw, at) = states
-                    .get(&(id, "outdoor".into()))
-                    .ok_or_else(|| invalid("Outdoor status unavailable"))?;
-                let mut report = argos_core::OutdoorReport::decode(raw)?;
-                report.age_s = Some(at.elapsed().as_secs_f64());
-                if let Some(reason) = argos_core::outdoor_resume_refusal(
-                    &report,
-                    value["run_id"].as_str().unwrap(),
-                    value["navigation_revision"].as_u64().unwrap(),
-                ) {
-                    return Err(invalid(reason));
-                }
-                let (hardware, at) = states
-                    .get(&(id, "hardware".into()))
-                    .ok_or_else(|| invalid("Hardware unavailable"))?;
-                require_relay(hardware, at, false)?;
-                if !authority["requested_level"]
-                    .as_str()
-                    .is_some_and(|level| report.accepts_goal_at(level))
-                    || authority["safety"] == "emergency_stop"
-                {
-                    return Err(invalid(if report.goal_levels.len() > 1 {
-                        "Select L2–L5 with ready hardware before resuming"
-                    } else {
-                        "Select L3 with ready hardware before resuming"
-                    }));
-                }
-            } else if kind == "navigation/source" {
-                let source = value["source"].as_str();
-                if value["schema_version"] != 1
-                    || !matches!(source, Some("local" | "outdoor_gps"))
-                    || value["token"]
-                        .as_str()
-                        .is_none_or(|token| !valid_token(token))
-                    || !value["run_id"].is_string()
-                    || value["navigation_revision"].as_u64().is_none()
-                {
-                    return Err(invalid("invalid navigation source request"));
-                }
-                let (hardware, at) = states
-                    .get(&(id, "hardware".into()))
-                    .ok_or_else(|| invalid("hardware status unavailable"))?;
-                require_relay(hardware, at, true)?;
-                if value["run_id"] != authority["run_id"] {
-                    return Err(invalid("navigation run changed"));
-                }
-                if self.snapshot().rovers.iter().any(|rover| {
-                    rover.id == id
-                        && rover
-                            .goal
-                            .as_ref()
-                            .is_some_and(|goal| goal.state == GoalState::Active)
-                }) {
-                    return Err(invalid(
-                        "Navigation source changes require no active mission",
-                    ));
-                }
-                if source == Some("outdoor_gps") {
-                    let (outdoor, outdoor_at) = states
-                        .get(&(id, "outdoor".into()))
-                        .ok_or_else(|| invalid("App update required"))?;
-                    if outdoor_at.elapsed().as_secs_f64() >= 3.
-                        || argos_core::OutdoorReport::decode(outdoor).is_err()
-                        || argos_core::app_update_required(
-                            argos_core::OutdoorReport::decode(outdoor).ok().as_ref(),
-                        )
-                        || outdoor["navigation_revision"] != value["navigation_revision"]
-                        || outdoor["run_id"] != value["run_id"]
-                    {
-                        return Err(invalid("App update required"));
-                    }
-                }
-            } else if kind == "teleop" {
-                let (hardware, received) = states
-                    .get(&(id, "hardware".into()))
-                    .ok_or_else(|| invalid("hardware status unavailable"))?;
-                require_relay(hardware, received, false)?;
-                if value["run_id"] != authority["run_id"]
-                    || value["authority_revision"] != authority["revision"]
-                    || value["operator_session_id"]
-                        .as_str()
-                        .is_none_or(|s| s.is_empty() || s.len() > 64)
-                    || value["sequence"].as_u64().is_none()
-                    || !matches!(
-                        authority["requested_level"].as_str(),
-                        Some("teleop" | "assisted_teleop")
-                    )
-                    || authority["effective_level"] != authority["requested_level"]
-                    || !matches!(authority["safety"].as_str(), Some("clear" | "active"))
-                {
-                    return Err(invalid("drive authority changed"));
-                }
-            } else if kind == "autonomy" && value.get("assigned_level").is_some() {
-                // Validated above; Terra checks the level against its own contract.
-            } else if kind == "dock" {
-                // Start and dump move the rover or open the gate; Terra checks the
-                // bucket, level and alignment against its own dock contract.
-                let (hardware, at) = states
-                    .get(&(id, "hardware".into()))
-                    .ok_or_else(|| invalid("hardware status unavailable"))?;
-                require_relay(hardware, at, false)?;
-                if authority["safety"] == "emergency_stop" {
-                    return Err(invalid("Stop is active · reset it before docking"));
-                }
-            } else if value["token"]
-                .as_str()
-                .is_none_or(|s| s.is_empty() || s.len() > 64)
-                || !authority["supported_levels"]
-                    .as_array()
-                    .is_some_and(|levels| levels.contains(&value["level"]))
-            {
-                return Err(invalid("unsupported vehicle autonomy request"));
-            }
+            self.check_vehicle_authority(id, kind, &value, freshness)?;
         }
         let payload = self.bound_payload(id, kind, payload.as_bytes())?;
         let intervention = self.intervention(id, kind, &value);
