@@ -40,3 +40,7 @@ path = "../../tests/argos-gpui/fleet_feed.rs"
 [[test]]
 name = "agent_bridge"
 path = "../../tests/argos-gpui/agent_bridge.rs"
+
+[[test]]
+name = "agent_mcp"
+path = "../../tests/argos-gpui/agent_mcp.rs"

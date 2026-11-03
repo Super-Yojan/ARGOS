@@ -1,4 +1,4 @@
-use argos_gpui::{AGENT_BRIDGE_FILE, AgentBridge};
+use argos_gpui::{AGENT_BRIDGE_FILE, AgentBridge, AgentProcess};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -43,6 +43,11 @@ fn bridge_checks_the_token_and_relays_to_the_window() {
     assert_eq!(refused["ok"], false);
     assert!(refused["error"].as_str().unwrap().contains("token"));
     assert!(bridge.take_calls().is_empty());
+    assert_eq!(
+        bridge.bad_tokens(),
+        1,
+        "the panel can say a stale agent knocked"
+    );
 
     // Answer from "the window" on another thread while the client waits.
     let window = std::thread::spawn(move || {
@@ -71,4 +76,46 @@ fn bridge_checks_the_token_and_relays_to_the_window() {
         !dir.join(AGENT_BRIDGE_FILE).exists(),
         "the file goes with the bridge"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn agent_command_gets_the_bridge_file_and_reports_how_it_ended() {
+    let dir = std::env::temp_dir().join(format!("argos-agent-proc-{}", std::process::id()));
+    let bridge_file = dir.join(AGENT_BRIDGE_FILE);
+    let mut process = AgentProcess::spawn(
+        "echo \"bridge=$ARGOS_AGENT_BRIDGE\"; echo 'no module named anthropic' >&2; exit 3",
+        &bridge_file,
+        &dir,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Some(exit) = process.poll() {
+            break exit.to_string();
+        }
+        assert!(Instant::now() < deadline, "the command did not end");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(exit.contains('3'), "{exit}");
+    assert!(exit.ends_with("no module named anthropic"), "{exit}");
+    assert_eq!(process.exited(), Some(exit.as_str()));
+    let log = std::fs::read_to_string(process.log()).unwrap();
+    assert!(
+        log.contains(&format!("bridge={}", bridge_file.display())),
+        "{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn agent_command_stops_with_the_window() {
+    let dir = std::env::temp_dir().join(format!("argos-agent-kill-{}", std::process::id()));
+    let mut process = AgentProcess::spawn("sleep 30", &dir.join(AGENT_BRIDGE_FILE), &dir).unwrap();
+    assert!(process.poll().is_none(), "still running");
+    let started = Instant::now();
+    drop(process);
+    assert!(started.elapsed() < Duration::from_secs(5), "drop kills it");
+    let _ = std::fs::remove_dir_all(&dir);
 }

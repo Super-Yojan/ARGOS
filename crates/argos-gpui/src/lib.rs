@@ -9,7 +9,12 @@ mod fleet;
 pub use fleet::*;
 
 mod agent_bridge;
-pub use agent_bridge::{AGENT_BRIDGE_FILE, AGENT_PORT, AgentBridge, AgentCall};
+pub use agent_bridge::{
+    AGENT_BRIDGE_FILE, AGENT_LOG_PREFIX, AGENT_PORT, AgentBridge, AgentCall, AgentProcess,
+};
+
+pub mod agent_mcp;
+pub mod agent_runner;
 
 mod install;
 pub use install::{robot_model, user_config_dir};

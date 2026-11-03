@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-pub const LAUNCH_HELP: &str = "Usage: argos-gpui [--sim | --real]\n\n  --sim        Local Zorvane at tcp/127.0.0.1:7447 (start Zorvane separately)\n  --real       Saved fleet connection from environment/.env (default)\n  -h, --help   Show this help\n";
+pub const LAUNCH_HELP: &str = "Usage: argos-gpui [--sim | --real]\n\n  --sim        Local Zorvane at tcp/127.0.0.1:7447 (start Zorvane separately)\n  --real       Saved fleet connection from environment/.env (default)\n  -h, --help   Show this help\n\n  argos-gpui mcp   MCP server for agents (see `argos-gpui mcp --help`)\n  argos-gpui call  One agent bridge call from a shell\n";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LaunchMode {

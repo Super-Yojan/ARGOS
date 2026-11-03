@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -41,6 +41,7 @@ pub struct AgentBridge {
     file: PathBuf,
     calls: mpsc::Receiver<AgentCall>,
     stop: Arc<AtomicBool>,
+    bad_tokens: Arc<AtomicU32>,
 }
 
 impl AgentBridge {
@@ -66,14 +67,17 @@ impl AgentBridge {
         let (send, calls) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
+        let bad_tokens = Arc::new(AtomicU32::new(0));
+        let refused = bad_tokens.clone();
         std::thread::Builder::new()
             .name("argos-agent-bridge".into())
-            .spawn(move || accept(listener, token, send, stopping))?;
+            .spawn(move || accept(listener, token, send, stopping, refused))?;
         Ok(Self {
             port,
             file,
             calls,
             stop,
+            bad_tokens,
         })
     }
     pub fn port(&self) -> u16 {
@@ -81,6 +85,11 @@ impl AgentBridge {
     }
     pub fn file(&self) -> &Path {
         &self.file
+    }
+    /// Requests refused for a wrong or missing token, for example from an
+    /// agent still holding the token of an earlier ARGOS run.
+    pub fn bad_tokens(&self) -> u32 {
+        self.bad_tokens.load(Ordering::Relaxed)
     }
     /// Requests that arrived since the last poll.
     pub fn take_calls(&self) -> Vec<AgentCall> {
@@ -111,6 +120,7 @@ fn accept(
     token: String,
     send: mpsc::Sender<AgentCall>,
     stop: Arc<AtomicBool>,
+    bad_tokens: Arc<AtomicU32>,
 ) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
@@ -118,10 +128,11 @@ fn accept(
                 let token = token.clone();
                 let send = send.clone();
                 let stop = stop.clone();
+                let bad_tokens = bad_tokens.clone();
                 let _ = std::thread::Builder::new()
                     .name("argos-agent-conn".into())
                     .spawn(move || {
-                        let _ = serve(stream, &token, &send, &stop);
+                        let _ = serve(stream, &token, &send, &stop, &bad_tokens);
                     });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -137,6 +148,7 @@ fn serve(
     token: &str,
     send: &mpsc::Sender<AgentCall>,
     stop: &AtomicBool,
+    bad_tokens: &AtomicU32,
 ) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(600)))?;
@@ -158,6 +170,7 @@ fn serve(
                 Err("Request line is longer than 64 KB".into()),
             )
         } else if !token_matches(&envelope.token, token) {
+            bad_tokens.fetch_add(1, Ordering::Relaxed);
             agent_reply(
                 &envelope.id,
                 Err("Wrong or missing token; read it from agent-bridge.json".into()),
@@ -177,6 +190,125 @@ fn serve(
         writer.flush()?;
         if too_long {
             return Ok(());
+        }
+    }
+}
+
+/// Name prefix of the log an agent command started by ARGOS writes to.
+pub const AGENT_LOG_PREFIX: &str = "argos-agent-";
+
+/// An agent process ARGOS started itself (`ARGOS_AGENT_CMD`), so a study run
+/// does not depend on someone remembering to start it. Its output goes to
+/// `argos-agent-<time>.log` in the session folder; it stops with the window.
+pub struct AgentProcess {
+    command: String,
+    child: std::process::Child,
+    log: PathBuf,
+    exit: Option<String>,
+    success: Option<bool>,
+}
+
+impl AgentProcess {
+    /// Run `command` through the platform shell, pointed at `bridge_file`.
+    pub fn spawn(command: &str, bridge_file: &Path, dir: &Path) -> io::Result<Self> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or_default();
+        let log = dir.join(format!("{AGENT_LOG_PREFIX}{stamp}.log"));
+        #[cfg(windows)]
+        let mut shell = {
+            let mut shell = std::process::Command::new("cmd");
+            shell.args(["/C", command]);
+            shell
+        };
+        #[cfg(not(windows))]
+        let mut shell = {
+            let mut shell = std::process::Command::new("sh");
+            shell.args(["-c", command]);
+            shell
+        };
+        shell.env("ARGOS_AGENT_BRIDGE", bridge_file);
+        Self::start(shell, command, log)
+    }
+
+    /// Start `process`, appending its output to `log`. `label` names it in the panel.
+    pub fn start(
+        mut process: std::process::Command,
+        label: &str,
+        log: PathBuf,
+    ) -> io::Result<Self> {
+        if let Some(dir) = log.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let out = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)?;
+        let err = out.try_clone()?;
+        let child = process
+            .env("ARGOS_AGENT_PARENT", std::process::id().to_string())
+            .env("PYTHONUNBUFFERED", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(out)
+            .stderr(err)
+            .spawn()?;
+        Ok(Self {
+            command: label.to_string(),
+            child,
+            log,
+            exit: None,
+            success: None,
+        })
+    }
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+    pub fn log(&self) -> &Path {
+        &self.log
+    }
+    /// Whether it exited cleanly, once it has.
+    pub fn succeeded(&self) -> Option<bool> {
+        self.success
+    }
+    /// Stop it now.
+    pub fn kill(&mut self) {
+        if self.exit.is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = self.poll();
+        }
+    }
+    /// How it ended, as of the last [`poll`](Self::poll).
+    pub fn exited(&self) -> Option<&str> {
+        self.exit.as_deref()
+    }
+    /// `None` while it runs; once it ends, its exit status and last log line.
+    pub fn poll(&mut self) -> Option<&str> {
+        if self.exit.is_none()
+            && let Ok(Some(status)) = self.child.try_wait()
+        {
+            let last = std::fs::read_to_string(&self.log)
+                .ok()
+                .and_then(|text| {
+                    text.lines()
+                        .rev()
+                        .find(|line| !line.trim().is_empty())
+                        .map(|line| line.trim().chars().take(160).collect::<String>())
+                })
+                .unwrap_or_else(|| "no output".into());
+            self.exit = Some(format!("{status} · {last}"));
+            self.success = Some(status.success());
+        }
+        self.exit.as_deref()
+    }
+}
+
+impl Drop for AgentProcess {
+    fn drop(&mut self) {
+        if self.exit.is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
     }
 }
