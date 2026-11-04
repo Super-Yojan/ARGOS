@@ -8,6 +8,8 @@
 mod contract;
 mod state;
 mod telemetry;
+mod alignment;
+pub use alignment::*;
 pub use contract::*;
 pub use state::*;
 pub use telemetry::*;

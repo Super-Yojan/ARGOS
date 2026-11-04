@@ -49,6 +49,7 @@ The camera opens at a fallback location. It is not locked to a campus. Once one 
 | --- | --- | --- |
 | `ARGOS_MAP_START_LAT`, `ARGOS_MAP_START_LON` | 38.8297, -77.3075 | Camera until a rover position arrives |
 | `ARGOS_MAP_ORIGIN_LAT`, `ARGOS_MAP_ORIGIN_LON` | the start pair | Local-metre origin when Terra has not published a geographic alignment |
+| `ARGOS_MAP_ALIGN` | `steady` | `steady` holds each phone rover's local map still and lets GPS fixes correct where it sits on the globe, slowly. `pinned` re-pins it to every raw fix (the old behaviour, for comparison) |
 | `ARGOS_ZENOH_ENDPOINT` | `tls/argos.34.135.204.210.sslip.io:7448` | Hosted router. `tcp/` or `tls/` |
 | `ARGOS_ZENOH_PREFIX` | `terra/phone` | Key prefix. Local Zorvane uses `terra/rover` |
 | `ARGOS_ZENOH_USER` | `terra` | Bus user. Set it empty for a router with no authentication |

@@ -22,7 +22,7 @@ pub const MAPS_API_KEY_ENV: &str = "GOOGLE_MAPS_API_KEY";
 
 pub const MAPS_KEY_NOTICE: &str = "Set GOOGLE_MAPS_API_KEY in .env";
 
-const SETTING_KEYS: [&str; 21] = [
+const SETTING_KEYS: [&str; 22] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -31,6 +31,7 @@ const SETTING_KEYS: [&str; 21] = [
     "ARGOS_MAP_START_LON",
     "ARGOS_MAP_ORIGIN_LAT",
     "ARGOS_MAP_ORIGIN_LON",
+    "ARGOS_MAP_ALIGN",
     "ARGOS_DRIVE_LINEAR",
     "ARGOS_DRIVE_YAW_RATE",
     "ARGOS_DRIVE_YAW_ACCEL",
@@ -57,6 +58,10 @@ pub struct DashboardConfig {
     pub start_latitude: f64,
     pub start_longitude: f64,
     pub origin: LocalFrame,
+    /// Hold each rover's local map steady and let GPS correct its placement
+    /// slowly (default). `ARGOS_MAP_ALIGN=pinned` restores re-pinning the
+    /// map to every raw GPS fix, for comparison.
+    pub steady_map: bool,
     /// Defense in depth; Terra enforces the real limits.
     pub teleop: TeleopLimits,
     pub degrade: DegradeLimits,
@@ -130,6 +135,9 @@ impl DashboardConfig {
             (origin_lat.as_deref(), origin_lon.as_deref()),
         )?;
         apply_drive_settings(&mut config, &settings)?;
+        config.steady_map = settings
+            .get("ARGOS_MAP_ALIGN")
+            .is_none_or(|value| value.trim() != "pinned");
         let maps_api_key = maps_api_key(&process, &file);
         let maps_demo = std::env::var("MAPS_DEMO").ok().as_deref() == Some("1");
         config.maps_notice = if maps_api_key.is_none() && !maps_demo {
@@ -208,6 +216,7 @@ impl DashboardConfig {
             start_latitude,
             start_longitude,
             origin,
+            steady_map: true,
             teleop: TeleopLimits::default(),
             degrade: DegradeLimits::default(),
             maps_api_key: None,

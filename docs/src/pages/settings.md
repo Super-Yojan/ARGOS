@@ -27,6 +27,7 @@ In simulation (`--sim`, or **Sim** in the console bar) ARGOS ignores these four 
 | `MAPS_DEMO` | unset | `1` draws an offline fixture and never calls Google. Read from the environment only, not `.env` |
 | `ARGOS_MAP_START_LAT`, `ARGOS_MAP_START_LON` | 38.8297, -77.3075 | Where the camera opens, until a rover reports a position |
 | `ARGOS_MAP_ORIGIN_LAT`, `ARGOS_MAP_ORIGIN_LON` | the start pair | Origin for a rover's local metres when it has not published its own |
+| `ARGOS_MAP_ALIGN` | `steady` | `steady` holds each phone rover's local map still and lets GPS fixes correct where it sits on the globe, slowly. `pinned` re-pins it to every raw fix (the old behaviour, for comparison) |
 
 ## Drive caps
 

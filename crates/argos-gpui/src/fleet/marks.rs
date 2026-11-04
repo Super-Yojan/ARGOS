@@ -339,6 +339,7 @@ pub fn fleet_marks(
     operator: &Value,
     mut occupancy: impl FnMut(u64) -> Option<(OccupancyGrid, f64)>,
     origin: LocalFrame,
+    alignment: impl Fn(u64) -> Option<LocalFrame>,
 ) -> Vec<RoverMark> {
     snapshot
         .rovers
@@ -350,7 +351,11 @@ pub fn fleet_marks(
             let localization = localizations.get(&key);
             let raw_gps = decode_raw_gps(localization.unwrap_or(&Value::Null));
             let map_frame = localization.map_or(Some(origin), LocalFrame::from_localization);
-            let (latitude, longitude) = if let Some(frame) = map_frame {
+            // Without an alignment from Terra, the dashboard's own steady fit
+            // of GPS fixes to the local pose, so the local map does not jump
+            // with each fix.
+            let aligned = map_frame.is_none().then(|| alignment(rover.id)).flatten();
+            let (latitude, longitude) = if let Some(frame) = map_frame.or(aligned) {
                 frame.geographic(pose.x, pose.y).ok()?
             } else {
                 // An unaligned phone must not appear at the default campus.
@@ -374,7 +379,7 @@ pub fn fleet_marks(
             let hardware = HardwareObservation::from_status(hardware_value);
             let authority = &operator[&key]["authority"];
             let grid = occupancy(rover.id);
-            let overlay_frame = map_frame.or_else(|| {
+            let overlay_frame = map_frame.or(aligned).or_else(|| {
                 // Without a heading, keep yaw as the marker draws it so the
                 // grid still lines up with the rover model.
                 let heading = outdoor

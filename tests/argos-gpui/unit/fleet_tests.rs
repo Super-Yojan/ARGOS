@@ -249,6 +249,7 @@ fn marks_follow_localization_and_summarize_occupancy() {
         &Value::Null,
         |id| (id == 3).then(|| (grid.clone(), 0.4)),
         origin,
+        |_| None,
     );
     assert_eq!(marks.len(), 1);
     let (expected_lat, expected_lon) = Anchor {
@@ -294,6 +295,7 @@ fn local_grid_preserves_phone_resolution_and_narrow_free_gap() {
         &Value::Null,
         |_| Some((grid.clone(), 0.1)),
         LocalFrame::origin(0., 0.).unwrap(),
+        |_| None,
     );
     let map = marks[0].grid.as_ref().unwrap();
     assert_eq!((map.cols, map.rows), (200, 200));
@@ -331,7 +333,14 @@ fn hardware_status_is_copied_onto_the_rover() {
             }
         }
     });
-    let marks = fleet_marks(&snapshot, &Value::Null, &operator, |_| None, origin);
+    let marks = fleet_marks(
+        &snapshot,
+        &Value::Null,
+        &operator,
+        |_| None,
+        origin,
+        |_| None,
+    );
     assert!(marks[0].hardware.present);
     assert!(marks[0].hardware.connected);
     assert!(!marks[0].hardware.ready);
@@ -349,7 +358,7 @@ fn hardware_status_is_copied_onto_the_rover() {
     let mut ready = operator;
     ready["3"]["hardware"]["ready"] = serde_json::json!(true);
     ready["3"]["hardware"]["reason"] = serde_json::json!("ready");
-    let ready_marks = fleet_marks(&snapshot, &Value::Null, &ready, |_| None, origin);
+    let ready_marks = fleet_marks(&snapshot, &Value::Null, &ready, |_| None, origin, |_| None);
     assert!(ready_marks[0].hardware.ready);
     assert!(!ready_marks[0].hardware.output_active);
     assert!(ready_marks[0].hardware.ready_and_neutral());
@@ -367,7 +376,7 @@ fn local_phone_gps_places_rover_without_inventing_geographic_alignment() {
     };
     let report = serde_json::json!({"3":{"version":1,"mode":"local",
         "gpsLatitude":38.98205,"gpsLongitude":-77.52052,"gpsAccuracy":4.6,"gpsFixAge":0.2}});
-    let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin);
+    let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin, |_| None);
     assert_eq!(
         (marks[0].latitude, marks[0].longitude),
         (38.98205, -77.52052)
@@ -391,7 +400,7 @@ fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
     let operator = serde_json::json!({"3":{"outdoor":{"schema_version":1,
         "capability":"outdoor_gps","supported":true,"source":"outdoor_gps","run_id":"run",
         "navigation_revision":1,"heading_deg":90.0,"heading_accuracy_deg":6.0}}});
-    let marks = fleet_marks(&snapshot, &report, &operator, |_| None, origin);
+    let marks = fleet_marks(&snapshot, &report, &operator, |_| None, origin, |_| None);
     assert!(marks[0].map_frame.is_none());
     let frame = marks[0].overlay_frame.unwrap();
     let (latitude, longitude) = frame.geographic(2., 4.).unwrap();
@@ -417,7 +426,7 @@ fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
         latitude: None,
         longitude: None,
     });
-    let marks = fleet_marks(&with_goal, &report, &operator, |_| None, origin);
+    let marks = fleet_marks(&with_goal, &report, &operator, |_| None, origin, |_| None);
     let goal = marks[0].goal.as_ref().unwrap();
     assert_eq!(
         (goal.latitude.unwrap(), goal.longitude.unwrap()),
@@ -425,7 +434,7 @@ fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
     );
 
     // No heading yet: the grid turns with the marker's yaw instead.
-    let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin);
+    let marks = fleet_marks(&snapshot, &report, &Value::Null, |_| None, origin, |_| None);
     let frame = marks[0].overlay_frame.unwrap();
     assert_eq!(frame.rotation, 0.);
     assert_eq!(marks[0].heading, map_heading_degrees(0.));
@@ -440,7 +449,14 @@ fn camera_reframes_when_existing_rover_gets_its_geographic_location() {
         notice: None,
         rovers: vec![rover(3, "online", Some(pose(0., 0., 0.)), Some(0.1))],
     };
-    let mut marks = fleet_marks(&snapshot, &Value::Null, &Value::Null, |_| None, origin);
+    let mut marks = fleet_marks(
+        &snapshot,
+        &Value::Null,
+        &Value::Null,
+        |_| None,
+        origin,
+        |_| None,
+    );
     let ids = BTreeSet::from([3]);
     assert!(reframing_target(&ids, Some((0., 0.)), &marks).is_none());
     marks[0].latitude = 38.98205;
@@ -466,7 +482,14 @@ fn camera_fits_when_the_rover_set_changes() {
         rovers: vec![rover(1, "online", Some(first.clone()), Some(0.1))],
         notice: None,
     };
-    let marks = fleet_marks(&snapshot, &Value::Null, &Value::Null, |_| None, origin);
+    let marks = fleet_marks(
+        &snapshot,
+        &Value::Null,
+        &Value::Null,
+        |_| None,
+        origin,
+        |_| None,
+    );
     let previous = BTreeSet::new();
     let (ids, latitude, longitude) = framing_target(&previous, &marks).unwrap();
     assert_eq!(ids, BTreeSet::from([1]));
@@ -486,6 +509,7 @@ fn camera_fits_when_the_rover_set_changes() {
         &Value::Null,
         |_| None,
         origin,
+        |_| None,
     );
     assert_eq!(moved_marks[0].status, "pose stale");
     assert!(moved_marks[0].latitude > marks[0].latitude);
@@ -500,7 +524,14 @@ fn camera_fits_when_the_rover_set_changes() {
         ],
         ..snapshot
     };
-    let both_marks = fleet_marks(&both, &Value::Null, &Value::Null, |_| None, origin);
+    let both_marks = fleet_marks(
+        &both,
+        &Value::Null,
+        &Value::Null,
+        |_| None,
+        origin,
+        |_| None,
+    );
     assert_eq!(
         both_marks.len(),
         1,
@@ -530,6 +561,7 @@ fn membership_without_geographic_position_remains_visible() {
         &Value::Null,
         |_| None,
         LocalFrame::origin(38., -77.).unwrap(),
+        |_| None,
     );
     let rows = fleet_presence(&snapshot, &marks);
     assert_eq!(rows.len(), 2);
@@ -604,6 +636,7 @@ fn retained_marker_survives_replacement_membership_without_pose() {
         &Value::Null,
         |_| None,
         LocalFrame::origin(0., 0.).unwrap(),
+        |_| None,
     );
     let next = Snapshot {
         rovers: vec![rover(0, "online", None, None)],
@@ -615,6 +648,7 @@ fn retained_marker_survives_replacement_membership_without_pose() {
         &Value::Null,
         |_| None,
         LocalFrame::origin(0., 0.).unwrap(),
+        |_| None,
     );
     retain_geographic_markers(&next, &report, &previous, &mut marks);
     assert_eq!(marks.len(), 1);
@@ -652,6 +686,7 @@ fn retirement_rejects_cached_report_on_reused_id_and_display_override_applies() 
         &Value::Null,
         |_| None,
         LocalFrame::origin(0., 0.).unwrap(),
+        |_| None,
     );
     assert!(position_label(&marks[0]).starts_with("GPS observation"));
     assert_eq!(display_link(&snapshot, &report, &Value::Null), "healthy");
@@ -663,6 +698,7 @@ fn retirement_rejects_cached_report_on_reused_id_and_display_override_applies() 
         &Value::Null,
         |_| None,
         LocalFrame::origin(0., 0.).unwrap(),
+        |_| None,
     );
     assert!(position_label(&marks[0]).starts_with("Last known GPS"));
 }
@@ -692,6 +728,7 @@ fn rover_reporting_follows_pose_and_hardware_age() {
             &hardware(hardware_age),
             |_| None,
             origin,
+            |_| None,
         )
     };
     assert_eq!(

@@ -59,6 +59,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
             &serde_json::Value::Null,
             |_| None,
             origin,
+            |_| None,
         )
         .is_empty()
     });
@@ -68,6 +69,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
         &serde_json::Value::Null,
         |_| None,
         origin,
+        |_| None,
     );
     assert_eq!(start[0].status, "online");
     assert!((start[0].heading).abs() < 1e-6);
@@ -93,6 +95,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
             &serde_json::Value::Null,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             origin,
+            |_| None,
         );
         marks
             .first()
@@ -107,6 +110,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
         &serde_json::Value::Null,
         |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
         origin,
+        |_| None,
     );
     assert!((moved[0].heading - 270.).abs() < 1e-3);
     assert!(moved[0].occupancy.starts_with("2x1, 1 occupied"));
@@ -137,6 +141,7 @@ fn zorvane_pose_updates_marks_and_occupancy() {
             &serde_json::Value::Null,
             |_| None,
             origin,
+            |_| None,
         );
         let Some(mark) = marks.first() else {
             return false;
@@ -537,6 +542,7 @@ fn found_buckets_land_on_the_map() {
             &operator,
             |_| None,
             origin,
+            |_| None,
         );
         marks.first().is_some_and(|mark| mark.objects.len() == 2)
     });

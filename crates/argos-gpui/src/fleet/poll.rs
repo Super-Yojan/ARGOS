@@ -13,7 +13,9 @@ use super::marks::fleet_marks;
 use super::marks::fleet_presence;
 use super::marks::retain_geographic_markers;
 use super::marks::scope_localization;
-use argos_core::{PoseWatch, fallback_degrade_reason};
+use argos_core::{
+    FrameAligner, LocalFrame, PoseWatch, decode_raw_gps, fallback_degrade_reason, reported_outdoor,
+};
 use argos_zenoh::Client;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -108,6 +110,7 @@ pub(super) fn poll(
     stopped: &AtomicBool,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
+    let mut aligners: BTreeMap<u64, FrameAligner> = BTreeMap::new();
     let issued_after_ms = unix_millis();
     let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
     while !stopped.load(Ordering::Acquire) {
@@ -153,12 +156,23 @@ pub(super) fn poll(
         }
         let localizations = history.update(&localizations, started.elapsed().as_secs_f64());
         history.retain(&ids);
+        if config.steady_map {
+            align(
+                &mut aligners,
+                &snapshot,
+                &localizations,
+                &operator,
+                started.elapsed().as_secs_f64(),
+            );
+        }
+        aligners.retain(|id, _| ids.contains(id));
         let mut marks = fleet_marks(
             &snapshot,
             &localizations,
             &operator,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             config.origin,
+            |id| aligners.get(&id).and_then(FrameAligner::frame),
         );
         snapshot.link = display_link(&snapshot, &localizations, &operator);
         retain_geographic_markers(
@@ -223,5 +237,53 @@ pub(super) fn poll(
             current.observed_at = std::time::Instant::now();
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Feed each phone rover's pose, fused heading and GPS fixes to its aligner.
+/// A rover whose phone publishes its own geographic alignment needs none.
+pub(super) fn align(
+    aligners: &mut BTreeMap<u64, FrameAligner>,
+    snapshot: &argos_core::Snapshot,
+    localizations: &Value,
+    operator: &Value,
+    now: f64,
+) {
+    for rover in &snapshot.rovers {
+        let Some(pose) = &rover.pose else {
+            continue;
+        };
+        let key = rover.id.to_string();
+        let report = &localizations[&key];
+        if report.is_null() || LocalFrame::from_localization(report).is_some() {
+            aligners.remove(&rover.id);
+            continue;
+        }
+        // A tracking restart gives a new frame ID; a new run a new run ID.
+        let frame = format!(
+            "{}|{}",
+            report["frameID"].as_str().unwrap_or(""),
+            report["run_id"].as_str().unwrap_or("")
+        );
+        let aligner = aligners.entry(rover.id).or_default();
+        let pose_time = now - rover.pose_age.unwrap_or(0.).max(0.);
+        aligner.observe_pose(&frame, pose_time, pose.x, pose.y);
+        if let Some(outdoor) = reported_outdoor(&operator[&key])
+            && let Some(heading) = outdoor.heading_deg
+        {
+            aligner.observe_heading(now, pose.yaw, heading, outdoor.heading_accuracy_deg);
+        }
+        if let Some(gps) = decode_raw_gps(report)
+            && let Some(observed_at) = report["gpsObservedAt"].as_f64()
+        {
+            aligner.observe_fix(
+                now,
+                observed_at,
+                gps.age_s.unwrap_or(f64::INFINITY),
+                gps.latitude,
+                gps.longitude,
+                gps.accuracy_m.unwrap_or(f64::INFINITY),
+            );
+        }
     }
 }
