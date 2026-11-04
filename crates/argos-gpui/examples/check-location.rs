@@ -1,5 +1,6 @@
 //! Read-only check of the exact rover positions used by the GPUI map.
 use argos_gpui::{DashboardConfig, FleetFeed};
+
 fn main() -> Result<(), String> {
     let feed = FleetFeed::start(DashboardConfig::from_env()?);
     std::thread::sleep(std::time::Duration::from_secs(5));

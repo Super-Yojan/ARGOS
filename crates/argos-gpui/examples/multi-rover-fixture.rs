@@ -1,5 +1,6 @@
 //! Read-only synthetic telemetry for reproducing multi-rover rendering failures.
 use zenoh::Wait;
+
 fn main() {
     let mut config = zenoh::Config::default();
     config.insert_json5("mode", "\"router\"").unwrap();

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use terra_map::{Color, GeoPosition, Map, MapEvent, MapMode, MapView};
 
 // Measured 35-inch square footprint, including wheels. Asset is Z-up after loading.
-const ROVER_AXIS_SCALE: [f64; 3] = [0.889 / 2.45, 0.889 / 2.5, 0.889 / 2.5];
+const ROVER_AXIS_SCALE: [f64; 3] = [0.61 / 2.45, 0.61 / 2.5, 0.61 / 2.5];
 
 impl Dashboard {
     pub(crate) fn new(
