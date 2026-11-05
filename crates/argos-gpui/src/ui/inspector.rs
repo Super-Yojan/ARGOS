@@ -89,6 +89,9 @@ pub(super) fn rover_inspector(
     let reversing = mark.reversing || (facts.reversing_key && driving);
     let body = match tab {
         InspectorTab::Overview => overview_tab(dashboard, mark, &facts, cx).into_any_element(),
+        InspectorTab::Mission => {
+            super::mission::mission_tab(dashboard, mark, cx).into_any_element()
+        }
         InspectorTab::Video => video_tab(dashboard, cx).into_any_element(),
     };
     v_flex()

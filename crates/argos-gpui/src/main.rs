@@ -103,6 +103,8 @@ struct Dashboard {
     agent: agent::AgentDesk,
     /// Selection, window focus, card states, poses and gaze for the session log.
     attention: ui::attention::AttentionLog,
+    /// Planned missions and the ones running, per rover.
+    missions: ui::mission::MissionBoard,
     _poll: Task<()>,
 }
 

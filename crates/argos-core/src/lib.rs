@@ -41,7 +41,9 @@ pub use task::*;
 mod agent;
 pub use agent::*;
 mod dock;
+mod mission;
 pub use dock::*;
+pub use mission::*;
 
 mod hardware;
 pub use hardware::*;

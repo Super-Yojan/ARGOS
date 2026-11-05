@@ -15,6 +15,7 @@ The code is in two halves. `src/main.rs` plus `src/ui/` is the window. Every oth
 | `src/ui/console_bar.rs` | Top bar: map mode, grid, status, control claim, link, Stop all |
 | `src/ui/cards.rs` | Rover callout cards and off-screen tabs |
 | `src/ui/popups.rs` | Dump approval and click-to-goal confirm popups |
+| `src/ui/mission.rs` | Mission tab: planned steps per rover, ticking each running mission, map step markers |
 | `src/ui/inspector.rs` | The selected rover's panel and its Overview tab |
 | `src/ui/levels.rs` | Autonomy level buttons and the study condition |
 | `src/ui/task.rs` | L4 Explore and L5 Task sections |

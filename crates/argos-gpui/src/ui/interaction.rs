@@ -15,6 +15,9 @@ impl Dashboard {
         let Some(id) = self.selected else {
             return;
         };
+        if self.place_mission_step(position, cx) {
+            return;
+        }
         if !self.claim.held(self.now) {
             self.note = "Take control to place a destination".into();
             return;
