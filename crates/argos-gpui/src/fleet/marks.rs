@@ -1,6 +1,7 @@
 //! Turn the Zenoh snapshot into what the map draws: one `RoverMark` per
 //! rover, fleet presence rows, and the camera framing target.
 
+use super::overlay::OverlayFrames;
 use argos_core::{
     CellClass, CommandOrigin, ExplorationReport, GoalState, HardwareObservation, LocalFrame,
     LocalMap, OccupancyGrid, OutdoorReport, Pose, RawGps, RouteSample, Snapshot, classify_cell,
@@ -337,8 +338,29 @@ pub fn fleet_marks(
     snapshot: &Snapshot,
     localizations: &Value,
     operator: &Value,
+    occupancy: impl FnMut(u64) -> Option<(OccupancyGrid, f64)>,
+    origin: LocalFrame,
+) -> Vec<RoverMark> {
+    placed_fleet_marks(
+        snapshot,
+        localizations,
+        operator,
+        occupancy,
+        origin,
+        &mut OverlayFrames::default(),
+        0.,
+    )
+}
+
+/// [`fleet_marks`] with GPS-pinned overlay frames held steady across calls.
+pub fn placed_fleet_marks(
+    snapshot: &Snapshot,
+    localizations: &Value,
+    operator: &Value,
     mut occupancy: impl FnMut(u64) -> Option<(OccupancyGrid, f64)>,
     origin: LocalFrame,
+    overlays: &mut OverlayFrames,
+    now: f64,
 ) -> Vec<RoverMark> {
     snapshot
         .rovers
@@ -350,14 +372,23 @@ pub fn fleet_marks(
             let localization = localizations.get(&key);
             let raw_gps = decode_raw_gps(localization.unwrap_or(&Value::Null));
             let map_frame = localization.map_or(Some(origin), LocalFrame::from_localization);
-            let (latitude, longitude) = if let Some(frame) = map_frame {
-                frame.geographic(pose.x, pose.y).ok()?
-            } else {
+            let outdoor = reported_outdoor(&operator[&key]);
+            let overlay_frame = map_frame.or_else(|| {
                 // An unaligned phone must not appear at the default campus.
-                let gps = raw_gps?;
-                // Display the measured fix; it does not define an AR-to-geographic transform.
-                (gps.latitude, gps.longitude)
-            };
+                let gps = raw_gps.as_ref()?;
+                // Without a heading, keep yaw as the marker draws it so the
+                // grid still lines up with the rover model.
+                let heading = outdoor
+                    .as_ref()
+                    .and_then(|report| report.heading_deg)
+                    .unwrap_or_else(|| map_heading_degrees(pose.yaw));
+                let scope = localization
+                    .and_then(|report| report["frameID"].as_str())
+                    .unwrap_or("");
+                // Held steady between fixes so the map does not slide and snap.
+                overlays.place(rover.id, scope, now, pose, gps, heading)
+            });
+            let (latitude, longitude) = overlay_frame?.geographic(pose.x, pose.y).ok()?;
             let status = if rover.membership == "online"
                 && rover.pose_age.is_some_and(|age| age < POSE_FRESH_SECONDS)
             {
@@ -369,20 +400,10 @@ pub fn fleet_marks(
             };
             let report = decode_autonomy_value(&operator[&key]["authority"]).ok();
             let quality = reported_pose_quality(&operator[&key]);
-            let outdoor = reported_outdoor(&operator[&key]);
             let hardware_value = &operator[&key]["hardware"];
             let hardware = HardwareObservation::from_status(hardware_value);
             let authority = &operator[&key]["authority"];
             let grid = occupancy(rover.id);
-            let overlay_frame = map_frame.or_else(|| {
-                // Without a heading, keep yaw as the marker draws it so the
-                // grid still lines up with the rover model.
-                let heading = outdoor
-                    .as_ref()
-                    .and_then(|report| report.heading_deg)
-                    .unwrap_or_else(|| map_heading_degrees(pose.yaw));
-                LocalFrame::pinned(latitude, longitude, pose.x, pose.y, pose.yaw, heading).ok()
-            });
 
             Some(RoverMark {
                 id: rover.id,
