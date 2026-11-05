@@ -96,6 +96,6 @@ Depth frames for the selected rover still arrive whole, so that bandwidth is on 
 
 On connect, the desktop app writes `argos-session-<uuid>.jsonl` in `Documents/ARGOS Sessions` (or `ARGOS_SESSION_DIR`). `Client::connect` without a folder still uses `ARGOS_SESSION_DIR` or the temp directory.
 
-Goals, cancels, actions, teleop packets, and observed state each get a line.
+Goals, cancels, actions, teleop packets, and observed state each get a line. Help episodes, selection, window focus, card states, 1 Hz poses, gaze and blinks are logged too; see the Attention logging page.
 
 **Export log** in the top bar writes a flushed copy next to it, named with the study condition. A failed recorder stays visible. Stop still works.

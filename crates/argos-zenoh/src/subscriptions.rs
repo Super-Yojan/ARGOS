@@ -241,15 +241,18 @@ pub(crate) fn open_session_log(
 
 /// `AUTHORITY_TOPICS` for every rover: run and authority state. A new run
 /// drops that rover's held keys.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn authority_handler(
     topics: &Topics,
     cache: &Arc<Mutex<FleetCache>>,
     operator: &Arc<Mutex<OperatorCache>>,
     held: &Arc<Mutex<InputState>>,
     recorder: &Arc<session_log::RunRecorder>,
+    help: &crate::SharedHelp,
     session_id: &str,
     start: Instant,
 ) -> Handler {
+    let help = help.clone();
     let restart_input = held.clone();
     let authority_cache = operator.clone();
     let log = recorder.clone();
@@ -290,6 +293,7 @@ pub(crate) fn authority_handler(
                 }
             }
             if ok {
+                let payload = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
                 let _ = log.record(serde_json::json!({
                     "kind": "state_observed",
                     "topic": kind,
@@ -297,8 +301,18 @@ pub(crate) fn authority_handler(
                     "time": now,
                     "utc": utc(),
                     "session_id": callback_session_id,
-                    "payload": serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+                    "payload": payload,
                 }));
+                if kind == "autonomy/status"
+                    && let Some(status) = &payload
+                {
+                    for mut event in help.lock().unwrap().observe(id, status, now) {
+                        event["time"] = now.into();
+                        event["utc"] = utc().into();
+                        event["session_id"] = callback_session_id.clone().into();
+                        let _ = log.record(event);
+                    }
+                }
             }
             return;
         }

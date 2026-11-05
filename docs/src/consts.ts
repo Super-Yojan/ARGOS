@@ -11,5 +11,6 @@ export const pages = [
     { path: "/operating", label: "Operate a rover", blurb: "Select, take control, arm, drive, send goals and choose an autonomy level." },
     { path: "/agents", label: "Agents", blurb: "Let Claude or any MCP agent advise you once a minute, or operate the fleet through the same checks." },
     { path: "/video", label: "FPV video", blurb: "Watch a rover's front camera over WebRTC." },
+    { path: "/attention", label: "Attention logging", blurb: "Record wait, interaction and neglect time per rover, plus gaze and blinks from a webcam eye tracker." },
     { path: "/settings", label: "Settings", blurb: "Every variable ARGOS reads from .env or the environment." },
 ];
