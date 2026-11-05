@@ -67,6 +67,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | FPV video | `argos-gpui/src/fpv/` and `ui/video.rs` | `session.rs`, `present.rs` |
 | Agent / MCP / recommendation cards | `ui/agent.rs`, `agent_mcp.rs`, `argos-core/src/agent.rs` | |
 | Session log and Export log | `argos-zenoh/src/session_log.rs` | |
+| Attention log: help episodes, selection, gaze, blinks | `argos-zenoh/src/attention.rs`, `ui/attention.rs`, `argos-gpui/src/gaze.rs` | eye tracker: `scripts/argos_eye_tracker.py` |
 | The 3D map, camera, tiles | `terra-map/src/maps/` | `camera.rs`, `renderer.rs` |
 
 ## Before you push

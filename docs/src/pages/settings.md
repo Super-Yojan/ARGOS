@@ -28,6 +28,12 @@ In simulation (`--sim`, or **Sim** in the console bar) ARGOS ignores these four 
 | `ARGOS_MAP_START_LAT`, `ARGOS_MAP_START_LON` | 38.8297, -77.3075 | Where the camera opens, until a rover reports a position |
 | `ARGOS_MAP_ORIGIN_LAT`, `ARGOS_MAP_ORIGIN_LON` | the start pair | Origin for a rover's local metres when it has not published its own |
 
+## Attention logging
+
+| Variable | Default | Role |
+| --- | --- | --- |
+| `ARGOS_GAZE_PORT` | 47870 | UDP port on 127.0.0.1 where ARGOS listens for an eye tracker. `0` turns it off. Read from the environment only, not `.env` |
+
 ## Drive caps
 
 These cap what this window sends. The rover enforces its own limits as well.

@@ -20,6 +20,7 @@
 //! | `point_capture.rs` | 3D point capture and the live point stream |
 //! | `router.rs` | A local Zenoh router for tests and Zorvane |
 
+pub mod attention;
 mod command_checks;
 mod content_heartbeat;
 pub mod observability;
@@ -133,7 +134,10 @@ pub struct Client {
     /// Who is sending commands right now, when the dashboard says so; tags
     /// interventions whose tokens do not carry it (stops, goal cancels).
     command_source: Mutex<Option<&'static str>>,
+    /// Open help episodes per rover, from `autonomy/status`.
+    help: SharedHelp,
 }
+pub(crate) type SharedHelp = Arc<Mutex<attention::HelpTracker>>;
 type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
 impl Client {
     pub fn connect(endpoint: &str, prefix: &str) -> Result<Self> {
@@ -175,12 +179,14 @@ impl Client {
         let operator = Arc::new(Mutex::new(OperatorCache::default()));
         let held = Arc::new(Mutex::new(InputState::default()));
         let (session_id, log_path, recorder) = subscriptions::open_session_log(log_dir);
+        let help: SharedHelp = Arc::new(Mutex::new(attention::HelpTracker::default()));
         let authority = subscriptions::authority_handler(
             &topics,
             &cache,
             &operator,
             &held,
             &recorder,
+            &help,
             &session_id,
             start,
         );
@@ -256,6 +262,7 @@ impl Client {
             captures: Default::default(),
             lives: Default::default(),
             command_source: Mutex::new(None),
+            help,
         })
     }
     /// Subscribe to these rovers' occupancy grids, point clouds, and depth
@@ -514,6 +521,7 @@ impl Client {
                 "topic": kind,
                 "rover_id": id,
                 "token": value["token"],
+                "help_id": self.open_help(id),
                 "time": self.start.elapsed().as_secs_f64(),
                 "utc": utc(),
                 "session_id": self.session_id,
@@ -554,6 +562,9 @@ impl Client {
             "kind": "intervention",
             "cause": cause,
             "rover_id": id,
+            // Prompted: the rover was waiting for help when the operator stepped in.
+            "help_id": self.open_help(id),
+            "prompted": self.open_help(id).is_some(),
             "from_level": from,
             "token": token,
             "source": (*self.command_source.lock().unwrap())
@@ -563,6 +574,10 @@ impl Client {
             "utc": utc(),
             "session_id": self.session_id,
         }));
+    }
+    /// The help episode open for this rover, if it is waiting for the operator.
+    pub fn open_help(&self, id: u64) -> Option<String> {
+        self.help.lock().unwrap().open(id)
     }
     /// Mark the commands sent until the next call as coming from `source`
     /// (`agent`, `recommendation`), or `None` for the operator's own.
@@ -668,6 +683,7 @@ impl Client {
             "rover_id": id,
             "token": token,
             "topic": kind,
+            "help_id": self.open_help(id),
             "time": now,
             "utc": utc(),
             "session_id": self.session_id,
@@ -922,6 +938,7 @@ impl Client {
             "kind": "goal_sent",
             "rover_id": id,
             "token": token,
+            "help_id": self.open_help(id),
             "time": self.start.elapsed().as_secs_f64(),
             "utc": utc(),
             "session_id": self.session_id,
@@ -938,6 +955,7 @@ impl Client {
         let _ = self.recorder.record(serde_json::json!({
             "kind": "goal_cancel_sent",
             "rover_id": id,
+            "help_id": self.open_help(id),
             "time": self.start.elapsed().as_secs_f64(),
             "utc": utc(),
             "session_id": self.session_id,

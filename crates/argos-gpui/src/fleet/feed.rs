@@ -192,6 +192,12 @@ impl FleetFeed {
             client.record_event(event);
         }
     }
+    /// The help episode open for this rover, if it is waiting for the operator.
+    pub fn open_help(&self, id: u64) -> Option<String> {
+        self.connected()
+            .ok()
+            .and_then(|client| client.open_help(id))
+    }
     /// The operator telemetry the client caches for one rover, as JSON.
     pub fn rover_telemetry(&self, id: u64) -> Value {
         self.connected()

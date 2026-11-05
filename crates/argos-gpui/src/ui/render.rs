@@ -2,6 +2,7 @@
 //! rover cards, inspector, and popups. Pieces are built in the sibling files.
 
 use super::agent;
+use super::attention::CardStack;
 use super::cards::CARD_HEIGHT_REM;
 use super::cards::CARD_WIDTH_REM;
 use super::cards::card_group;
@@ -89,7 +90,6 @@ impl Render for Dashboard {
                     .map(|bounds| (mark.id, bounds))
             })
             .collect();
-        let overlay = map_paint(self);
         let confirm = self.drag.as_ref().and_then(|active| {
             let at = self.proposal_at(active, cx)?;
             Some(goal_popup(&active.goal, at, cx).into_any_element())
@@ -142,6 +142,23 @@ impl Render for Dashboard {
                 ),
             },
         );
+        let stacks: Vec<_> = groups
+            .iter()
+            .map(|group| CardStack {
+                ids: group.ids.clone(),
+                x: group.x,
+                y: group.y,
+                below: group.below,
+                leading: group.leading,
+            })
+            .collect();
+        self.log_attention(
+            window,
+            &field,
+            &stacks,
+            (CARD_WIDTH_REM * rem, CARD_HEIGHT_REM * rem),
+        );
+        let overlay = map_paint(self);
         let inspector = mark.map(|mark| {
             rover_inspector(
                 self,
