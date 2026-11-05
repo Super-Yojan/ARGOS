@@ -27,6 +27,8 @@ pub use occupancy::occupancy_runs;
 
 pub mod console;
 
+pub mod gaze;
+
 mod selection;
 pub use selection::{SELECTION_HOLD_SECONDS, SelectionHold};
 

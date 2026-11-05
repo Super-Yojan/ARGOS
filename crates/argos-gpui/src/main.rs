@@ -101,6 +101,8 @@ struct Dashboard {
     fleet_mode: LaunchMode,
     /// Agent bridge, mode, recommendation cards, and raw-drive grant.
     agent: agent::AgentDesk,
+    /// Selection, window focus, card states, poses and gaze for the session log.
+    attention: ui::attention::AttentionLog,
     _poll: Task<()>,
 }
 

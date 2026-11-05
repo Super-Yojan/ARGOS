@@ -120,6 +120,7 @@ impl Dashboard {
             study_sends: BTreeMap::new(),
             fleet_mode,
             agent: agent::AgentDesk::start(),
+            attention: super::attention::AttentionLog::start(),
             _poll: poll,
         }
     }

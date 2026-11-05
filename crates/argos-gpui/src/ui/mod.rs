@@ -20,12 +20,14 @@
 //! | `interaction.rs` | Click-to-place goals and goal submission |
 //! | `map_overlay.rs`, `local_map.rs` | Grid, route, and goal drawing on the 3D map |
 //! | `palette.rs` | Console colors |
+//! | `attention.rs` | Attention log: selection, video, window focus, card states, poses, gaze, blinks |
 //!
 //! Fleet data, `.env` settings, and sending commands live in the library
 //! (`fleet/`, `console.rs`), not here.
 
 mod actions;
 pub(crate) mod agent;
+pub(crate) mod attention;
 mod cards;
 mod console_bar;
 mod drive;

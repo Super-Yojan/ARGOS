@@ -29,6 +29,12 @@ In simulation (`--sim`, or **Sim** in the console bar) ARGOS ignores these four 
 | `ARGOS_MAP_ORIGIN_LAT`, `ARGOS_MAP_ORIGIN_LON` | the start pair | Origin for a rover's local metres when it has not published its own |
 | `ARGOS_MAP_ALIGN` | `steady` | `steady` holds each phone rover's local map still and lets GPS fixes correct where it sits on the globe, slowly. `pinned` re-pins it to every raw fix (the old behaviour, for comparison) |
 
+## Attention logging
+
+| Variable | Default | Role |
+| --- | --- | --- |
+| `ARGOS_GAZE_PORT` | 47870 | UDP port on 127.0.0.1 where ARGOS listens for an eye tracker. `0` turns it off. Read from the environment only, not `.env` |
+
 ## Drive caps
 
 These cap what this window sends. The rover enforces its own limits as well.
