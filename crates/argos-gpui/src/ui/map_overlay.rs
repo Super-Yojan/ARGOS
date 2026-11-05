@@ -21,6 +21,19 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             Some(((mark.latitude, mark.longitude), frame, cloud))
         })
         .collect();
+    // Planned and running missions: (frame, steps as x, y, colour, current step).
+    let missions: Vec<_> = marks
+        .iter()
+        .filter_map(|mark| {
+            let frame = mark.overlay_frame?;
+            let (steps, current) = dashboard.missions.shown(mark.id)?;
+            let points: Vec<_> = steps
+                .iter()
+                .map(|step| (step.x, step.y, step.kind.color()))
+                .collect();
+            Some((frame, points, current))
+        })
+        .collect();
     canvas(
         |bounds, _, _| bounds,
         move |_bounds, _, window, cx| {
@@ -64,6 +77,9 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                     }
                     previous = Some(at);
                 }
+            }
+            for (frame, points, current) in &missions {
+                paint_mission(window, map, frame, points, *current);
             }
             // Found buckets and balls: a square for a bucket, a dot for a ball.
             for mark in &marks {
@@ -281,4 +297,56 @@ fn ground_metres_per_pixel(map: &MapView, latitude: f64, longitude: f64) -> f64 
         }
     }
     fallback
+}
+
+/// A mission's steps joined in order, each a diamond in its kind's colour;
+/// the running step is ringed.
+fn paint_mission(
+    window: &mut Window,
+    map: &MapView,
+    frame: &LocalFrame,
+    points: &[(f64, f64, u32)],
+    current: Option<usize>,
+) {
+    let placed: Vec<Option<Point<Pixels>>> = points
+        .iter()
+        .map(|(x, y, _)| {
+            let (latitude, longitude) = frame.geographic(*x, *y).ok()?;
+            map.project(latitude, longitude)
+        })
+        .collect();
+    for pair in placed.windows(2) {
+        if let [Some(from), Some(to)] = pair {
+            stroke(window, *from, *to, rgb(0xe8eef4), true);
+        }
+    }
+    for (index, (at, (_, _, color))) in placed.iter().zip(points).enumerate() {
+        let Some(at) = at else {
+            continue;
+        };
+        if current == Some(index) {
+            window.paint_quad(quad(
+                Bounds {
+                    origin: point(at.x - px(11.), at.y - px(11.)),
+                    size: size(px(22.), px(22.)),
+                },
+                Corners::all(px(11.)),
+                transparent_black(),
+                Edges::all(px(2.)),
+                rgb(0xffffff),
+                BorderStyle::default(),
+            ));
+        }
+        window.paint_quad(quad(
+            Bounds {
+                origin: point(at.x - px(6.), at.y - px(6.)),
+                size: size(px(12.), px(12.)),
+            },
+            Corners::all(px(2.)),
+            rgb(*color),
+            Edges::all(px(1.5)),
+            rgb(0x12161a),
+            BorderStyle::default(),
+        ));
+    }
 }

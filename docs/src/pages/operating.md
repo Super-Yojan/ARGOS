@@ -57,6 +57,21 @@ New goals are refused while the rover's pose is degraded or stale, and the inspe
 
 Outdoor navigation is a separate source, chosen in the inspector while the rover is disarmed and idle. Once the rover acknowledges **Outdoor GPS** and is on L3, place a destination the same way: the ghost shows the arrival radius (5 m unless the rover reports another) and the GPS distance, and ARGOS sends a latitude and longitude. The inspector names each reason a mission holds (`GPS stale`, `Heading uncertain`, `Route blocked`, `Paused` and others). Recovered sensors never resume motion by themselves; press **Resume outdoor mission**.
 
+## Plan a mission
+
+The **Mission** tab plans a longer job for one rover as a list of steps, and ARGOS sends them one at a time. Terra does nothing new: each step is a waypoint goal or a bucket dock, with the same checks as when you send them by hand.
+
+| Step | What ARGOS does |
+| --- | --- |
+| Waypoint | Sends a goal there and waits for `arrived` |
+| Collect | The same, marked as a ball pickup point |
+| Home | Drives to the home goal, then waits for the human refill: **Loaded · continue** goes on, **Out of balls** goes back to the first Collect step |
+| Score at a bucket | Drives to 1.5 m short of a found bucket, facing it, then starts the dock. You still approve the dump at L0–L3 |
+
+To plan, pick **Waypoint**, **Collect** or **Home** and click the map once per step; click the kind again to stop placing. **+ Score at …** adds a found bucket. The arrows reorder steps and **✕** removes one. **Repeat** starts again from step 1 after the last step. The map draws the plan in order, numbered for the selected rover, and rings the step in progress.
+
+**Start mission** needs control of the window and the rover on L2 Direct or L3 Planned. The mission pauses, and says why, when the rover stops, leaves L2/L3, loses its pose, drops the goal, or a dock fails; **Resume** repeats the step. **Pause**, **Skip step** and **End mission** cancel the goal or dock in flight. Each rover runs its own mission, so several rovers can work at once. Every step change is logged as a `mission` event in the session log, and the plan as `mission_plan` at start. Plans live in this window only; edits apply the next time you start.
+
 ## Autonomy levels
 
 The autonomy buttons ask the rover to change level. The inspector shows the level you asked for and the level the rover is actually in.

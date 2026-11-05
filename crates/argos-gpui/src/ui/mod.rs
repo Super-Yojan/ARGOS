@@ -13,6 +13,7 @@
 //! | `levels.rs` | Autonomy level buttons and the study condition |
 //! | `task.rs` | L4 Explore and L5 Task sections |
 //! | `sections.rs` | Goal, bucket dock, and 3D capture sections |
+//! | `mission.rs` | Mission tab: planned steps, the per-rover mission runner |
 //! | `drive.rs` | Teleop section, turning limits, W/A/S/D pad |
 //! | `video.rs` | FPV video tab |
 //! | `widgets.rs` | Shared section titles, hints, cautions, rows |
@@ -36,6 +37,7 @@ mod interaction;
 mod levels;
 mod local_map;
 mod map_overlay;
+pub(crate) mod mission;
 pub(crate) mod palette;
 mod popups;
 mod render;

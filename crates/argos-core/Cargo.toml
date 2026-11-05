@@ -79,3 +79,7 @@ path = "../../tests/argos-core/objects.rs"
 [[test]]
 name = "agent"
 path = "../../tests/argos-core/agent.rs"
+
+[[test]]
+name = "mission"
+path = "../../tests/argos-core/mission.rs"
