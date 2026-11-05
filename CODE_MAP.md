@@ -58,6 +58,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | What a callout, trace line, or stop reason says | `argos-gpui/src/console.rs` | tests in `tests/argos-gpui/unit/console_tests.rs` |
 | Send a new command to the rover | `fleet/commands.rs` → `argos-zenoh/src/lib.rs` → `command_checks.rs` | copy a `publish_*`; allow the topic in `operator_command` |
 | Show a new telemetry value | `argos-zenoh/src/subscriptions.rs` → `fleet/marks.rs` | add a field to `RoverMark`, fill it in `fleet_marks` |
+| Change how a GPS-only phone map sits on the satellite view | `fleet/overlay.rs` | `OverlayFrames::place` holds the frame between fixes and eases toward new ones |
 | Level names, allowed levels, study lock | `argos-core/src/autonomy.rs` | `OPERATOR_LEVELS`, `STUDY_LEVELS`, `level_label` |
 | Teleop speed and turn shaping | `argos-core/src/drive.rs` | `TeleopLimits`; held-key sending in `argos-zenoh/src/teleop_worker.rs` |
 | A `.env` setting | `fleet/config.rs` | `SETTING_KEYS`, `DashboardConfig::parse` |
