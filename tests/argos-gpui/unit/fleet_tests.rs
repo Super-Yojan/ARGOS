@@ -713,3 +713,133 @@ fn rover_reporting_follows_pose_and_hardware_age() {
     assert!(marks_for("online", 0.05, 0.05)[0].reporting.is_fresh());
     assert!(marks_for("offline", 45., 44.)[0].reporting.is_fresh());
 }
+
+fn fix(latitude: f64, longitude: f64, age_s: f64) -> argos_core::RawGps {
+    argos_core::RawGps {
+        latitude,
+        longitude,
+        accuracy_m: Some(5.),
+        age_s: Some(age_s),
+    }
+}
+
+fn rover_at(frame: LocalFrame, x: f64, y: f64) -> (f64, f64) {
+    frame.geographic(x, y).unwrap()
+}
+
+#[test]
+fn gps_overlay_holds_still_between_fixes_and_eases_toward_new_ones() {
+    let mut overlays = OverlayFrames::default();
+    let gps = fix(38.98205, -77.52052, 0.);
+    // Yaw 0 faces east.
+    let first = overlays
+        .place(3, "f", 0., &pose(0., 0., 0.), &gps, 90.)
+        .unwrap();
+    // The rover drives 2 m east on the same fix: the map stays put and the
+    // rover moves across it, instead of the map sliding under a frozen marker.
+    for step in 1..4 {
+        let x = step as f64 * 0.5;
+        overlays
+            .place(3, "f", x, &pose(x, 0., 0.), &gps, 90.)
+            .unwrap();
+    }
+    let moved = overlays
+        .place(3, "f", 4., &pose(2., 0., 0.), &gps, 90.)
+        .unwrap();
+    let (a, b) = (rover_at(first, 5., 5.), rover_at(moved, 5., 5.));
+    assert!(argos_core::geodesic_metres(a.0, a.1, b.0, b.1) < 1e-6);
+    let (lat, lon) = rover_at(moved, 2., 0.);
+    let east = argos_core::geodesic_metres(gps.latitude, gps.longitude, lat, lon);
+    assert!((east - 2.).abs() < 0.01, "{east}");
+
+    // A new fix 5 m north of where the frame puts the rover moves it 20 %.
+    let north = Anchor {
+        latitude: lat,
+        longitude: lon,
+    }
+    .geographic(5., 0.)
+    .unwrap();
+    let eased = overlays
+        .place(
+            3,
+            "f",
+            5.,
+            &pose(2., 0., 0.),
+            &fix(north.0, north.1, 0.),
+            90.,
+        )
+        .unwrap();
+    let (e_lat, e_lon) = rover_at(eased, 2., 0.);
+    let step = argos_core::geodesic_metres(lat, lon, e_lat, e_lon);
+    assert!((step - 1.).abs() < 0.05, "{step}");
+
+    // A fix far off (beyond 15 m) re-pins at once.
+    let far = Anchor {
+        latitude: lat,
+        longitude: lon,
+    }
+    .geographic(40., 0.)
+    .unwrap();
+    let snapped = overlays
+        .place(3, "f", 6., &pose(2., 0., 0.), &fix(far.0, far.1, 0.), 90.)
+        .unwrap();
+    let (s_lat, s_lon) = rover_at(snapped, 2., 0.);
+    assert!(argos_core::geodesic_metres(far.0, far.1, s_lat, s_lon) < 0.05);
+}
+
+#[test]
+fn gps_overlay_matches_a_late_fix_to_the_pose_it_was_measured_at() {
+    let mut overlays = OverlayFrames::default();
+    let gps = fix(38.98205, -77.52052, 0.);
+    overlays
+        .place(3, "f", 0., &pose(0., 0., 0.), &gps, 90.)
+        .unwrap();
+    overlays
+        .place(3, "f", 1., &pose(1., 0., 0.), &gps, 90.)
+        .unwrap();
+    // The same position, reported again 1 s late after the rover drove on,
+    // is not a correction: it describes the pose at t = 1.
+    let at_one = overlays
+        .place(3, "f", 2., &pose(2., 0., 0.), &gps, 90.)
+        .unwrap();
+    let same = fix(gps.latitude + 1e-12, gps.longitude, 1.);
+    let late = overlays
+        .place(3, "f", 2., &pose(2., 0., 0.), &same, 90.)
+        .unwrap();
+    let (a, b) = (rover_at(at_one, 2., 0.), rover_at(late, 2., 0.));
+    // The held frame put the rover 2 m east of the fix; the late fix says 1 m.
+    let gap = argos_core::geodesic_metres(a.0, a.1, b.0, b.1);
+    assert!((gap - 0.2).abs() < 0.02, "{gap}");
+}
+
+#[test]
+fn gps_overlay_turns_gradually_and_restarts_with_a_new_frame() {
+    let mut overlays = OverlayFrames::default();
+    let gps = fix(38.98205, -77.52052, 0.);
+    let first = overlays
+        .place(3, "f", 0., &pose(0., 0., 0.), &gps, 90.)
+        .unwrap();
+    // A 10° compass wobble turns the map only a little in 0.1 s.
+    let wobble = overlays
+        .place(3, "f", 0.1, &pose(0., 0., 0.), &gps, 100.)
+        .unwrap();
+    let turned = wobble.heading_degrees(0.) - first.heading_degrees(0.);
+    assert!(turned > 0. && turned < 1., "{turned}");
+    // A large change re-pins at once.
+    let big = overlays
+        .place(3, "f", 0.2, &pose(0., 0., 0.), &gps, 180.)
+        .unwrap();
+    assert!((big.heading_degrees(0.) - 180.).abs() < 1e-6);
+    // A local frame jump keeps the rover where it was on the map.
+    let before = rover_at(big, 0., 0.);
+    let jumped = overlays
+        .place(3, "f", 0.3, &pose(3., 0., 0.), &gps, 180.)
+        .unwrap();
+    let after = rover_at(jumped, 3., 0.);
+    assert!(argos_core::geodesic_metres(before.0, before.1, after.0, after.1) < 1e-6);
+    // A new localization frame starts over at the fix.
+    let fresh = overlays
+        .place(3, "g", 0.4, &pose(3., 0., 0.), &gps, 180.)
+        .unwrap();
+    assert_eq!(rover_at(fresh, 3., 0.), (gps.latitude, gps.longitude));
+}

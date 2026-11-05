@@ -9,10 +9,11 @@ use super::marks::LocalizationHistory;
 use super::marks::describe;
 use super::marks::display_link;
 use super::marks::display_policy;
-use super::marks::fleet_marks;
 use super::marks::fleet_presence;
+use super::marks::placed_fleet_marks;
 use super::marks::retain_geographic_markers;
 use super::marks::scope_localization;
+use super::overlay::OverlayFrames;
 use argos_core::{PoseWatch, fallback_degrade_reason};
 use argos_zenoh::Client;
 use serde_json::Value;
@@ -108,6 +109,7 @@ pub(super) fn poll(
     stopped: &AtomicBool,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
+    let mut overlays = OverlayFrames::default();
     let issued_after_ms = unix_millis();
     let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
     while !stopped.load(Ordering::Acquire) {
@@ -153,12 +155,15 @@ pub(super) fn poll(
         }
         let localizations = history.update(&localizations, started.elapsed().as_secs_f64());
         history.retain(&ids);
-        let mut marks = fleet_marks(
+        overlays.retain(&ids);
+        let mut marks = placed_fleet_marks(
             &snapshot,
             &localizations,
             &operator,
             |id| client.occupancy_grid(id).map(|(grid, age, _)| (grid, age)),
             config.origin,
+            &mut overlays,
+            started.elapsed().as_secs_f64(),
         );
         snapshot.link = display_link(&snapshot, &localizations, &operator);
         retain_geographic_markers(

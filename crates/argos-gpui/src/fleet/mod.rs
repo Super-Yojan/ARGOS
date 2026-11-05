@@ -17,11 +17,13 @@ mod commands;
 mod config;
 mod feed;
 mod marks;
+mod overlay;
 mod poll;
 
 pub use config::*;
 pub use feed::*;
 pub use marks::*;
+pub use overlay::OverlayFrames;
 
 #[cfg(test)]
 #[path = "../../../../tests/argos-gpui/unit/fleet_tests.rs"]
