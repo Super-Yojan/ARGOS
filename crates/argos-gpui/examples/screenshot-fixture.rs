@@ -4,6 +4,11 @@
 //! endpoint) and publishes three rovers. Operator commands on `autonomy`,
 //! `safety`, and `goal` are applied on the next tick so Take over, Drive,
 //! and Stop can be captured from the live window.
+//!
+//! `ARGOS_FIXTURE_DRIVE=1` also plays goals and docks out, for the Mission
+//! tab: rovers drive to their goal and report `arrived`, rover 1 has found an
+//! orange bucket, and a `dock` start lines up, waits for the dump approval,
+//! then reports `done`.
 use serde_json::{Value, json};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -11,6 +16,8 @@ use std::time::{Duration, Instant};
 use zenoh::Wait;
 
 struct Goal {
+    /// Echoed on goal/status so ARGOS sees its goal acknowledged.
+    token: String,
     x: f64,
     y: f64,
     state: &'static str,
@@ -28,7 +35,14 @@ struct Rover {
     revision: u64,
     goal: Option<Goal>,
     route: Vec<(f64, f64, f64)>,
+    /// Dock id, bucket, phase, ticks in that phase.
+    dock: Option<(u64, u32, &'static str, u32)>,
 }
+
+/// Drive demo speed, metres per 200 ms tick.
+const STEP_M: f64 = 3.;
+/// Rover 1's found bucket in the drive demo: id, x, y.
+const BUCKET: (u32, f64, f64) = (4, 14., 10.);
 
 fn main() {
     let endpoint =
@@ -46,7 +60,7 @@ fn main() {
         .unwrap_or_else(|error| panic!("fixture router failed: {error}"));
     let (tx, rx) = mpsc::channel();
     let mut kept = Vec::new();
-    for kind in ["autonomy", "safety", "goal"] {
+    for kind in ["autonomy", "safety", "goal", "dock"] {
         let tx = tx.clone();
         let subscriber = session
             .declare_subscriber(format!("terra/rover/*/{kind}"))
@@ -65,8 +79,29 @@ fn main() {
     println!("screenshot fixture listening on {endpoint} prefix terra/rover");
     let started = Instant::now();
     let mut tick: u64 = 0;
+    let drive = std::env::var("ARGOS_FIXTURE_DRIVE").as_deref() == Ok("1");
+    if drive {
+        for rover in &mut rovers {
+            rover.goal = None;
+            rover.route.clear();
+        }
+    }
     loop {
         apply_commands(&rx, &mut rovers);
+        if drive {
+            for rover in &mut rovers {
+                advance(rover);
+            }
+            put(
+                &session,
+                "terra/rover/1/objects",
+                json!({"schema_version": 1, "objects": [{
+                    "id": BUCKET.0, "class": "bucket", "color": "orange",
+                    "x": BUCKET.1, "y": BUCKET.2, "confirmed": true,
+                    "confidence": 0.9, "sightings": 12,
+                }]}),
+            );
+        }
         publish(&session, &rovers, tick);
         tick = tick.wrapping_add(1);
         if tick % 25 == 0 {
@@ -91,6 +126,7 @@ fn seed() -> Vec<Rover> {
             safety: "clear",
             revision: 3,
             goal: Some(goal(0., 0., 18., 10.)),
+            dock: None,
             route: vec![(0., 0., 0.3), (9., 5., 0.3), (18., 10., 0.2)],
         },
         Rover {
@@ -103,6 +139,7 @@ fn seed() -> Vec<Rover> {
             safety: "clear",
             revision: 3,
             goal: Some(goal(42., -24., 60., -8.)),
+            dock: None,
             route: vec![(42., -24., 0.2), (60., -8., 0.2)],
         },
         Rover {
@@ -115,13 +152,44 @@ fn seed() -> Vec<Rover> {
             safety: "clear",
             revision: 3,
             goal: Some(goal(-38., 30., -18., 46.)),
+            dock: None,
             route: vec![(-38., 30., 0.25), (-18., 46., 0.25)],
         },
     ]
 }
 
+/// Drive demo: 3 m per tick toward an active goal, then `arrived`; a dock
+/// steps lock → aligned (awaits the dump) and dumping → done.
+fn advance(rover: &mut Rover) {
+    if rover.safety != "clear" {
+        return;
+    }
+    if let Some(goal) = rover.goal.as_mut().filter(|goal| goal.state == "active") {
+        let (dx, dy) = (goal.x - rover.x, goal.y - rover.y);
+        let distance = dx.hypot(dy);
+        if distance <= STEP_M {
+            (rover.x, rover.y) = (goal.x, goal.y);
+            goal.state = "arrived";
+            goal.distance = 0.;
+        } else {
+            rover.x += dx / distance * STEP_M;
+            rover.y += dy / distance * STEP_M;
+            rover.yaw = dy.atan2(dx);
+            goal.distance = distance - STEP_M;
+        }
+    }
+    if let Some((id, bucket, phase, ticks)) = rover.dock {
+        rover.dock = Some(match (phase, ticks) {
+            ("lock", 5) => (id, bucket, "aligned", 0),
+            ("dumping", 5) => (id, bucket, "done", 0),
+            _ => (id, bucket, phase, ticks + 1),
+        });
+    }
+}
+
 fn goal(x0: f64, y0: f64, x: f64, y: f64) -> Goal {
     Goal {
+        token: "fixture".into(),
         x,
         y,
         state: "active",
@@ -167,10 +235,34 @@ fn apply_commands(rx: &Receiver<(String, Vec<u8>)>, rovers: &mut [Rover]) {
                     rover.goal = None;
                     println!("fixture rover {id} goal cancel");
                 } else if let (Some(x), Some(y)) = (value["x"].as_f64(), value["y"].as_f64()) {
-                    rover.goal = Some(goal(rover.x, rover.y, x, y));
+                    let mut next = goal(rover.x, rover.y, x, y);
+                    if let Some(token) = value["token"].as_str() {
+                        next.token = token.into();
+                    }
+                    rover.goal = Some(next);
                     println!("fixture rover {id} goal {x:.1},{y:.1}");
                 }
             }
+            "dock" => match value["action"].as_str() {
+                Some("start") => {
+                    let bucket = value["object_id"].as_u64().unwrap_or(0) as u32;
+                    let next = rover.dock.map_or(1, |(id, ..)| id + 1);
+                    rover.dock = Some((next, bucket, "lock", 0));
+                    println!("fixture rover {id} dock start {bucket}");
+                }
+                Some("dump") => {
+                    if let Some((dock, bucket, "aligned", _)) = rover.dock {
+                        rover.dock = Some((dock, bucket, "dumping", 0));
+                        println!("fixture rover {id} dump");
+                    }
+                }
+                Some("cancel") => {
+                    if let Some((dock, bucket, _, _)) = rover.dock {
+                        rover.dock = Some((dock, bucket, "cancelled", 0));
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -274,6 +366,19 @@ fn publish(session: &zenoh::Session, rovers: &[Rover], tick: u64) {
                 "reason": "idle",
                 "result": "accepted",
                 "global_route": route,
+                "dock": rover.dock.map(|(dock_id, bucket, phase, _)| json!({
+                    "dock_id": dock_id,
+                    "phase": phase,
+                    "reason": "",
+                    "object_id": bucket,
+                    "color": "orange",
+                    "errors": {"lateral": 0.01, "range": 0.0, "heading_deg": 2.0},
+                    "in_tolerance": phase == "aligned",
+                    "verified": true,
+                    "approval": "operator",
+                    "awaiting_approval": phase == "aligned",
+                    "gate_open": phase == "dumping",
+                })),
             }),
         );
         let goal = match &rover.goal {
@@ -283,7 +388,7 @@ fn publish(session: &zenoh::Session, rovers: &[Rover], tick: u64) {
                 "distance": goal.distance,
                 "x": goal.x,
                 "y": goal.y,
-                "token": format!("goal-{id}"),
+                "token": goal.token,
             }),
             None => json!({
                 "state": "idle",

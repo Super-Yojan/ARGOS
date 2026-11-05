@@ -78,6 +78,24 @@ impl Render for Dashboard {
             }
             handles
         };
+        // Step numbers beside the selected rover's mission markers.
+        let badges: Vec<(usize, Point<Pixels>)> = (|| {
+            let mark = self.selected_mark()?;
+            let frame = mark.overlay_frame?;
+            let (steps, _) = self.missions.shown(mark.id)?;
+            let map = self.view.read(cx);
+            Some(
+                steps
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, step)| {
+                        let (latitude, longitude) = frame.geographic(step.x, step.y).ok()?;
+                        Some((index + 1, map.project_local(latitude, longitude)?))
+                    })
+                    .collect(),
+            )
+        })()
+        .unwrap_or_default();
         // robot.glb bounds after the loader's Y-up to Z-up conversion.
         let model_handles: Vec<_> = self
             .marks
@@ -249,6 +267,18 @@ impl Render for Dashboard {
                     )
                     .child(self.view.clone())
                     .child(overlay)
+                    .children(badges.into_iter().map(|(number, at)| {
+                        div()
+                            .absolute()
+                            .left(at.x + px(7.))
+                            .top(at.y - px(18.))
+                            .px_1()
+                            .rounded_sm()
+                            .bg(rgb(0x12161a))
+                            .text_color(rgb(0xffffff))
+                            .text_xs()
+                            .child(number.to_string())
+                    }))
                     .children(model_handles.into_iter().map(|(id, bounds)| {
                         div()
                             .id(("model-drag", id))

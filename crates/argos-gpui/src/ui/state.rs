@@ -121,6 +121,7 @@ impl Dashboard {
             fleet_mode,
             agent: agent::AgentDesk::start(),
             attention: super::attention::AttentionLog::start(),
+            missions: Default::default(),
             _poll: poll,
         }
     }
@@ -177,6 +178,7 @@ impl Dashboard {
         }
         self.now = self.started.elapsed().as_secs_f64();
         self.claim.renew(self.now);
+        self.sync_missions();
         let seen: BTreeSet<u64> = self.marks.iter().map(|mark| mark.id).collect();
         self.latched.retain(|id, _| seen.contains(id));
         self.log_rover_stops();
@@ -475,6 +477,12 @@ impl Dashboard {
             }
         };
         self.end_agent_drive("fleet switched");
+        let running: Vec<u64> = self.missions.runs.keys().copied().collect();
+        for id in running {
+            self.halt_mission(id, "fleet switched");
+        }
+        self.missions.runs.clear();
+        self.missions.placing = None;
         self.stop_drive();
         self.drag = None;
         self.selected = None;
