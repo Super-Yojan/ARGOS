@@ -8,7 +8,6 @@
 use super::interaction::geographic_gate;
 use super::levels::gps_blocks;
 use super::task::task_agent_choice;
-use super::widgets::Picked;
 use super::widgets::{caution, hint};
 use crate::Dashboard;
 use argos_core::{
@@ -31,7 +30,7 @@ use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
-    button::{Button, ButtonGroup, ButtonVariants},
+    button::{Button, ButtonRounded, ButtonVariants},
     menu::{DropdownMenu, PopupMenuItem},
     tag::Tag,
 };
@@ -140,6 +139,8 @@ pub(super) struct ChatLine {
     kind: ChatKind,
     text: String,
     at: f64,
+    /// Small line above an engine reply, like "Ran Claude · 14 s · tick 3".
+    meta: Option<String>,
 }
 
 /// The conversation keeps this many lines; older ones drop off the top.
@@ -291,6 +292,7 @@ impl AgentDesk {
             kind,
             text: text.to_string(),
             at,
+            meta: None,
         });
         let extra = self.chat.len().saturating_sub(CHAT_MAX_LINES);
         self.chat.drain(..extra);
@@ -1089,8 +1091,16 @@ impl Dashboard {
             };
             let engine = runner.cli.engine();
             runner.run = None;
+            let ticks = runner.ticks;
             if let Some((kind, text)) = said {
+                let before = self.agent.chat.len();
                 self.agent.say(kind, text, now);
+                if self.agent.chat.len() > before
+                    && let Some(line) = self.agent.chat.last_mut()
+                    && matches!(line.kind, ChatKind::Agent(_))
+                {
+                    line.meta = Some(format!("Ran {label} · {seconds:.0} s · tick {ticks}"));
+                }
             }
             self.feed.record(json!({"kind": "agent_run", "event": "ended", "engine": engine, "ok": ok, "seconds": seconds, "exit": exit}));
             return;
@@ -1612,10 +1622,12 @@ const STARTERS: [&str; 3] = [
     "Bring the nearest bucket back to base",
 ];
 
-/// The Agent panel, laid out like a chat app: a compact header (engine,
-/// mode, status), the conversation with recommendation cards inline, and a
-/// composer at the bottom. Accept/Reject on cards, Let it command, and the
-/// raw-drive grant work as before; only the layout changed.
+/// The Agent panel, laid out like a coding-agent chat: the conversation
+/// fills the panel and sits on the bottom edge, engine replies are plain
+/// text, the operator's tasks are pill bubbles, cards sit inline, and the
+/// composer card holds the engine/mode picker, Talk and a round Send. A
+/// one-line status sits under the composer. Accept/Reject on cards, Let it
+/// command, and the raw-drive grant work as before; only the layout changed.
 pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     v_flex()
         .id("agent-panel")
@@ -1624,132 +1636,61 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
         .bg(cx.theme().background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(chat_header(dashboard, cx))
+        .when_some(command_strip(dashboard, cx), |panel, strip| {
+            panel.child(strip)
+        })
         .child(conversation(dashboard, cx))
         .child(composer(dashboard, cx))
+        .child(status_footer(dashboard, cx))
         .into_any_element()
 }
 
-/// Engine menu, mode switch, link status, and the Let it command strip.
-fn chat_header(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
-    let now = dashboard.now;
+/// Operator mode only: whether the engine may command, and the switch.
+fn command_strip(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> Option<AnyElement> {
     let desk = &dashboard.agent;
-    let status = desk.status(now);
-    let mode = desk.mode;
-    let engine = desk.runner.as_ref().map(|runner| runner.cli);
-    let live = !status.warn && mode != AgentMode::Off && engine.is_some();
-    let dot = if status.warn {
-        cx.theme().warning
-    } else if live {
-        cx.theme().success
-    } else {
-        cx.theme().muted_foreground
-    };
-    let weak = cx.entity().downgrade();
-    let commands_toggle = (mode == AgentMode::Operator)
-        .then(|| {
-            desk.runner
-                .as_ref()
-                .map(|runner| (runner.cli.label(), desk.engine_commands))
-        })
-        .flatten();
-    v_flex()
-        .px_3()
-        .pt_2()
-        .pb_2()
-        .gap_1p5()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .child(
-            h_flex()
-                .gap_2()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .min_w_0()
-                        .child(div().size_2().rounded_full().bg(dot))
-                        .child(
-                            Button::new("agent-engine-menu")
-                                .ghost()
-                                .small()
-                                .label(format!("{} ▾", engine.map_or("No engine", AgentCli::label)))
-                                .tooltip("Engine ARGOS runs each tick")
-                                .dropdown_menu(move |mut menu, _, _| {
-                                    let choices = std::iter::once(None)
-                                        .chain(AgentCli::ALL.iter().copied().map(Some));
-                                    for choice in choices {
-                                        let weak = weak.clone();
-                                        let label = choice.map_or("None", AgentCli::label);
-                                        menu = menu.item(
-                                            PopupMenuItem::new(label)
-                                                .checked(choice == engine)
-                                                .on_click(move |_, _, cx| {
-                                                    let _ = weak.update(cx, |this, cx| {
-                                                        this.set_agent_cli(choice);
-                                                        cx.notify();
-                                                    });
-                                                }),
-                                        );
-                                    }
-                                    menu
-                                }),
-                        ),
-                )
-                .child(
-                    ButtonGroup::new("agent-mode")
-                        .outline()
-                        .xsmall()
-                        .children(AgentMode::ALL.iter().enumerate().map(|(index, each)| {
-                            Button::new(("agent-mode", index as u64))
-                                .label(each.label())
-                                .picked(*each == mode)
-                        }))
-                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
-                            if let Some(mode) =
-                                clicks.first().and_then(|index| AgentMode::ALL.get(*index))
-                            {
-                                this.set_agent_mode(*mode);
-                            }
-                            cx.notify();
-                        })),
-                ),
-        )
-        .child(if status.warn {
-            caution(status.text, cx)
-        } else {
-            hint(status.text, cx)
-        })
-        .when_some(commands_toggle, |header, (label, on)| {
-            header.child(
-                h_flex()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(cx.theme().muted)
-                    .child(div().flex_1().min_w_0().child(if on {
-                        caution(format!("{label} may command rovers this session"), cx)
-                    } else {
-                        hint(format!("{label} only advises, even in Operator mode"), cx)
-                    }))
-                    .child(
-                        Button::new("agent-engine-commands")
-                            .xsmall()
-                            .outline()
-                            .label(if on { "Advise only" } else { "Let it command" })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_engine_commands(!on);
-                                cx.notify();
-                            })),
-                    ),
+    if desk.mode != AgentMode::Operator {
+        return None;
+    }
+    let (label, on) = desk
+        .runner
+        .as_ref()
+        .map(|runner| (runner.cli.label(), desk.engine_commands))?;
+    Some(
+        h_flex()
+            .mx_3()
+            .mt_3()
+            .gap_2()
+            .px_3()
+            .py_1p5()
+            .rounded_lg()
+            .border_1()
+            .border_color(if on {
+                cx.theme().warning
+            } else {
+                cx.theme().border
+            })
+            .child(div().flex_1().min_w_0().child(if on {
+                caution(format!("{label} may command rovers this session"), cx)
+            } else {
+                hint(format!("{label} only advises, even in Operator mode"), cx)
+            }))
+            .child(
+                Button::new("agent-engine-commands")
+                    .xsmall()
+                    .outline()
+                    .label(if on { "Advise only" } else { "Let it command" })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_engine_commands(!on);
+                        cx.notify();
+                    })),
             )
-        })
-        .into_any_element()
+            .into_any_element(),
+    )
 }
 
 /// The scrolling conversation: past lines, what the engine is doing now,
-/// the drive request, and the open cards. It follows new rows to the bottom.
+/// the drive request, and the open cards. Rows sit on the bottom edge and
+/// the view follows new ones.
 fn conversation(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let now = dashboard.now;
     let desk = &dashboard.agent;
@@ -1761,7 +1702,9 @@ fn conversation(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElemen
             .as_ref()
             .map(|(_, started)| (runner.cli.label(), now - started))
     });
-    if desk.chat.is_empty() && cards.is_empty() && working.is_none() && desk.grant.is_none() {
+    let empty =
+        desk.chat.is_empty() && cards.is_empty() && working.is_none() && desk.grant.is_none();
+    if empty {
         rows.push(empty_chat(dashboard, cx));
     }
     for line in &desk.chat {
@@ -1769,33 +1712,14 @@ fn conversation(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElemen
     }
     if let Some((label, seconds)) = working {
         let doing = if desk.task.is_some() {
-            "Planning your task"
+            "planning your task"
         } else {
-            "Checking the field"
+            "checking the field"
         };
-        rows.push(
-            v_flex()
-                .gap_1()
-                .child(sender(label, cx))
-                .child(
-                    div()
-                        .pl_7()
-                        .child(hint(format!("{doing}… {seconds:.0} s"), cx).italic()),
-                )
-                .into_any_element(),
-        );
+        rows.push(fold_line(format!("{label} is {doing}… {seconds:.0} s"), cx).into_any_element());
     }
     if let Some(grant) = desk.grant.clone() {
         rows.push(drive_card(&grant, now, cx));
-    }
-    if cards.is_empty() && desk.mode != AgentMode::Off && !desk.chat.is_empty() {
-        rows.push(
-            div()
-                .w_full()
-                .text_center()
-                .child(hint("No recommendations right now", cx))
-                .into_any_element(),
-        );
     }
     let rejecting = desk.rejecting.clone();
     for entry in cards {
@@ -1812,75 +1736,99 @@ fn conversation(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElemen
         .min_h_0()
         .overflow_y_scroll()
         .track_scroll(&desk.chat_scroll)
-        .child(v_flex().px_3().py_3().gap_3().children(rows))
+        .child(
+            v_flex()
+                .min_h_full()
+                .when(!empty, |column| column.justify_end())
+                .px_4()
+                .py_4()
+                .gap_4()
+                .children(rows),
+        )
         .into_any_element()
 }
 
-/// Sender name above an engine message, like "Claude".
-fn sender(label: &'static str, cx: &App) -> Div {
+/// The small "› Ran Claude · 14 s" line above an engine reply.
+fn fold_line(text: String, cx: &App) -> Div {
     h_flex()
         .gap_1p5()
-        .child(
-            div()
-                .size_5()
-                .rounded_full()
-                .bg(cx.theme().primary)
-                .text_color(cx.theme().primary_foreground)
-                .text_xs()
-                .font_semibold()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(label.chars().next().unwrap_or('A').to_string()),
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("›")
+        .child(text)
+}
+
+/// An engine reply as plain text. Lines starting with `- ` or `* ` become
+/// bullets and `**` markers are dropped, so a Markdown-ish answer reads cleanly.
+fn reply_body(text: &str) -> Div {
+    v_flex()
+        .gap_1p5()
+        .text_sm()
+        .children(
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    let line = line.replace("**", "");
+                    let trimmed = line.trim_start();
+                    match trimmed
+                        .strip_prefix("- ")
+                        .or_else(|| trimmed.strip_prefix("* "))
+                    {
+                        Some(item) => h_flex()
+                            .items_start()
+                            .gap_2()
+                            .pl_2()
+                            .child("•")
+                            .child(div().flex_1().min_w_0().child(item.to_string()))
+                            .into_any_element(),
+                        None => div().child(line.clone()).into_any_element(),
+                    }
+                }),
         )
-        .child(div().text_xs().font_semibold().child(label))
 }
 
 fn chat_line(line: &ChatLine, now: f64, cx: &App) -> AnyElement {
-    let when = ago(now, line.at);
     match line.kind {
         ChatKind::Operator(source) => v_flex()
             .w_full()
             .items_end()
-            .gap_0p5()
+            .gap_1()
             .child(
                 div()
                     .max_w(relative(0.85))
-                    .px_3()
-                    .py_2()
-                    .rounded_lg()
-                    .bg(cx.theme().secondary)
+                    .px_4()
+                    .py_2p5()
+                    .rounded_2xl()
+                    .border_1()
+                    .border_color(cx.theme().primary.opacity(0.25))
+                    .bg(cx.theme().primary.opacity(0.07))
                     .text_sm()
                     .child(line.text.clone()),
             )
-            .child(hint(
-                if source == "voice" {
-                    format!("You, spoken · {when}")
-                } else {
-                    format!("You · {when}")
-                },
-                cx,
-            ))
+            .when(source == "voice", |column| {
+                column.child(hint(format!("Spoken · {}", ago(now, line.at)), cx))
+            })
             .into_any_element(),
-        ChatKind::Agent(label) => v_flex()
+        ChatKind::Agent(_) => v_flex()
             .w_full()
-            .gap_1()
-            .child(sender(label, cx).child(hint(when, cx)))
-            .child(div().text_sm().pl_7().child(line.text.clone()))
+            .gap_2()
+            .when_some(line.meta.clone(), |column, meta| {
+                column.child(fold_line(meta, cx))
+            })
+            .child(reply_body(&line.text))
             .into_any_element(),
         ChatKind::Problem => div()
             .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
+            .pl_3()
+            .py_1()
+            .border_l_2()
             .border_color(cx.theme().warning)
             .child(caution(line.text.clone(), cx))
             .into_any_element(),
         ChatKind::Event => div()
             .w_full()
             .text_center()
-            .child(hint(format!("{} · {when}", line.text), cx))
+            .child(hint(format!("{} · {}", line.text, ago(now, line.at)), cx))
             .into_any_element(),
     }
 }
@@ -1892,13 +1840,13 @@ fn empty_chat(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement 
             "Type or say a task. {} plans it and answers with cards you accept or reject.",
             runner.cli.label()
         ),
-        None => "Pick an engine above, then type or say a task. It answers with cards you accept or reject.".to_string(),
+        None => "Pick an engine below, then type or say a task. It answers with cards you accept or reject.".to_string(),
     };
     v_flex()
-        .w_full()
-        .pt_6()
-        .gap_2()
+        .size_full()
+        .justify_center()
         .items_center()
+        .gap_2()
         .child(
             div()
                 .text_base()
@@ -1909,13 +1857,14 @@ fn empty_chat(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement 
         .child(
             v_flex()
                 .w_full()
-                .pt_2()
+                .pt_3()
                 .gap_1p5()
                 .children(STARTERS.iter().enumerate().map(|(index, text)| {
                     Button::new(("agent-starter", index as u64))
                         .outline()
                         .small()
                         .w_full()
+                        .rounded(ButtonRounded::Large)
                         .label(*text)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.agent_task_input
@@ -1930,7 +1879,6 @@ fn empty_chat(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement 
         )
         .into_any_element()
 }
-
 /// The engine asks to drive, or is driving: Approve / Deny / End.
 fn drive_card(grant: &DriveGrant, now: f64, cx: &mut Context<Dashboard>) -> AnyElement {
     let pending = grant.pending();
@@ -2010,7 +1958,8 @@ fn rec_card(
         } else {
             cx.theme().border
         })
-        .bg(cx.theme().secondary.opacity(0.4))
+        .bg(cx.theme().background)
+        .shadow_xs()
         .child(
             h_flex()
                 .gap_2()
@@ -2096,7 +2045,56 @@ fn rec_card(
         .into_any_element()
 }
 
-/// Bottom composer: the task box, the current task with Clear, Talk, Send.
+/// Engine and mode in one compact picker, like a model picker in a chat app.
+fn engine_picker(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let desk = &dashboard.agent;
+    let engine = desk.runner.as_ref().map(|runner| runner.cli);
+    let mode = desk.mode;
+    let weak = cx.entity().downgrade();
+    Button::new("agent-engine-menu")
+        .ghost()
+        .small()
+        .label(format!(
+            "✳ {}  {} ▾",
+            engine.map_or("No engine", AgentCli::label),
+            mode.label()
+        ))
+        .tooltip("Engine ARGOS runs each tick, and what it may do")
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.label("Engine");
+            for choice in std::iter::once(None).chain(AgentCli::ALL.iter().copied().map(Some)) {
+                let weak = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(choice.map_or("None", AgentCli::label))
+                        .checked(choice == engine)
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.set_agent_cli(choice);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu = menu.separator().label("Agent access");
+            for each in AgentMode::ALL {
+                let weak = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(each.label())
+                        .checked(each == mode)
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.set_agent_mode(each);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+}
+
+/// Bottom composer card: current task with Clear, the task box, then the
+/// engine/mode picker, Talk and a round Send.
 fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let now = dashboard.now;
     let voice = &dashboard.agent.voice;
@@ -2115,17 +2113,17 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let task = dashboard.agent.task.clone();
     v_flex()
         .px_3()
-        .pb_3()
-        .pt_2()
         .gap_1p5()
         .when_some(voice_problem, |column, note| {
             column.child(caution(note, cx))
         })
         .child(
             v_flex()
-                .gap_1()
-                .p_2()
-                .rounded_xl()
+                .gap_2()
+                .px_3()
+                .pt_3()
+                .pb_2()
+                .rounded_2xl()
                 .border_1()
                 .border_color(cx.theme().border)
                 .bg(cx.theme().background)
@@ -2134,8 +2132,7 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
                     column.child(
                         h_flex()
                             .gap_1()
-                            .px_2()
-                            .py_1()
+                            .pl_2()
                             .rounded_md()
                             .bg(cx.theme().muted)
                             .child(
@@ -2171,12 +2168,14 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
                 )
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
+                        .child(engine_picker(dashboard, cx))
+                        .child(div().flex_1())
                         .child(
                             Button::new("agent-talk")
                                 .small()
                                 .when(recording, |button| button.danger())
-                                .when(!recording, |button| button.outline())
+                                .when(!recording, |button| button.ghost())
                                 .disabled(busy)
                                 .label(talk_label)
                                 .tooltip("Say the task (Cmd/Ctrl+Shift+V)")
@@ -2185,12 +2184,12 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
                                     cx.notify();
                                 })),
                         )
-                        .child(div().flex_1())
                         .child(
                             Button::new("agent-task-send")
                                 .primary()
                                 .small()
-                                .label("Send ↑")
+                                .rounded(ButtonRounded::Size(px(999.)))
+                                .label("↑")
                                 .tooltip("Send the typed task (Enter)")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.send_typed_task(window, cx);
@@ -2199,5 +2198,30 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
                         ),
                 ),
         )
+        .into_any_element()
+}
+
+/// One quiet line under the composer: link status and engine activity.
+fn status_footer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    let now = dashboard.now;
+    let desk = &dashboard.agent;
+    let status = desk.status(now);
+    let runs = desk
+        .runner
+        .as_ref()
+        .map(|runner| format!(" · {} runs", runner.ticks))
+        .unwrap_or_default();
+    let text = format!("{}{runs}", status.text);
+    div()
+        .px_4()
+        .pt_1p5()
+        .pb_2()
+        .w_full()
+        .text_center()
+        .child(if status.warn {
+            caution(text, cx)
+        } else {
+            hint(text, cx)
+        })
         .into_any_element()
 }

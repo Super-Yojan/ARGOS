@@ -133,10 +133,11 @@ The Agent panel is a chat. Press **Talk** (or Cmd/Ctrl+Shift+V, also under the *
 
 | Part of the panel | What it shows |
 | --- | --- |
-| Header | Status dot, engine menu (None / Claude / Codex / OpenCode), Off / Advise / Operator, link status, and in Operator mode the **Let it command** strip |
-| Conversation | Your tasks (right), the engine's full reply after each run (left), quiet notes (mode changes, cards accepted or rejected, task cleared), problems in an amber box, and "Planning your task…" while a run is going |
+| Top strip (Operator mode only) | Whether the engine may command, and **Let it command** / **Advise only** |
+| Conversation | Fills the panel from the bottom up. Your tasks are pill bubbles on the right; the engine's full reply after each run is plain text (bullets kept) under a small "› Ran Claude · 14 s · tick 3" line; quiet notes for mode changes, cards accepted or rejected, task cleared; problems with an amber edge; "› Claude is planning your task…" while a run is going |
 | Inline cards | The drive request and every open recommendation, each with Accept / Reject as before |
-| Composer | The current task with **Clear**, the task box, **Talk**, **Send** |
+| Composer | The current task with **Clear**, the task box (Enter sends), the **✳ engine · mode ▾** picker (Engine: None / Claude / Codex / OpenCode; Agent access: Off / Advise / Operator), **Talk**, and a round **↑** Send |
+| Under the composer | One line: link status, last call, runs this session |
 
 The conversation is display only and keeps the last 200 lines. An engine reply that repeats the previous one is not shown again. Claude Code prints only its final answer, so its reply is shown in full (up to 1,500 characters); for other engines the panel shows the tail of what they printed.
 

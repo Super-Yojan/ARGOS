@@ -41,8 +41,9 @@ impl Dashboard {
         });
         let task_reply =
             cx.new(|cx| InputState::new(window, cx).placeholder("Answer or extra guidance"));
-        let agent_task_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Tell the fleet what to do"));
+        let agent_task_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Press Enter to send, or Talk to say it")
+        });
         // Enter in the Agent panel's composer sends the task, like a chat app.
         cx.subscribe_in(
             &agent_task_input,
