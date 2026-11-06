@@ -33,13 +33,21 @@ struct Command {
     token: Option<String>,
     phase: String,
     sent: f64,
+    /// The goal itself, kept so a stale-authority refusal can be resent once.
+    request: Option<GoalRequest>,
+    retried: bool,
 }
+/// Terra's refusal reason when a goal carried an older authority revision than
+/// the vehicle's: something else (often a repeated level click) was acknowledged
+/// first. The goal itself was fine, so one resend with the new revision is safe.
+pub const STALE_AUTHORITY_REASON: &str = "current_authority_required";
 #[derive(Default)]
 pub struct FleetCache {
     fleet: Option<(FleetState, f64)>,
     entries: BTreeMap<u64, Entry>,
     disconnected: bool,
     notice: Option<String>,
+    retries: Vec<(u64, GoalRequest)>,
 }
 impl FleetCache {
     pub fn fleet(&mut self, state: FleetState, now: f64) {
@@ -146,6 +154,17 @@ impl FleetCache {
         token: &str,
         now: f64,
     ) -> Result<Vec<u8>> {
+        self.prepare_goal_attempt(id, request, token, now, false)
+    }
+    /// `retried` marks the one automatic resend after a stale-authority refusal.
+    pub fn prepare_goal_attempt(
+        &mut self,
+        id: u64,
+        request: &GoalRequest,
+        token: &str,
+        now: f64,
+        retried: bool,
+    ) -> Result<Vec<u8>> {
         self.ready(id, now)?;
         let bytes = request.encode(token)?;
         let entry = self.entries.entry(id).or_default();
@@ -159,8 +178,44 @@ impl FleetCache {
             token: Some(token.into()),
             phase: "pending".into(),
             sent: now,
+            request: Some(request.clone()),
+            retried,
         });
         Ok(bytes)
+    }
+    /// Terra refused goal `token` (seen as a rejected receipt in autonomy
+    /// status). Clears the pending command at once, so the next goal is not
+    /// blocked for `GOAL_ACK_SECONDS`, and queues one resend of a local goal
+    /// refused only for stale authority. Returns whether it matched our goal.
+    pub fn goal_refused(&mut self, id: u64, token: &str, reason: &str) -> bool {
+        let Some(command) = self
+            .entries
+            .get_mut(&id)
+            .and_then(|entry| entry.command.as_mut())
+            .filter(|command| {
+                command.phase == "pending" && command.token.as_deref() == Some(token)
+            })
+        else {
+            return false;
+        };
+        command.phase = "refused".into();
+        let retry = reason == STALE_AUTHORITY_REASON && !command.retried;
+        match command.request.clone() {
+            Some(request @ GoalRequest::Local { .. }) if retry => {
+                self.retries.push((id, request));
+                self.notice = Some(format!(
+                    "Rover {id} refused the goal ({reason}) · resending once"
+                ));
+            }
+            _ => {
+                self.notice = Some(format!("Rover {id} refused the goal: {reason}"));
+            }
+        }
+        true
+    }
+    /// Goals queued by `goal_refused` for their single resend.
+    pub fn take_retries(&mut self) -> Vec<(u64, GoalRequest)> {
+        std::mem::take(&mut self.retries)
     }
     pub fn prepare_cancel(&mut self, id: u64, now: f64) -> Result<()> {
         self.ready(id, now)?;
@@ -174,6 +229,8 @@ impl FleetCache {
             token: None,
             phase: "cancelling".into(),
             sent: now,
+            request: None,
+            retried: false,
         });
         Ok(())
     }
@@ -244,5 +301,68 @@ impl FleetCache {
             rovers,
             notice: self.notice.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    fn cache() -> FleetCache {
+        let mut cache = FleetCache::default();
+        cache.fleet(
+            FleetState {
+                count: 1,
+                max_count: 8,
+                ids: vec![0],
+            },
+            0.,
+        );
+        cache
+    }
+    fn local() -> GoalRequest {
+        GoalRequest::Local {
+            x: 4.4,
+            y: 0.8,
+            yaw: None,
+        }
+    }
+
+    #[test]
+    fn stale_authority_refusal_frees_the_slot_and_queues_one_resend() {
+        let mut cache = cache();
+        cache.prepare_goal(0, &local(), "goal-a", 1.).unwrap();
+        // Before the fix the second goal waited GOAL_ACK_SECONDS (150 s).
+        assert!(cache.prepare_goal(0, &local(), "goal-b", 2.).is_err());
+        assert!(cache.goal_refused(0, "goal-a", STALE_AUTHORITY_REASON));
+        let retries = cache.take_retries();
+        assert_eq!(retries.len(), 1);
+        assert!(cache.take_retries().is_empty());
+        cache
+            .prepare_goal_attempt(0, &retries[0].1, "goal-a2", 3., true)
+            .unwrap();
+        // The resend is refused too: no second resend, but the slot is free.
+        assert!(cache.goal_refused(0, "goal-a2", STALE_AUTHORITY_REASON));
+        assert!(cache.take_retries().is_empty());
+        assert!(cache.prepare_goal(0, &local(), "goal-c", 4.).is_ok());
+    }
+
+    #[test]
+    fn other_refusals_are_reported_but_not_resent() {
+        let mut cache = cache();
+        cache.prepare_goal(0, &local(), "goal-a", 1.).unwrap();
+        assert!(cache.goal_refused(0, "goal-a", "authority_required"));
+        assert!(cache.take_retries().is_empty());
+        let notice = cache.snapshot(1.5).notice.unwrap();
+        assert!(notice.contains("authority_required"), "{notice}");
+        assert!(cache.prepare_goal(0, &local(), "goal-b", 2.).is_ok());
+    }
+
+    #[test]
+    fn refusal_for_someone_elses_token_is_ignored() {
+        let mut cache = cache();
+        cache.prepare_goal(0, &local(), "goal-a", 1.).unwrap();
+        assert!(!cache.goal_refused(0, "gpui-0-1", STALE_AUTHORITY_REASON));
+        assert!(cache.prepare_goal(0, &local(), "goal-b", 2.).is_err());
     }
 }

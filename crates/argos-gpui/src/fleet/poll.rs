@@ -116,12 +116,30 @@ pub(super) fn poll(
     let mut overlays = OverlayFrames::default();
     let issued_after_ms = unix_millis();
     let mut last_receipts: BTreeMap<u64, String> = BTreeMap::new();
+    let mut last_refusal: Option<String> = None;
     while !stopped.load(Ordering::Acquire) {
         // A failed declare is retried on the next pass.
         let _ = client.focus(*focus.lock().unwrap());
         let mut snapshot = client.snapshot();
         if snapshot.link == "failed" || snapshot.link == "disconnected" {
             break;
+        }
+        // A goal refusal is otherwise silent: show it in the status line.
+        let refusal = snapshot
+            .notice
+            .clone()
+            .filter(|notice| notice.contains("refused the goal"));
+        if let Some(notice) = &refusal
+            && last_refusal.as_ref() != Some(notice)
+        {
+            picture.lock().unwrap().command = notice.clone();
+        }
+        last_refusal = refusal;
+        for (id, result) in client.resend_refused_goals() {
+            picture.lock().unwrap().command = match result {
+                Ok(_) => format!("Rover {id}: goal resent with the current authority"),
+                Err(error) => format!("Rover {id}: goal resend failed · {error}"),
+            };
         }
         let localizations =
             serde_json::from_str::<Value>(&client.localization_snapshot()).unwrap_or(Value::Null);

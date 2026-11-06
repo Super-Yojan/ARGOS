@@ -136,6 +136,8 @@ pub struct Client {
     command_source: Mutex<Option<&'static str>>,
     /// Open help episodes per rover, from `autonomy/status`.
     help: SharedHelp,
+    /// Last level request per rover, to drop repeated clicks.
+    last_level: Mutex<std::collections::BTreeMap<u64, (String, Instant)>>,
 }
 pub(crate) type SharedHelp = Arc<Mutex<attention::HelpTracker>>;
 type SharedTracking = Arc<Mutex<std::collections::BTreeMap<u64, Option<bool>>>>;
@@ -247,6 +249,7 @@ impl Client {
             localizations,
             operator_states,
             actions: Mutex::new(()),
+            last_level: Mutex::new(Default::default()),
             topics,
             start,
             operator,
@@ -504,6 +507,26 @@ impl Client {
         if !neutral {
             self.check_vehicle_authority(id, kind, &value, freshness)?;
         }
+        if kind == "autonomy"
+            && let Some(level) = value["level"].as_str()
+        {
+            let authority = self
+                .operator_states
+                .lock()
+                .unwrap()
+                .get(&(id, "authority".into()))
+                .filter(|(_, at)| at.elapsed().as_secs_f64() < STALE_SECONDS)
+                .map(|(authority, _)| authority.clone());
+            let last = self.last_level.lock().unwrap().get(&id).cloned();
+            if let Some(reason) = argos_core::redundant_level_request(
+                level,
+                authority.as_ref(),
+                last.as_ref()
+                    .map(|(sent, at)| (sent.as_str(), at.elapsed().as_secs_f64())),
+            ) {
+                return Err(invalid(&reason));
+            }
+        }
         let payload = self.bound_payload(id, kind, payload.as_bytes())?;
         let intervention = self.intervention(id, kind, &value);
         let result = self
@@ -516,6 +539,14 @@ impl Client {
             .wait()
             .map_err(|e| Error(e.to_string()));
         if result.is_ok() {
+            if kind == "autonomy"
+                && let Some(level) = value["level"].as_str()
+            {
+                self.last_level
+                    .lock()
+                    .unwrap()
+                    .insert(id, (level.to_string(), Instant::now()));
+            }
             let _ = self.recorder.record(serde_json::json!({
                 "kind": if kind == "teleop" {"teleop_sent"} else {"action_sent"},
                 "topic": kind,
@@ -870,6 +901,25 @@ impl Client {
         goal: GoalRequest,
         review: Option<(String, u64, f64)>,
     ) -> Result<String> {
+        self.send_goal_attempt(id, goal, review, false)
+    }
+    /// Resend, once each, local goals Terra refused only because their
+    /// authority revision was one behind (see `FleetCache::goal_refused`).
+    /// Called from the fleet poll; the new send carries the current revision.
+    pub fn resend_refused_goals(&self) -> Vec<(u64, Result<String>)> {
+        let retries = self.cache.lock().unwrap().take_retries();
+        retries
+            .into_iter()
+            .map(|(id, goal)| (id, self.send_goal_attempt(id, goal, None, true)))
+            .collect()
+    }
+    fn send_goal_attempt(
+        &self,
+        id: u64,
+        goal: GoalRequest,
+        review: Option<(String, u64, f64)>,
+        retried: bool,
+    ) -> Result<String> {
         let _action = self.actions.lock().unwrap();
         if let GoalRequest::Geographic {
             latitude,
@@ -911,11 +961,12 @@ impl Client {
             require_relay(hardware, at, false)?;
         }
         let token = uuid::Uuid::new_v4().to_string();
-        let mut payload = self.cache.lock().unwrap().prepare_goal(
+        let mut payload = self.cache.lock().unwrap().prepare_goal_attempt(
             id,
             &goal,
             &token,
             self.start.elapsed().as_secs_f64(),
+            retried,
         )?;
         if let Some((run, revision, radius)) = review {
             let mut value: serde_json::Value =
@@ -938,6 +989,7 @@ impl Client {
             "kind": "goal_sent",
             "rover_id": id,
             "token": token,
+            "retry": retried,
             "help_id": self.open_help(id),
             "time": self.start.elapsed().as_secs_f64(),
             "utc": utc(),
