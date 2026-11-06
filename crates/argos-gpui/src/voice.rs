@@ -32,6 +32,15 @@ pub const MIN_RECORD_S: f64 = 0.4;
 /// Words the transcriber should expect, so "L3" and "Terra" come out right.
 pub const VOCABULARY: &str = "ARGOS, Terra, rover, rovers, L0, L1, L2, L3, L4, L5, waypoint, \
 explore, bucket, buckets, ball, balls, dock, dump, home, frontier, operator.";
+/// The model Talk downloads when whisper.cpp is installed without one.
+pub const DEFAULT_MODEL: &str = "ggml-base.en.bin";
+/// Where [`DEFAULT_MODEL`] comes from (the whisper.cpp project's own copy).
+pub const DEFAULT_MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+/// A finished download is at least this big (the real file is ~148 MB).
+const MIN_MODEL_BYTES: u64 = 50_000_000;
+/// Program folders an app opened from Finder does not get on PATH.
+const EXTRA_BIN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"];
 /// Model files tried in `~/.cache/whisper`, best first.
 const MODEL_PREFERENCE: &[&str] = &[
     "ggml-base.en.bin",
@@ -247,10 +256,7 @@ impl Transcriber {
 
     /// Pick from this process's environment and PATH.
     pub fn from_env() -> Result<Self, String> {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from);
-        Self::pick(|name| std::env::var(name).ok(), find_on_path, home)
+        Self::pick(|name| std::env::var(name).ok(), find_on_path, home_dir())
     }
 
     pub fn label(&self) -> &'static str {
@@ -375,6 +381,54 @@ pub fn clean_transcript(raw: &str) -> String {
     words.join(" ")
 }
 
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// whisper.cpp is installed but has no model: the program and where
+/// [`DEFAULT_MODEL`] should go. `None` when something else is set up or
+/// whisper.cpp is missing.
+pub fn missing_model() -> Option<(PathBuf, PathBuf)> {
+    if std::env::var("ARGOS_STT_CMD").is_ok_and(|value| !value.trim().is_empty()) {
+        return None;
+    }
+    let program = find_on_path("whisper-cli").or_else(|| find_on_path("whisper-cpp"))?;
+    let dir = home_dir()?.join(".cache").join("whisper");
+    if MODEL_PREFERENCE.iter().any(|name| dir.join(name).is_file()) {
+        return None;
+    }
+    Some((program, dir.join(DEFAULT_MODEL)))
+}
+
+/// Download [`DEFAULT_MODEL`] to `dest` with curl, through a `.part` file so
+/// a cut-off download never looks like a model. Blocking.
+pub fn download_model(dest: &Path) -> Result<(), String> {
+    let dir = dest.parent().ok_or("bad model path")?;
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("Could not make {}: {error}", dir.display()))?;
+    let part = dest.with_extension("bin.part");
+    let output = Command::new("curl")
+        .args(["-sSL", "--fail", "--retry", "2", "--max-time", "900", "-o"])
+        .arg(&part)
+        .arg(DEFAULT_MODEL_URL)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("Could not run curl: {error}"))?;
+    let size = std::fs::metadata(&part).map(|meta| meta.len()).unwrap_or(0);
+    if !output.status.success() || size < MIN_MODEL_BYTES {
+        let _ = std::fs::remove_file(&part);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Could not download the Whisper model ({}). Download {DEFAULT_MODEL_URL} into {} by hand.",
+            stderr.trim().lines().last().unwrap_or("too small"),
+            dir.display()
+        ));
+    }
+    std::fs::rename(&part, dest).map_err(|error| format!("Could not save the model: {error}"))
+}
+
 fn shell(line: &str) -> Command {
     if cfg!(windows) {
         let mut command = Command::new("cmd");
@@ -387,14 +441,17 @@ fn shell(line: &str) -> Command {
     }
 }
 
+/// PATH, then the Homebrew/MacPorts folders that an app opened from Finder
+/// does not inherit.
 fn find_on_path(program: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
     let names: Vec<String> = if cfg!(windows) {
         vec![format!("{program}.exe"), program.to_string()]
     } else {
         vec![program.to_string()]
     };
     std::env::split_paths(&path)
+        .chain(EXTRA_BIN_DIRS.iter().map(PathBuf::from))
         .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
         .find(|candidate| candidate.is_file())
 }

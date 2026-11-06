@@ -153,7 +153,7 @@ Talk ─▶ microphone ─▶ speech-to-text ─▶ operator_task ─▶ engine 
 | Speech-to-text | Used when | Notes |
 | --- | --- | --- |
 | `ARGOS_STT_CMD` | set | Shell command; `{wav}` is the clip, stdout is the text |
-| whisper.cpp | `whisper-cli` on PATH and a model in `~/.cache/whisper` (or `ARGOS_WHISPER_MODEL`) | Offline. `brew install whisper-cpp`, then put `ggml-base.en.bin` in `~/.cache/whisper` |
+| whisper.cpp | `whisper-cli` on PATH or in `/opt/homebrew/bin`, `/usr/local/bin` | Offline. `brew install whisper-cpp`. The first Talk downloads `ggml-base.en.bin` (~150 MB) to `~/.cache/whisper`; `ARGOS_WHISPER_MODEL` picks another |
 | OpenAI | `OPENAI_API_KEY` set | `curl` to `/v1/audio/transcriptions`, model `whisper-1` |
 
 Clips are saved as `argos-agent-voice-<n>.wav` in the session folder. The session log gets `operator_voice` (what was heard, the clip) and `operator_task` (`set` / `cleared`, `voice` or `typed`), and each `agent_run` names the `task_id` it planned. On macOS the first Talk asks for microphone access.
