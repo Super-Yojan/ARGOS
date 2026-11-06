@@ -149,7 +149,8 @@ impl Dashboard {
             return self.map_field(window, cx);
         }
         if kind == PanelKind::Agent {
-            return panel_scroll("agent", agent::agent_panel(self, cx), cx);
+            // The chat lays out its own scrolling conversation and composer.
+            return agent::agent_panel(self, cx);
         }
         if kind == PanelKind::Video {
             // No scroll wrapper: the picture fills the panel and the controls stay

@@ -268,3 +268,58 @@ fn write(dir: &Path, name: &str, value: &serde_json::Value) -> std::io::Result<P
     )?;
     Ok(path)
 }
+
+/// Line ARGOS writes into the engine log before each tick's output.
+pub const TICK_MARK: &str = "--- tick ";
+
+/// Longest engine reply the Agent panel shows in its conversation.
+pub const REPLY_MAX_CHARS: usize = 1_500;
+
+/// What the engine said on its last tick: the log text after the last
+/// [`TICK_MARK`] line, trimmed and cut to [`REPLY_MAX_CHARS`]. Claude Code
+/// (`-p`) prints only its final answer, so this is that answer; for other
+/// engines it is the tail of whatever they printed.
+pub fn tick_reply(log: &str) -> Option<String> {
+    let start = log
+        .rfind(TICK_MARK)
+        .map(|at| log[at..].find('\n').map_or(log.len(), |end| at + end + 1))
+        .unwrap_or(0);
+    let text = log[start..].trim();
+    if text.is_empty() {
+        return None;
+    }
+    let count = text.chars().count();
+    if count <= REPLY_MAX_CHARS {
+        return Some(text.to_string());
+    }
+    let tail: String = text.chars().skip(count - REPLY_MAX_CHARS).collect();
+    Some(format!("…{}", tail.trim_start()))
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+
+    #[test]
+    fn takes_only_the_last_tick() {
+        let log = "\n--- tick 1 (timer) ---\nold answer\n\n--- tick 2 (operator task) ---\nPlan: rover 1 goes home.\nRover 2 explores.\n";
+        assert_eq!(
+            tick_reply(log).as_deref(),
+            Some("Plan: rover 1 goes home.\nRover 2 explores.")
+        );
+    }
+
+    #[test]
+    fn empty_tick_has_no_reply() {
+        assert_eq!(tick_reply("--- tick 3 (timer) ---\n\n"), None);
+        assert_eq!(tick_reply(""), None);
+    }
+
+    #[test]
+    fn long_reply_keeps_the_end() {
+        let log = format!("--- tick 1 (timer) ---\n{}END", "a".repeat(3_000));
+        let reply = tick_reply(&log).unwrap();
+        assert!(reply.starts_with('…') && reply.ends_with("END"));
+        assert_eq!(reply.chars().count(), REPLY_MAX_CHARS + 1);
+    }
+}

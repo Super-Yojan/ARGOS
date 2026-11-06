@@ -8,7 +8,6 @@
 use super::interaction::geographic_gate;
 use super::levels::gps_blocks;
 use super::task::task_agent_choice;
-use super::widgets::Picked;
 use super::widgets::{caution, hint};
 use crate::Dashboard;
 use argos_core::{
@@ -21,7 +20,7 @@ use argos_core::{
 };
 use argos_core::{AGENT_EARLY_TICK_MIN_S, AGENT_RUN_MAX_S, AGENT_TICK_S, tick_reasons};
 use argos_gpui::agent_mcp::McpProfile;
-use argos_gpui::agent_runner::{AgentCli, AgentRun};
+use argos_gpui::agent_runner::{AgentCli, AgentRun, TICK_MARK, tick_reply};
 use argos_gpui::console::StopOrigin;
 use argos_gpui::voice::{
     MAX_RECORD_S, MIN_RECORD_S, Recording, Transcriber, clip_seconds, transcribe_clip,
@@ -31,11 +30,13 @@ use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
-    button::{Button, ButtonGroup, ButtonVariants},
+    button::{Button, ButtonRounded, ButtonVariants},
+    menu::{DropdownMenu, PopupMenuItem},
     tag::Tag,
 };
 use gpui_kit::{prelude::*, *};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::sync::mpsc;
 
 /// How long an accepted goal card waits for the rover to reach L3.
@@ -118,6 +119,33 @@ pub(super) struct OperatorTask {
     at: f64,
 }
 
+/// Who said a line in the Agent panel's conversation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ChatKind {
+    /// The operator's task, `typed` or `voice`.
+    Operator(&'static str),
+    /// The engine's answer at the end of a run, by engine label.
+    Agent(&'static str),
+    /// Something failed: an engine run, a card dispatch.
+    Problem,
+    /// A quiet note: mode change, card accepted, task cleared.
+    Event,
+}
+
+/// One line of the conversation. It is display only; every step is already
+/// a session-log event.
+#[derive(Clone, Debug)]
+pub(super) struct ChatLine {
+    kind: ChatKind,
+    text: String,
+    at: f64,
+    /// Small line above an engine reply, like "Ran Claude · 14 s · tick 3".
+    meta: Option<String>,
+}
+
+/// The conversation keeps this many lines; older ones drop off the top.
+const CHAT_MAX_LINES: usize = 200;
+
 /// Transcription result: the text and where the clip was saved.
 type Heard = Result<(String, std::path::PathBuf), String>;
 
@@ -163,6 +191,11 @@ pub(crate) struct AgentDesk {
     pub(super) task: Option<OperatorTask>,
     next_task: u32,
     pub(super) voice: VoiceDesk,
+    /// The Agent panel's conversation, oldest first.
+    chat: Vec<ChatLine>,
+    chat_scroll: ScrollHandle,
+    /// Rows drawn last frame, so the view follows new ones to the bottom.
+    chat_rows: Cell<usize>,
 }
 
 impl AgentDesk {
@@ -228,11 +261,43 @@ impl AgentDesk {
             task: None,
             next_task: 0,
             voice: VoiceDesk::default(),
+            chat: Vec::new(),
+            chat_scroll: ScrollHandle::new(),
+            chat_rows: Cell::new(0),
         }
     }
 }
 
 impl AgentDesk {
+    /// Add a line to the conversation. An engine answer or problem that
+    /// repeats the line before it is skipped, so a quiet fleet does not fill
+    /// the panel with the same report every minute.
+    fn say(&mut self, kind: ChatKind, text: impl Into<String>, at: f64) {
+        let text = text.into();
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let repeat = self
+            .chat
+            .iter()
+            .rev()
+            .find(|line| line.kind != ChatKind::Event);
+        if matches!(kind, ChatKind::Agent(_) | ChatKind::Problem)
+            && repeat.is_some_and(|line| line.kind == kind && line.text == text)
+        {
+            return;
+        }
+        self.chat.push(ChatLine {
+            kind,
+            text: text.to_string(),
+            at,
+            meta: None,
+        });
+        let extra = self.chat.len().saturating_sub(CHAT_MAX_LINES);
+        self.chat.drain(..extra);
+    }
+
     /// The panel's status line: who is connected, or what the operator should do.
     fn status(&self, now: f64) -> argos_core::AgentStatus {
         agent_status(&AgentLink {
@@ -951,6 +1016,8 @@ impl Dashboard {
         } else {
             "The engine only advises".into()
         };
+        let note = self.note.clone();
+        self.agent.say(ChatKind::Event, note, self.now);
     }
 
     /// Pick the engine ARGOS runs each tick, or none.
@@ -964,6 +1031,11 @@ impl Dashboard {
         self.feed
             .record(json!({"kind": "agent_engine", "engine": cli.map(AgentCli::engine)}));
         self.agent.runner = cli.map(CliRunner::new);
+        self.agent.say(
+            ChatKind::Event,
+            format!("Engine: {}", cli.map_or("none", AgentCli::label)),
+            self.now,
+        );
         self.set_engine_commands(false);
         self.agent.missing_logged = false;
         self.agent.opened = self.now;
@@ -1000,19 +1072,36 @@ impl Dashboard {
             };
             let exit = process.exited().unwrap_or_default().to_string();
             let answer = exit.split_once(" · ").map(|(_, last)| last.to_string());
-            if ok {
+            let label = runner.cli.label();
+            let said = if ok {
                 runner.error = None;
-                runner.answer = answer;
-            } else if seconds > AGENT_RUN_MAX_S {
-                runner.error = Some(format!(
-                    "{} took over {AGENT_RUN_MAX_S:.0} s and was stopped",
-                    runner.cli.label()
-                ));
+                runner.answer = answer.clone();
+                let reply = std::fs::read_to_string(&runner.log)
+                    .ok()
+                    .and_then(|log| tick_reply(&log))
+                    .or(answer);
+                reply.map(|reply| (ChatKind::Agent(label), reply))
             } else {
-                runner.error = Some(exit.clone());
-            }
+                runner.error = Some(if seconds > AGENT_RUN_MAX_S {
+                    format!("{label} took over {AGENT_RUN_MAX_S:.0} s and was stopped")
+                } else {
+                    exit.clone()
+                });
+                runner.error.clone().map(|error| (ChatKind::Problem, error))
+            };
             let engine = runner.cli.engine();
             runner.run = None;
+            let ticks = runner.ticks;
+            if let Some((kind, text)) = said {
+                let before = self.agent.chat.len();
+                self.agent.say(kind, text, now);
+                if self.agent.chat.len() > before
+                    && let Some(line) = self.agent.chat.last_mut()
+                    && matches!(line.kind, ChatKind::Agent(_))
+                {
+                    line.meta = Some(format!("Ran {label} · {seconds:.0} s · tick {ticks}"));
+                }
+            }
             self.feed.record(json!({"kind": "agent_run", "event": "ended", "engine": engine, "ok": ok, "seconds": seconds, "exit": exit}));
             return;
         }
@@ -1064,7 +1153,12 @@ impl Dashboard {
                 .open(&runner.log)
             {
                 use std::io::Write;
-                let _ = writeln!(log, "\n--- tick {} ({}) ---", runner.ticks, why.join(", "));
+                let _ = writeln!(
+                    log,
+                    "\n{TICK_MARK}{} ({}) ---",
+                    runner.ticks,
+                    why.join(", ")
+                );
             }
             AgentProcess::start(command, runner.cli.label(), runner.log.clone())
         });
@@ -1080,7 +1174,9 @@ impl Dashboard {
                 } else {
                     format!("could not start {}: {error}", runner.cli.label())
                 });
-                self.feed.record(json!({"kind": "agent_run", "event": "failed", "engine": engine, "error": runner.error}));
+                let error = runner.error.clone().unwrap_or_default();
+                self.feed.record(json!({"kind": "agent_run", "event": "failed", "engine": engine, "error": error}));
+                self.agent.say(ChatKind::Problem, error, now);
             }
         }
     }
@@ -1123,6 +1219,12 @@ impl Dashboard {
         if let Some(runner) = self.agent.runner.as_mut() {
             runner.last_check = f64::NEG_INFINITY;
         }
+        self.agent
+            .say(ChatKind::Operator(source), task.text.clone(), self.now);
+        if self.agent.mode == AgentMode::Off || self.agent.runner.is_none() {
+            let note = self.note.clone();
+            self.agent.say(ChatKind::Event, note, self.now);
+        }
         self.agent.task = Some(task);
     }
 
@@ -1133,6 +1235,8 @@ impl Dashboard {
                 "age_s": self.now - task.at,
             }));
             self.note = "Task cleared; the engine goes back to watching the fleet".into();
+            let note = self.note.clone();
+            self.agent.say(ChatKind::Event, note, self.now);
         }
     }
 
@@ -1325,6 +1429,20 @@ impl Dashboard {
             "kind": "rec_dispatched", "rec_id": rec_id, "rover_id": rover,
             "ok": result.is_ok(), "note": self.note,
         }));
+        let title = self
+            .agent
+            .book
+            .get(rec_id)
+            .map(|entry| format!("R{rover} · {}", entry.rec.action.title()))
+            .unwrap_or_else(|| format!("R{rover}"));
+        match &result {
+            Ok(note) => self
+                .agent
+                .say(ChatKind::Event, format!("{title}: {note}"), self.now),
+            Err(error) => self
+                .agent
+                .say(ChatKind::Problem, format!("{title}: {error}"), self.now),
+        }
         self.agent.book.dispatched(rec_id, result);
     }
 
@@ -1377,6 +1495,15 @@ impl Dashboard {
         }
         self.agent.rejecting = None;
         self.log_decision(rec_id);
+        self.agent.say(
+            ChatKind::Event,
+            format!(
+                "You accepted R{} · {}",
+                entry.rec.rover,
+                entry.rec.action.title()
+            ),
+            self.now,
+        );
         let rover = entry.rec.rover;
         let source = CommandSource::Recommendation;
         let result = match entry.rec.action {
@@ -1423,6 +1550,22 @@ impl Dashboard {
         {
             self.log_decision(rec_id);
             self.note = "Recommendation rejected".into();
+            let label = REJECT_REASONS
+                .iter()
+                .find(|(wire, _)| *wire == reason)
+                .map_or(reason, |(_, label)| *label);
+            let title = self
+                .agent
+                .book
+                .get(rec_id)
+                .map_or_else(String::new, |entry| {
+                    format!(" R{} · {}", entry.rec.rover, entry.rec.action.title())
+                });
+            self.agent.say(
+                ChatKind::Event,
+                format!("You rejected{title} ({label})"),
+                self.now,
+            );
         }
     }
 
@@ -1439,6 +1582,11 @@ impl Dashboard {
             json!({"kind": "agent_mode", "from": self.agent.mode.wire(), "to": mode.wire()}),
         );
         self.agent.mode = mode;
+        self.agent.say(
+            ChatKind::Event,
+            format!("Agent set to {}", mode.label()),
+            self.now,
+        );
         self.note = match mode {
             AgentMode::Off => "Agent access off".into(),
             AgentMode::Advise => "Agent may read the field and propose recommendations".into(),
@@ -1457,335 +1605,623 @@ fn urgency_tag(urgency: u8) -> Tag {
     }
 }
 
-/// The agent panel at the lower left of the map: mode, drive grant, cards.
-/// Say or type a task for the engine. The engine plans it and answers with
-/// cards; the operator still accepts each one.
-fn task_box(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+/// "12 s ago", "3 min ago" for a conversation time stamp.
+fn ago(now: f64, at: f64) -> String {
+    let seconds = (now - at).max(0.);
+    if seconds < 60. {
+        format!("{seconds:.0} s ago")
+    } else {
+        format!("{:.0} min ago", seconds / 60.)
+    }
+}
+
+/// Ideas shown in an empty conversation. Clicking one fills the composer.
+const STARTERS: [&str; 3] = [
+    "Rover 1 explores the left side, rover 2 goes home",
+    "Which rover needs my attention?",
+    "Bring the nearest bucket back to base",
+];
+
+/// The Agent panel, laid out like a coding-agent chat: the conversation
+/// fills the panel and sits on the bottom edge, engine replies are plain
+/// text, the operator's tasks are pill bubbles, cards sit inline, and the
+/// composer card holds the engine/mode picker, Talk and a round Send. A
+/// one-line status sits under the composer. Accept/Reject on cards, Let it
+/// command, and the raw-drive grant work as before; only the layout changed.
+pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    v_flex()
+        .id("agent-panel")
+        .size_full()
+        .min_h_0()
+        .bg(cx.theme().background)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when_some(command_strip(dashboard, cx), |panel, strip| {
+            panel.child(strip)
+        })
+        .child(conversation(dashboard, cx))
+        .child(composer(dashboard, cx))
+        .child(status_footer(dashboard, cx))
+        .into_any_element()
+}
+
+/// Operator mode only: whether the engine may command, and the switch.
+fn command_strip(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> Option<AnyElement> {
+    let desk = &dashboard.agent;
+    if desk.mode != AgentMode::Operator {
+        return None;
+    }
+    let (label, on) = desk
+        .runner
+        .as_ref()
+        .map(|runner| (runner.cli.label(), desk.engine_commands))?;
+    Some(
+        h_flex()
+            .mx_3()
+            .mt_3()
+            .gap_2()
+            .px_3()
+            .py_1p5()
+            .rounded_lg()
+            .border_1()
+            .border_color(if on {
+                cx.theme().warning
+            } else {
+                cx.theme().border
+            })
+            .child(div().flex_1().min_w_0().child(if on {
+                caution(format!("{label} may command rovers this session"), cx)
+            } else {
+                hint(format!("{label} only advises, even in Operator mode"), cx)
+            }))
+            .child(
+                Button::new("agent-engine-commands")
+                    .xsmall()
+                    .outline()
+                    .label(if on { "Advise only" } else { "Let it command" })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_engine_commands(!on);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element(),
+    )
+}
+
+/// The scrolling conversation: past lines, what the engine is doing now,
+/// the drive request, and the open cards. Rows sit on the bottom edge and
+/// the view follows new ones.
+fn conversation(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    let now = dashboard.now;
+    let desk = &dashboard.agent;
+    let mut rows: Vec<AnyElement> = Vec::new();
+    let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
+    let working = desk.runner.as_ref().and_then(|runner| {
+        runner
+            .run
+            .as_ref()
+            .map(|(_, started)| (runner.cli.label(), now - started))
+    });
+    let empty =
+        desk.chat.is_empty() && cards.is_empty() && working.is_none() && desk.grant.is_none();
+    if empty {
+        rows.push(empty_chat(dashboard, cx));
+    }
+    for line in &desk.chat {
+        rows.push(chat_line(line, now, cx));
+    }
+    if let Some((label, seconds)) = working {
+        let doing = if desk.task.is_some() {
+            "planning your task"
+        } else {
+            "checking the field"
+        };
+        rows.push(fold_line(format!("{label} is {doing}… {seconds:.0} s"), cx).into_any_element());
+    }
+    if let Some(grant) = desk.grant.clone() {
+        rows.push(drive_card(&grant, now, cx));
+    }
+    let rejecting = desk.rejecting.clone();
+    for entry in cards {
+        rows.push(rec_card(entry, rejecting.as_deref(), now, cx));
+    }
+    // Follow the bottom when a row is added (a new line, card, or run).
+    let count = desk.chat.len() * 4 + rows.len();
+    if desk.chat_rows.replace(count) != count {
+        desk.chat_scroll.scroll_to_bottom();
+    }
+    div()
+        .id("agent-chat")
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(&desk.chat_scroll)
+        .child(
+            v_flex()
+                .min_h_full()
+                .when(!empty, |column| column.justify_end())
+                .px_4()
+                .py_4()
+                .gap_4()
+                .children(rows),
+        )
+        .into_any_element()
+}
+
+/// The small "› Ran Claude · 14 s" line above an engine reply.
+fn fold_line(text: String, cx: &App) -> Div {
+    h_flex()
+        .gap_1p5()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("›")
+        .child(text)
+}
+
+/// An engine reply as plain text. Lines starting with `- ` or `* ` become
+/// bullets and `**` markers are dropped, so a Markdown-ish answer reads cleanly.
+fn reply_body(text: &str) -> Div {
+    v_flex()
+        .gap_1p5()
+        .text_sm()
+        .children(
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    let line = line.replace("**", "");
+                    let trimmed = line.trim_start();
+                    match trimmed
+                        .strip_prefix("- ")
+                        .or_else(|| trimmed.strip_prefix("* "))
+                    {
+                        Some(item) => h_flex()
+                            .items_start()
+                            .gap_2()
+                            .pl_2()
+                            .child("•")
+                            .child(div().flex_1().min_w_0().child(item.to_string()))
+                            .into_any_element(),
+                        None => div().child(line.clone()).into_any_element(),
+                    }
+                }),
+        )
+}
+
+fn chat_line(line: &ChatLine, now: f64, cx: &App) -> AnyElement {
+    match line.kind {
+        ChatKind::Operator(source) => v_flex()
+            .w_full()
+            .items_end()
+            .gap_1()
+            .child(
+                div()
+                    .max_w(relative(0.85))
+                    .px_4()
+                    .py_2p5()
+                    .rounded_2xl()
+                    .border_1()
+                    .border_color(cx.theme().primary.opacity(0.25))
+                    .bg(cx.theme().primary.opacity(0.07))
+                    .text_sm()
+                    .child(line.text.clone()),
+            )
+            .when(source == "voice", |column| {
+                column.child(hint(format!("Spoken · {}", ago(now, line.at)), cx))
+            })
+            .into_any_element(),
+        ChatKind::Agent(_) => v_flex()
+            .w_full()
+            .gap_2()
+            .when_some(line.meta.clone(), |column, meta| {
+                column.child(fold_line(meta, cx))
+            })
+            .child(reply_body(&line.text))
+            .into_any_element(),
+        ChatKind::Problem => div()
+            .w_full()
+            .pl_3()
+            .py_1()
+            .border_l_2()
+            .border_color(cx.theme().warning)
+            .child(caution(line.text.clone(), cx))
+            .into_any_element(),
+        ChatKind::Event => div()
+            .w_full()
+            .text_center()
+            .child(hint(format!("{} · {}", line.text, ago(now, line.at)), cx))
+            .into_any_element(),
+    }
+}
+
+/// First view: what the panel is for and a few things to ask.
+fn empty_chat(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    let lead = match dashboard.agent.runner.as_ref() {
+        Some(runner) => format!(
+            "Type or say a task. {} plans it and answers with cards you accept or reject.",
+            runner.cli.label()
+        ),
+        None => "Pick an engine below, then type or say a task. It answers with cards you accept or reject.".to_string(),
+    };
+    v_flex()
+        .size_full()
+        .justify_center()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_base()
+                .font_semibold()
+                .child("What should the fleet do?"),
+        )
+        .child(div().text_center().child(hint(lead, cx)))
+        .child(
+            v_flex()
+                .w_full()
+                .pt_3()
+                .gap_1p5()
+                .children(STARTERS.iter().enumerate().map(|(index, text)| {
+                    Button::new(("agent-starter", index as u64))
+                        .outline()
+                        .small()
+                        .w_full()
+                        .rounded(ButtonRounded::Large)
+                        .label(*text)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.agent_task_input
+                                .update(cx, |input, cx| input.set_value(*text, window, cx));
+                            this.agent_task_input
+                                .read(cx)
+                                .focus_handle(cx)
+                                .focus(window, cx);
+                            cx.notify();
+                        }))
+                })),
+        )
+        .into_any_element()
+}
+/// The engine asks to drive, or is driving: Approve / Deny / End.
+fn drive_card(grant: &DriveGrant, now: f64, cx: &mut Context<Dashboard>) -> AnyElement {
+    let pending = grant.pending();
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().warning)
+        .child(caution(
+            if pending {
+                format!(
+                    "Agent asks to drive rover {} for {:.0} s: {}. It drives with your W/A/S/D limits and stops when you press Stop.",
+                    grant.rover, grant.seconds, grant.reason
+                )
+            } else {
+                format!(
+                    "Agent is allowed to drive rover {} · {:.0} s left",
+                    grant.rover,
+                    grant.remaining(now)
+                )
+            },
+            cx,
+        ))
+        .child(
+            h_flex()
+                .gap_2()
+                .when(pending, |row| {
+                    row.child(
+                        Button::new("agent-drive-approve")
+                            .small()
+                            .primary()
+                            .label("Approve drive")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.approve_drive();
+                                cx.notify();
+                            })),
+                    )
+                })
+                .child(
+                    Button::new("agent-drive-deny")
+                        .outline()
+                        .small()
+                        .label(if pending { "Deny drive" } else { "End drive" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.end_agent_drive("operator");
+                            this.note = "Agent drive ended".into();
+                            cx.notify();
+                        })),
+                ),
+        )
+        .into_any_element()
+}
+
+/// One open recommendation, inline in the conversation, with Accept/Reject.
+fn rec_card(
+    entry: RecEntry,
+    rejecting: Option<&str>,
+    now: f64,
+    cx: &mut Context<Dashboard>,
+) -> AnyElement {
+    let rec_id = entry.rec.rec_id.clone();
+    let picking = rejecting == Some(rec_id.as_str());
+    let accept_id = rec_id.clone();
+    let reject_id = rec_id.clone();
+    let refused = match &entry.dispatch {
+        Some(Err(error)) => Some(error.clone()),
+        _ => None,
+    };
+    v_flex()
+        .gap_1p5()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(if entry.rec.urgency == 3 {
+            cx.theme().danger
+        } else {
+            cx.theme().border
+        })
+        .bg(cx.theme().background)
+        .shadow_xs()
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .min_w_0()
+                        .truncate()
+                        .child(format!(
+                            "R{} · {}",
+                            entry.rec.rover,
+                            entry.rec.action.title()
+                        )),
+                )
+                .child(urgency_tag(entry.rec.urgency)),
+        )
+        .child(div().text_xs().child(entry.rec.reason.clone()))
+        .when_some(refused, |card, error| card.child(caution(error, cx)))
+        .child(if picking {
+            h_flex()
+                .gap_1()
+                .flex_wrap()
+                .children(
+                    REJECT_REASONS
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (wire, label))| {
+                            let rec_id = reject_id.clone();
+                            Button::new(SharedString::from(format!(
+                                "agent-reason-{rec_id}-{index}"
+                            )))
+                            .outline()
+                            .xsmall()
+                            .label(*label)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.reject_card(&rec_id, wire);
+                                    cx.notify();
+                                },
+                            ))
+                        }),
+                )
+                .into_any_element()
+        } else {
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new(SharedString::from(format!("agent-accept-{accept_id}")))
+                        .small()
+                        .primary()
+                        .label(if entry.rec.action == RecAction::Attention {
+                            "Got it"
+                        } else {
+                            "Accept"
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.accept_card(&accept_id);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("agent-reject-{reject_id}")))
+                        .outline()
+                        .small()
+                        .label("Reject")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.agent.rejecting = Some(reject_id.clone());
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_right()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{:.0} s", entry.remaining(now))),
+                )
+                .into_any_element()
+        })
+        .into_any_element()
+}
+
+/// Engine and mode in one compact picker, like a model picker in a chat app.
+fn engine_picker(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
+    let desk = &dashboard.agent;
+    let engine = desk.runner.as_ref().map(|runner| runner.cli);
+    let mode = desk.mode;
+    let weak = cx.entity().downgrade();
+    Button::new("agent-engine-menu")
+        .ghost()
+        .small()
+        .label(format!(
+            "✳ {}  {} ▾",
+            engine.map_or("No engine", AgentCli::label),
+            mode.label()
+        ))
+        .tooltip("Engine ARGOS runs each tick, and what it may do")
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.label("Engine");
+            for choice in std::iter::once(None).chain(AgentCli::ALL.iter().copied().map(Some)) {
+                let weak = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(choice.map_or("None", AgentCli::label))
+                        .checked(choice == engine)
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.set_agent_cli(choice);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu = menu.separator().label("Agent access");
+            for each in AgentMode::ALL {
+                let weak = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(each.label())
+                        .checked(each == mode)
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.set_agent_mode(each);
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+}
+
+/// Bottom composer card: current task with Clear, the task box, then the
+/// engine/mode picker, Talk and a round Send.
+fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let now = dashboard.now;
     let voice = &dashboard.agent.voice;
     let talk_label = match (&voice.recording, &voice.pending) {
-        (Some(recording), _) => format!("Stop · {:.0} s", recording.seconds()),
+        (Some(recording), _) => format!("● Stop · {:.0} s", recording.seconds()),
         (None, Some(_)) => "Transcribing…".to_string(),
         (None, None) => "Talk".to_string(),
     };
     let recording = voice.recording.is_some();
     let busy = voice.pending.is_some();
-    let voice_note = voice.note.clone();
+    // A heard phrase already shows as the operator's bubble; only problems show here.
+    let voice_problem = voice
+        .note
+        .clone()
+        .and_then(|(note, warn)| warn.then_some(note));
     let task = dashboard.agent.task.clone();
     v_flex()
-        .gap_1()
-        .child(div().text_xs().font_semibold().child("Task for the agents"))
+        .px_3()
+        .gap_1p5()
+        .when_some(voice_problem, |column, note| {
+            column.child(caution(note, cx))
+        })
         .child(
-            h_flex()
+            v_flex()
                 .gap_2()
-                .child(div().flex_1().min_w_0().child(Input::new(&dashboard.agent_task_input).small()))
-                .child(
-                    Button::new("agent-task-send")
-                        .outline()
-                        .small()
-                        .label("Send")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.send_typed_task(window, cx);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("agent-talk")
-                        .small()
-                        .when(recording, |button| button.danger())
-                        .when(!recording, |button| button.primary())
-                        .disabled(busy)
-                        .label(talk_label)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.toggle_voice();
-                            cx.notify();
-                        })),
-                ),
-        )
-        .when_some(voice_note, |column, (note, warn)| {
-            column.child(if warn { caution(note, cx) } else { hint(note, cx) })
-        })
-        .child(match task {
-            Some(task) => h_flex()
-                .gap_2()
-                .child(
-                    div().flex_1().min_w_0().child(hint(
-                        format!(
-                            "Planning ({}, {:.0} s ago): {}",
-                            task.source,
-                            (now - task.at).max(0.),
-                            task.text
-                        ),
-                        cx,
-                    )),
-                )
-                .child(
-                    Button::new("agent-task-clear")
-                        .outline()
-                        .xsmall()
-                        .label("Clear")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.clear_operator_task("operator");
-                            cx.notify();
-                        })),
-                )
-                .into_any_element(),
-            None => hint(
-                "Press Talk and say what the fleet should do, e.g. \"rover 2 explores the left side, rover 1 goes home\". The engine plans it and answers with cards you accept or reject.",
-                cx,
-            )
-            .into_any_element(),
-        })
-        .into_any_element()
-}
-
-pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
-    let now = dashboard.now;
-    let status = dashboard.agent.status(now);
-    let desk = &dashboard.agent;
-    let engine = desk.runner.as_ref().map(|runner| runner.cli);
-    let engine_note = desk.runner.as_ref().map(|runner| {
-        let label = runner.cli.label();
-        if desk.mode == AgentMode::Off {
-            return format!(
-                "{label} paused while the panel is Off · {} runs this session",
-                runner.ticks
-            );
-        }
-        match (&runner.run, &runner.answer) {
-            (Some((_, started)), _) => format!(
-                "{label} run {} this session · running {:.0} s",
-                runner.ticks,
-                now - started
-            ),
-            (None, Some(answer)) => {
-                format!("{} runs this session · last said: {answer}", runner.ticks)
-            }
-            (None, None) => format!("{} runs this session", runner.ticks),
-        }
-    });
-    let commands_toggle = (desk.mode == AgentMode::Operator)
-        .then(|| {
-            desk.runner
-                .as_ref()
-                .map(|runner| (runner.cli.label(), desk.engine_commands))
-        })
-        .flatten();
-    let mode = desk.mode;
-    let grant = desk.grant.clone();
-    let rejecting = desk.rejecting.clone();
-    let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
-    let task_box = task_box(dashboard, cx);
-    v_flex()
-        .id("agent-panel")
-        .gap_2()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(
-            h_flex()
-                .gap_2()
-                .child(div().text_xs().font_semibold().child("Agent"))
-                .child(
-                    ButtonGroup::new("agent-mode")
-                        .outline()
-                        .small()
-                        .children(AgentMode::ALL.iter().enumerate().map(|(index, each)| {
-                            Button::new(("agent-mode", index as u64))
-                                .label(each.label())
-                                .picked(*each == mode)
-                        }))
-                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
-                            if let Some(mode) = clicks.first().and_then(|index| AgentMode::ALL.get(*index)) {
-                                this.set_agent_mode(*mode);
-                            }
-                            cx.notify();
-                        })),
-                ),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(div().text_xs().child("Engine"))
-                .child(
-                    ButtonGroup::new("agent-engine")
-                        .outline()
-                        .xsmall()
-                        .child(Button::new(("agent-engine", 0u64)).label("None").picked(engine.is_none()))
-                        .children(AgentCli::ALL.iter().enumerate().map(|(index, cli)| {
-                            Button::new(("agent-engine", index as u64 + 1))
-                                .label(cli.label())
-                                .picked(engine == Some(*cli))
-                        }))
-                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
-                            if let Some(index) = clicks.first() {
-                                this.set_agent_cli(index.checked_sub(1).and_then(|i| AgentCli::ALL.get(i).copied()));
-                            }
-                            cx.notify();
-                        })),
-                ),
-        )
-        .child(if status.warn {
-            caution(status.text, cx)
-        } else {
-            hint(status.text, cx)
-        })
-        .when_some(engine_note, |panel, note| panel.child(hint(note, cx)))
-        .child(task_box)
-        .when_some(commands_toggle, |panel, (label, on)| {
-            panel.child(
-                h_flex()
-                    .gap_2()
-                    .child(if on {
-                        caution(format!("{label} may command rovers this session"), cx)
-                    } else {
-                        hint(format!("{label} only advises, even in Operator mode"), cx)
-                    })
-                    .child(
-                        Button::new("agent-engine-commands")
-                            .xsmall()
-                            .outline()
-                            .label(if on { "Advise only" } else { "Let it command" })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_engine_commands(!on);
-                                cx.notify();
-                            })),
-                    ),
-            )
-        })
-        .when_some(grant, |panel, grant| {
-            let pending = grant.pending();
-            panel.child(
-                v_flex()
-                    .gap_1()
-                    .child(caution(
-                        if pending {
-                            format!(
-                                "Agent asks to drive rover {} for {:.0} s: {}. It drives with your W/A/S/D limits and stops when you press Stop.",
-                                grant.rover, grant.seconds, grant.reason
-                            )
-                        } else {
-                            format!(
-                                "Agent is allowed to drive rover {} · {:.0} s left",
-                                grant.rover,
-                                grant.remaining(now)
-                            )
-                        },
-                        cx,
-                    ))
-                    .child(
+                .px_3()
+                .pt_3()
+                .pb_2()
+                .rounded_2xl()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .shadow_sm()
+                .when_some(task, |column, task| {
+                    column.child(
                         h_flex()
-                            .gap_2()
-                            .when(pending, |row| {
-                                row.child(
-                                    Button::new("agent-drive-approve")
-                                        .small()
-                                        .label("Approve drive")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.approve_drive();
-                                            cx.notify();
-                                        })),
-                                )
-                            })
+                            .gap_1()
+                            .pl_2()
+                            .rounded_md()
+                            .bg(cx.theme().muted)
                             .child(
-                                Button::new("agent-drive-deny")
-                                    .outline()
-                                    .small()
-                                    .label(if pending { "Deny drive" } else { "End drive" })
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!(
+                                        "Current task · {} · {}",
+                                        ago(now, task.at),
+                                        task.text
+                                    )),
+                            )
+                            .child(
+                                Button::new("agent-task-clear")
+                                    .ghost()
+                                    .xsmall()
+                                    .label("Clear")
+                                    .tooltip("Drop the task; the engine goes back to watching")
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.end_agent_drive("operator");
-                                        this.note = "Agent drive ended".into();
+                                        this.clear_operator_task("operator");
                                         cx.notify();
                                     })),
                             ),
-                    ),
-            )
-        })
-        .when(cards.is_empty() && mode != AgentMode::Off, |panel| {
-            panel.child(hint("No recommendations right now.", cx))
-        })
-        .children(cards.into_iter().map(|entry| {
-            let rec_id = entry.rec.rec_id.clone();
-            let picking = rejecting.as_deref() == Some(rec_id.as_str());
-            let accept_id = rec_id.clone();
-            let reject_id = rec_id.clone();
-            let refused = match &entry.dispatch {
-                Some(Err(error)) => Some(error.clone()),
-                _ => None,
-            };
-            v_flex()
-                .gap_1()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(if entry.rec.urgency == 3 {
-                    cx.theme().danger
-                } else {
-                    cx.theme().border
+                    )
                 })
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_semibold()
-                                .min_w_0()
-                                .truncate()
-                                .child(format!("R{} · {}", entry.rec.rover, entry.rec.action.title())),
-                        )
-                        .child(urgency_tag(entry.rec.urgency)),
+                    Input::new(&dashboard.agent_task_input)
+                        .appearance(false)
+                        .aria_label("Task for the fleet"),
                 )
-                .child(div().text_xs().child(entry.rec.reason.clone()))
-                .when_some(refused, |card, error| card.child(caution(error, cx)))
-                .child(if picking {
+                .child(
                     h_flex()
                         .gap_1()
-                        .flex_wrap()
-                        .children(REJECT_REASONS.iter().enumerate().map(|(index, (wire, label))| {
-                            let rec_id = reject_id.clone();
-                            Button::new(SharedString::from(format!("agent-reason-{rec_id}-{index}")))
-                                .outline()
-                                .xsmall()
-                                .label(*label)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.reject_card(&rec_id, wire);
-                                    cx.notify();
-                                }))
-                        }))
-                        .into_any_element()
-                } else {
-                    h_flex()
-                        .gap_2()
+                        .child(engine_picker(dashboard, cx))
+                        .child(div().flex_1())
                         .child(
-                            Button::new(SharedString::from(format!("agent-accept-{accept_id}")))
+                            Button::new("agent-talk")
                                 .small()
-                                .label(if entry.rec.action == RecAction::Attention { "Got it" } else { "Accept" })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.accept_card(&accept_id);
+                                .when(recording, |button| button.danger())
+                                .when(!recording, |button| button.ghost())
+                                .disabled(busy)
+                                .label(talk_label)
+                                .tooltip("Say the task (Cmd/Ctrl+Shift+V)")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_voice();
                                     cx.notify();
                                 })),
                         )
                         .child(
-                            Button::new(SharedString::from(format!("agent-reject-{reject_id}")))
-                                .outline()
+                            Button::new("agent-task-send")
+                                .primary()
                                 .small()
-                                .label("Reject")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.agent.rejecting = Some(reject_id.clone());
+                                .rounded(ButtonRounded::Size(px(999.)))
+                                .label("↑")
+                                .tooltip("Send the typed task (Enter)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.send_typed_task(window, cx);
                                     cx.notify();
                                 })),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_right()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(format!("{:.0} s", entry.remaining(now))),
-                        )
-                        .into_any_element()
-                })
-        }))
+                        ),
+                ),
+        )
+        .into_any_element()
+}
+
+/// One quiet line under the composer: link status and engine activity.
+fn status_footer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    let now = dashboard.now;
+    let desk = &dashboard.agent;
+    let status = desk.status(now);
+    let runs = desk
+        .runner
+        .as_ref()
+        .map(|runner| format!(" · {} runs", runner.ticks))
+        .unwrap_or_default();
+    let text = format!("{}{runs}", status.text);
+    div()
+        .px_4()
+        .pt_1p5()
+        .pb_2()
+        .w_full()
+        .text_center()
+        .child(if status.warn {
+            caution(text, cx)
+        } else {
+            hint(text, cx)
+        })
         .into_any_element()
 }

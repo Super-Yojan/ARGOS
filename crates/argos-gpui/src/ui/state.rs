@@ -14,7 +14,7 @@ use argos_gpui::{
     DashboardConfig, FleetFeed, FpvController, LaunchMode, RoverMark, model_position,
     reframing_target,
 };
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -41,8 +41,21 @@ impl Dashboard {
         });
         let task_reply =
             cx.new(|cx| InputState::new(window, cx).placeholder("Answer or extra guidance"));
-        let agent_task_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Task for the fleet, or press Talk"));
+        let agent_task_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Press Enter to send, or Talk to say it")
+        });
+        // Enter in the Agent panel's composer sends the task, like a chat app.
+        cx.subscribe_in(
+            &agent_task_input,
+            window,
+            |this: &mut Self, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.send_typed_task(window, cx);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
         let focus = cx.focus_handle();
         let poll = cx.spawn(async |this, cx| {
