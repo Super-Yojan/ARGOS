@@ -444,6 +444,17 @@ impl Dashboard {
                 if let Ok(note) = &result {
                     self.note = format!("Agent: {note}");
                 }
+                let who = self.engine_label();
+                match &result {
+                    Ok(note) => self
+                        .agent
+                        .say(ChatKind::Event, format!("{who}: {note}"), self.now),
+                    Err(error) => self.agent.say(
+                        ChatKind::Problem,
+                        format!("{who} tried {}: {error}", command.op()),
+                        self.now,
+                    ),
+                }
                 result.map(|note| json!({ "note": note }))
             }
         }
@@ -482,7 +493,47 @@ impl Dashboard {
         })
     }
 
+    /// Whether the engine's cards run without the operator's Accept: Operator
+    /// mode with Let it command on for this session.
+    fn agent_commands(&self) -> bool {
+        self.agent.mode == AgentMode::Operator && self.agent.engine_commands
+    }
+
+    /// The engine's name for the conversation, like "Claude".
+    fn engine_label(&self) -> &'static str {
+        self.agent
+            .runner
+            .as_ref()
+            .map_or("Agent", |runner| runner.cli.label())
+    }
+
     fn propose(&mut self, items: Vec<Value>) -> Value {
+        let results = self.propose_cards(items);
+        // In Operator mode with Let it command on, the agent commands like an
+        // operator: its cards go out at once through the same checks as
+        // Accept. Attention cards still wait for the operator.
+        if self.agent_commands() {
+            let ids: Vec<String> = results["results"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|result| result["rec_id"].as_str().map(str::to_string))
+                .collect();
+            for rec_id in ids {
+                let attention = self
+                    .agent
+                    .book
+                    .get(&rec_id)
+                    .is_some_and(|entry| entry.rec.action == RecAction::Attention);
+                if !attention {
+                    self.run_card(&rec_id, true);
+                }
+            }
+        }
+        results
+    }
+
+    fn propose_cards(&mut self, items: Vec<Value>) -> Value {
         let engine = self.agent.engine.clone().unwrap_or_else(|| "agent".into());
         let results: Vec<Value> = items
             .iter()
@@ -1477,28 +1528,43 @@ impl Dashboard {
     }
 
     pub(super) fn accept_card(&mut self, rec_id: &str) {
+        self.run_card(rec_id, false);
+    }
+
+    /// Send a card: the operator pressed Accept, or (`by_agent`) the agent
+    /// sent it in Operator mode. Either way this window takes the control
+    /// lease, as clicking a rover does, so Accept never silently does nothing
+    /// because Control fleet was off.
+    fn run_card(&mut self, rec_id: &str, by_agent: bool) {
         let Some(entry) = self.agent.book.get(rec_id).cloned() else {
             return;
         };
-        // Like the buttons, a card that sends something needs the operator lease.
-        if !matches!(entry.rec.action, RecAction::Attention) && !self.claim.held(self.now) {
-            self.note = "Control the fleet to accept this card".into();
-            return;
+        if !matches!(entry.rec.action, RecAction::Attention) {
+            self.claim.take(self.now);
         }
-        if self
+        if let Err(error) = self
             .agent
             .book
             .decide(rec_id, RecState::Accepted, None, self.now)
-            .is_err()
         {
+            self.note = format!("Card not sent: {error}");
+            self.agent
+                .say(ChatKind::Problem, self.note.clone(), self.now);
             return;
         }
         self.agent.rejecting = None;
         self.log_decision(rec_id);
+        if by_agent {
+            self.feed.record(json!({
+                "kind": "rec_auto_accepted", "rec_id": rec_id, "engine": self.agent.engine,
+            }));
+        }
+        let who = if by_agent { self.engine_label() } else { "You" };
         self.agent.say(
             ChatKind::Event,
             format!(
-                "You accepted R{} · {}",
+                "{who} {} R{} · {}",
+                if by_agent { "sent" } else { "accepted" },
                 entry.rec.rover,
                 entry.rec.action.title()
             ),
@@ -1670,9 +1736,12 @@ fn command_strip(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> Option<A
                 cx.theme().border
             })
             .child(div().flex_1().min_w_0().child(if on {
-                caution(format!("{label} may command rovers this session"), cx)
+                caution(
+                    format!("{label} commands rovers itself this session · no Accept needed"),
+                    cx,
+                )
             } else {
-                hint(format!("{label} only advises, even in Operator mode"), cx)
+                hint(format!("{label} only proposes cards for you to Accept"), cx)
             }))
             .child(
                 Button::new("agent-engine-commands")
