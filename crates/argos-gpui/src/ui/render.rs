@@ -152,7 +152,9 @@ impl Dashboard {
             return panel_scroll("agent", agent::agent_panel(self, cx), cx);
         }
         if kind == PanelKind::Video {
-            return panel_scroll("video", video_tab(self, cx).into_any_element(), cx);
+            // No scroll wrapper: the picture fills the panel and the controls stay
+            // in view at any panel height.
+            return video_tab(self, cx).into_any_element();
         }
         let Some(mark) = self.selected_mark().cloned() else {
             return v_flex()

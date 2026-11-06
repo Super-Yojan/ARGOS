@@ -19,7 +19,7 @@ mod vpx;
 use std::sync::Arc;
 
 pub use config::FpvConfig;
-pub use present::gpu_frame;
+pub use present::{gpu_frame, rotate_frame};
 pub use sender::{SenderOptions, run_test_sender};
 pub use session::{FpvController, FpvPhase, FpvView};
 

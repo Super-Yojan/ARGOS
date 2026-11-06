@@ -9,18 +9,75 @@ use gpui_kit::component::{ActiveTheme, Sizable, button::Button};
 use gpui_kit::{prelude::*, *};
 
 /// Video stays with the selection: Start FPV asks the selected rover's phone.
+/// Controls sit on top and the picture takes the rest of the panel, so a
+/// short dock panel never hides Start FPV below the fold.
 pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let picture = dashboard.fpv.view();
     let phase = picture.phase;
     let detail = picture.detail.clone();
+    let turns = picture
+        .phone_id
+        .or(dashboard.selected)
+        .and_then(|id| picture.rotations.get(&id).copied())
+        .unwrap_or(0);
+    let empty = empty_picture_text(dashboard.selected, &picture);
     v_flex()
-        .gap_3()
+        .size_full()
+        .p_4()
+        .gap_2()
+        .bg(cx.theme().background)
+        .child(
+            h_flex()
+                .gap_2()
+                .flex_wrap()
+                .child(
+                    Button::new("fpv-start")
+                        .outline()
+                        .small()
+                        .label("Start FPV")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(id) = this.selected {
+                                this.fpv.start_phone(id);
+                                this.note = format!("FPV requested for rover {id}");
+                            } else {
+                                this.note = "Select a rover before starting FPV".into();
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(stop_fpv_button(cx))
+                .child(
+                    Button::new("fpv-rotate")
+                        .outline()
+                        .small()
+                        .label(format!("Rotate {}°", u32::from(turns) * 90))
+                        .tooltip("Turn the picture 90° clockwise, for a phone mounted sideways")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let target = this.fpv.view().phone_id.or(this.selected);
+                            if let Some(id) = target {
+                                let turns = this.fpv.rotate(id);
+                                this.note =
+                                    format!("Rover {id} video turned {}°", u32::from(turns) * 90);
+                            } else {
+                                this.note = "Select a rover before rotating video".into();
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(phase_color(phase, cx))
+                        .child(format!("{} · {detail}", phase.label())),
+                ),
+        )
         .child(hint(fpv_subject(dashboard.selected, picture.phone_id), cx))
         .child(
             div()
                 .w_full()
-                .h(px(188.))
-                .bg(cx.theme().background)
+                .flex_1()
+                .min_h(px(120.))
+                .bg(cx.theme().secondary)
                 .rounded(cx.theme().radius)
                 .overflow_hidden()
                 .when_some(picture.image.clone(), |frame, image| {
@@ -41,41 +98,22 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                             .px_3()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(detail.clone()),
+                            .child(empty),
                     )
                 }),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(phase_color(phase, cx))
-                .child(format!("{} · {detail}", phase.label())),
-        )
         .child(hint(fpv_stats(&picture), cx))
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("fpv-start")
-                        .outline()
-                        .small()
-                        .label("Start FPV")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(id) = this.selected {
-                                this.fpv.start_phone(id);
-                                this.note = format!("FPV requested for rover {id}");
-                            } else {
-                                this.note = "Select a rover before starting FPV".into();
-                            }
-                            cx.notify();
-                        })),
-                )
-                .child(stop_fpv_button(cx)),
-        )
-        .child(hint(
-            "Video only. Drive, arm, and stop stay on the Zenoh controls.",
-            cx,
-        ))
+}
+
+/// What the empty picture says: the next step, not a stale default.
+fn empty_picture_text(selected: Option<u64>, picture: &argos_gpui::FpvView) -> String {
+    match (picture.phase, selected) {
+        (FpvPhase::Idle | FpvPhase::Closed, Some(id)) => {
+            format!("Press Start FPV to watch rover {id}")
+        }
+        (FpvPhase::Idle | FpvPhase::Closed, None) => "Select a rover, then press Start FPV".into(),
+        _ => picture.detail.clone(),
+    }
 }
 
 pub(super) fn stop_fpv_button(cx: &mut Context<Dashboard>) -> Button {
