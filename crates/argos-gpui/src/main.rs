@@ -87,6 +87,8 @@ struct Dashboard {
     /// Typed L5 task, and the reply box for the model's questions.
     task_input: Entity<InputState>,
     task_reply: Entity<InputState>,
+    /// Typed task for the agent engine (the Agent panel's Talk button fills it by voice).
+    agent_task_input: Entity<InputState>,
     /// Index into `TASK_BUDGETS_MIN` for the next L5 task.
     task_budget: usize,
     /// Answerer picked for the next L5 task; `None` prefers the phone's MCP agent.

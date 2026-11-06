@@ -23,20 +23,27 @@ use argos_core::{AGENT_EARLY_TICK_MIN_S, AGENT_RUN_MAX_S, AGENT_TICK_S, tick_rea
 use argos_gpui::agent_mcp::McpProfile;
 use argos_gpui::agent_runner::{AgentCli, AgentRun};
 use argos_gpui::console::StopOrigin;
+use argos_gpui::voice::{
+    MAX_RECORD_S, MIN_RECORD_S, Recording, Transcriber, clip_seconds, transcribe_clip,
+};
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt,
-    button::{Button, ButtonGroup},
+    ActiveTheme, Disableable, Sizable, StyledExt,
+    button::{Button, ButtonGroup, ButtonVariants},
     tag::Tag,
 };
 use gpui_kit::{prelude::*, *};
 use serde_json::{Value, json};
+use std::sync::mpsc;
 
 /// How long an accepted goal card waits for the rover to reach L3.
 const LEVEL_WAIT_S: f64 = 5.;
 /// How long an accepted goal is watched for arrival.
 const OUTCOME_WAIT_S: f64 = 300.;
+/// A spoken task longer than this is cut; a minute of speech fits.
+const OPERATOR_TASK_MAX_CHARS: usize = 1_000;
 
 /// An accepted card whose goal waits for the rover to switch to L3.
 struct QueuedGoal {
@@ -71,6 +78,8 @@ struct CliRunner {
     error: Option<String>,
     /// The last line of the last good run: usually its answer.
     answer: Option<String>,
+    /// The operator task the last run was given, so a new one runs at once.
+    task_sent: Option<u32>,
 }
 
 impl CliRunner {
@@ -93,8 +102,34 @@ impl CliRunner {
             ticks: 0,
             error: None,
             answer: None,
+            task_sent: None,
         }
     }
+}
+
+/// What the operator asked the fleet to do. It stays in every tick's field
+/// state until the operator clears or replaces it.
+#[derive(Clone, Debug)]
+pub(super) struct OperatorTask {
+    id: u32,
+    text: String,
+    /// `voice` or `typed`.
+    source: &'static str,
+    at: f64,
+}
+
+/// Transcription result: the text and where the clip was saved.
+type Heard = Result<(String, std::path::PathBuf), String>;
+
+/// Talk button state: the microphone while recording, then the transcriber.
+#[derive(Default)]
+pub(super) struct VoiceDesk {
+    recording: Option<Recording>,
+    /// Transcription running off the UI thread, and when it started.
+    pending: Option<(mpsc::Receiver<Heard>, f64)>,
+    /// Last problem or result line for the panel, and whether it is a warning.
+    note: Option<(String, bool)>,
+    clips: u32,
 }
 
 /// What the window keeps for agents.
@@ -124,6 +159,10 @@ pub(crate) struct AgentDesk {
     rejecting: Option<String>,
     queued: Vec<QueuedGoal>,
     watched: Vec<Watched>,
+    /// The operator's current task for the engine (spoken or typed).
+    pub(super) task: Option<OperatorTask>,
+    next_task: u32,
+    pub(super) voice: VoiceDesk,
 }
 
 impl AgentDesk {
@@ -186,6 +225,9 @@ impl AgentDesk {
             rejecting: None,
             queued: Vec::new(),
             watched: Vec::new(),
+            task: None,
+            next_task: 0,
+            voice: VoiceDesk::default(),
         }
     }
 }
@@ -366,6 +408,12 @@ impl Dashboard {
                 "recent": entries_json(self.agent.book.recent(5), self.now),
             },
             "drive_grant": self.agent.grant.as_ref().map(|grant| grant.to_json(self.now)),
+            "operator_task": self.agent.task.as_ref().map(|task| json!({
+                "id": task.id,
+                "text": task.text,
+                "source": task.source,
+                "age_s": (self.now - task.at).max(0.),
+            })),
         })
     }
 
@@ -793,6 +841,7 @@ impl Dashboard {
 
     fn agent_upkeep(&mut self) {
         let now = self.now;
+        self.voice_upkeep(now);
         self.agent_link_log(now);
         self.agent_cli_tick(now);
         for rec_id in self.agent.book.expire(now) {
@@ -975,8 +1024,17 @@ impl Dashboard {
         let runner = self.agent.runner.as_mut().expect("checked above");
         let mut why = tick_reasons(runner.last_state.as_ref(), &state);
         runner.last_state = Some(state);
+        let task = self.agent.task.clone();
+        let fresh_task = task
+            .as_ref()
+            .is_some_and(|task| runner.task_sent != Some(task.id));
+        if fresh_task {
+            why.insert(0, "operator task".into());
+        }
         let since = runner.last_tick.map_or(f64::INFINITY, |at| now - at);
-        let due = since >= AGENT_TICK_S || (!why.is_empty() && since >= AGENT_EARLY_TICK_MIN_S);
+        let due = fresh_task
+            || since >= AGENT_TICK_S
+            || (!why.is_empty() && since >= AGENT_EARLY_TICK_MIN_S);
         if !due {
             return;
         }
@@ -985,6 +1043,7 @@ impl Dashboard {
         }
         runner.last_tick = Some(now);
         runner.ticks += 1;
+        runner.task_sent = task.as_ref().map(|task| task.id);
         let profile = if self.agent.mode == AgentMode::Operator && self.agent.engine_commands {
             McpProfile::Operator
         } else {
@@ -997,6 +1056,7 @@ impl Dashboard {
                 bridge: &bridge_file,
                 profile,
                 dir: &dir,
+                task: task.as_ref().map(|task| task.text.as_str()),
             })?;
             if let Ok(mut log) = std::fs::OpenOptions::new()
                 .create(true)
@@ -1012,7 +1072,7 @@ impl Dashboard {
         match started {
             Ok(process) => {
                 runner.run = Some((process, now));
-                self.feed.record(json!({"kind": "agent_run", "event": "started", "engine": engine, "tick": runner.ticks, "why": why, "profile": profile.wire()}));
+                self.feed.record(json!({"kind": "agent_run", "event": "started", "engine": engine, "tick": runner.ticks, "why": why, "profile": profile.wire(), "task_id": task.as_ref().map(|task| task.id)}));
             }
             Err(error) => {
                 runner.error = Some(if error.kind() == std::io::ErrorKind::NotFound {
@@ -1023,6 +1083,171 @@ impl Dashboard {
                 self.feed.record(json!({"kind": "agent_run", "event": "failed", "engine": engine, "error": runner.error}));
             }
         }
+    }
+
+    /// Give the engine a task in the operator's words. It runs at once (or
+    /// right after the run in progress) and stays in the briefing until the
+    /// operator clears or replaces it. The engine's moves still come back as
+    /// cards; nothing here commands a rover.
+    pub(super) fn set_operator_task(&mut self, text: &str, source: &'static str) {
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            self.note = "Say or type what the fleet should do".into();
+            return;
+        }
+        let text: String = text.chars().take(OPERATOR_TASK_MAX_CHARS).collect();
+        self.agent.next_task += 1;
+        let task = OperatorTask {
+            id: self.agent.next_task,
+            text,
+            source,
+            at: self.now,
+        };
+        let replaced = self.agent.task.as_ref().map(|old| old.id);
+        self.feed.record(json!({
+            "kind": "operator_task",
+            "event": "set",
+            "id": task.id,
+            "text": task.text,
+            "source": source,
+            "replaced": replaced,
+            "engine": self.agent.runner.as_ref().map(|runner| runner.cli.engine()),
+        }));
+        self.note = match (&self.agent.runner, self.agent.mode) {
+            (_, AgentMode::Off) => {
+                "Task saved. Set the Agent panel to Advise so the engine can plan it".into()
+            }
+            (Some(runner), _) => format!("{} is planning: {}", runner.cli.label(), task.text),
+            (None, _) => "Task saved. Pick Claude or Codex as the engine to plan it".into(),
+        };
+        if let Some(runner) = self.agent.runner.as_mut() {
+            runner.last_check = f64::NEG_INFINITY;
+        }
+        self.agent.task = Some(task);
+    }
+
+    pub(super) fn clear_operator_task(&mut self, why: &str) {
+        if let Some(task) = self.agent.task.take() {
+            self.feed.record(json!({
+                "kind": "operator_task", "event": "cleared", "id": task.id, "why": why,
+                "age_s": self.now - task.at,
+            }));
+            self.note = "Task cleared; the engine goes back to watching the fleet".into();
+        }
+    }
+
+    /// Talk button: start recording, or stop and transcribe.
+    pub(super) fn toggle_voice(&mut self) {
+        if self.agent.voice.recording.is_some() {
+            self.finish_voice();
+            return;
+        }
+        if self.agent.voice.pending.is_some() {
+            self.note = "Still working out what you said".into();
+            return;
+        }
+        if let Err(error) = Transcriber::from_env() {
+            self.agent.voice.note = Some((error, true));
+            return;
+        }
+        match Recording::start() {
+            Ok(recording) => {
+                self.agent.voice.recording = Some(recording);
+                self.agent.voice.note = None;
+                self.note = "Listening. Press Talk again (or Cmd/Ctrl+Shift+V) when done".into();
+            }
+            Err(error) => self.agent.voice.note = Some((error, true)),
+        }
+    }
+
+    fn finish_voice(&mut self) {
+        let Some(recording) = self.agent.voice.recording.take() else {
+            return;
+        };
+        let driver_error = recording.error();
+        let samples = recording.finish();
+        let seconds = clip_seconds(&samples);
+        if let Some(error) = driver_error.filter(|_| seconds < MIN_RECORD_S) {
+            self.agent.voice.note = Some((format!("Microphone error: {error}"), true));
+            return;
+        }
+        if seconds < MIN_RECORD_S {
+            self.agent.voice.note = Some((
+                "Too short. Press Talk, speak, then press it again".into(),
+                true,
+            ));
+            return;
+        }
+        let transcriber = match Transcriber::from_env() {
+            Ok(transcriber) => transcriber,
+            Err(error) => {
+                self.agent.voice.note = Some((error, true));
+                return;
+            }
+        };
+        self.agent.voice.clips += 1;
+        let name = format!(
+            "{}voice-{}.wav",
+            argos_gpui::AGENT_LOG_PREFIX,
+            self.agent.voice.clips
+        );
+        let (send, receive) = mpsc::channel();
+        let label = transcriber.label();
+        std::thread::spawn(move || {
+            let dir = argos_gpui::session_dir();
+            let _ = send.send(transcribe_clip(&transcriber, &samples, &dir, &name));
+        });
+        self.agent.voice.pending = Some((receive, self.now));
+        self.note = format!("Transcribing {seconds:.0} s with {label}");
+    }
+
+    fn voice_upkeep(&mut self, now: f64) {
+        if self
+            .agent
+            .voice
+            .recording
+            .as_ref()
+            .is_some_and(|recording| recording.seconds() >= MAX_RECORD_S)
+        {
+            self.finish_voice();
+        }
+        let Some((receive, started)) = self.agent.voice.pending.as_ref() else {
+            return;
+        };
+        let started = *started;
+        let heard = match receive.try_recv() {
+            Ok(heard) => heard,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("The transcriber stopped".into()),
+        };
+        self.agent.voice.pending = None;
+        match heard {
+            Ok((text, clip)) => {
+                self.feed.record(json!({
+                    "kind": "operator_voice", "text": text, "clip": clip.display().to_string(),
+                    "transcribe_s": now - started,
+                }));
+                self.agent.voice.note = Some((format!("Heard: \"{text}\""), false));
+                self.set_operator_task(&text, "voice");
+            }
+            Err(error) => {
+                self.feed
+                    .record(json!({"kind": "operator_voice", "error": error}));
+                self.agent.voice.note = Some((error, true));
+            }
+        }
+    }
+
+    /// Send what is typed in the Agent panel's task box as the task.
+    pub(super) fn send_typed_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.agent_task_input.read(cx).value().to_string();
+        if text.trim().is_empty() {
+            self.note = "Type or say what the fleet should do".into();
+            return;
+        }
+        self.set_operator_task(&text, "typed");
+        self.agent_task_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
     }
 
     /// Send accepted goals once their rover reaches L2 or L3.
@@ -1233,6 +1458,87 @@ fn urgency_tag(urgency: u8) -> Tag {
 }
 
 /// The agent panel at the lower left of the map: mode, drive grant, cards.
+/// Say or type a task for the engine. The engine plans it and answers with
+/// cards; the operator still accepts each one.
+fn task_box(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
+    let now = dashboard.now;
+    let voice = &dashboard.agent.voice;
+    let talk_label = match (&voice.recording, &voice.pending) {
+        (Some(recording), _) => format!("Stop · {:.0} s", recording.seconds()),
+        (None, Some(_)) => "Transcribing…".to_string(),
+        (None, None) => "Talk".to_string(),
+    };
+    let recording = voice.recording.is_some();
+    let busy = voice.pending.is_some();
+    let voice_note = voice.note.clone();
+    let task = dashboard.agent.task.clone();
+    v_flex()
+        .gap_1()
+        .child(div().text_xs().font_semibold().child("Task for the agents"))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(div().flex_1().min_w_0().child(Input::new(&dashboard.agent_task_input).small()))
+                .child(
+                    Button::new("agent-task-send")
+                        .outline()
+                        .small()
+                        .label("Send")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.send_typed_task(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("agent-talk")
+                        .small()
+                        .when(recording, |button| button.danger())
+                        .when(!recording, |button| button.primary())
+                        .disabled(busy)
+                        .label(talk_label)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.toggle_voice();
+                            cx.notify();
+                        })),
+                ),
+        )
+        .when_some(voice_note, |column, (note, warn)| {
+            column.child(if warn { caution(note, cx) } else { hint(note, cx) })
+        })
+        .child(match task {
+            Some(task) => h_flex()
+                .gap_2()
+                .child(
+                    div().flex_1().min_w_0().child(hint(
+                        format!(
+                            "Planning ({}, {:.0} s ago): {}",
+                            task.source,
+                            (now - task.at).max(0.),
+                            task.text
+                        ),
+                        cx,
+                    )),
+                )
+                .child(
+                    Button::new("agent-task-clear")
+                        .outline()
+                        .xsmall()
+                        .label("Clear")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear_operator_task("operator");
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+            None => hint(
+                "Press Talk and say what the fleet should do, e.g. \"rover 2 explores the left side, rover 1 goes home\". The engine plans it and answers with cards you accept or reject.",
+                cx,
+            )
+            .into_any_element(),
+        })
+        .into_any_element()
+}
+
 pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let now = dashboard.now;
     let status = dashboard.agent.status(now);
@@ -1269,6 +1575,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
     let grant = desk.grant.clone();
     let rejecting = desk.rejecting.clone();
     let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
+    let task_box = task_box(dashboard, cx);
     v_flex()
         .id("agent-panel")
         .gap_2()
@@ -1323,6 +1630,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
             hint(status.text, cx)
         })
         .when_some(engine_note, |panel, note| panel.child(hint(note, cx)))
+        .child(task_box)
         .when_some(commands_toggle, |panel, (label, on)| {
             panel.child(
                 h_flex()

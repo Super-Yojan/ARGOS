@@ -136,6 +136,7 @@ jobs:
           read -ra keychains <<< "$(security list-keychains -d user | tr -d '"')"
           security list-keychains -d user -s "$keychain" "${keychains[@]}"
           codesign --force --options runtime --timestamp \
+            --entitlements packaging/macos/argos.entitlements \
             --sign "$APPLE_SIGNING_IDENTITY" "$app"
           codesign --verify --strict --verbose=2 "$app"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
