@@ -85,6 +85,9 @@ pub(super) fn rover_inspector(
             }))
     };
     let reversing = mark.reversing || (facts.reversing_key && driving);
+    let stalled = mark
+        .drive
+        .is_some_and(|drive| drive.backing_up() && drive.stalled());
     let body = basics(dashboard, mark, &facts, cx).into_any_element();
     v_flex()
         .size_full()
@@ -114,9 +117,23 @@ pub(super) fn rover_inspector(
                                         .child(format!("Rover {id}")),
                                 )
                                 .when(reversing, |tags| {
-                                    tags.child(Tag::warning().small().child("Reversing"))
+                                    tags.child(if stalled {
+                                        Tag::danger().small().child("Backing up · not moving")
+                                    } else {
+                                        Tag::warning().small().child("Backing up")
+                                    })
                                 })
-                                .children(callout.tag.map(callout_tag)),
+                                // The Backing up tag above already says it.
+                                .children(
+                                    callout
+                                        .tag
+                                        .filter(|tag| {
+                                            !(reversing
+                                                && *tag
+                                                    == argos_gpui::console::CalloutTag::BackingUp)
+                                        })
+                                        .map(callout_tag),
+                                ),
                         )
                         .child(
                             Button::new(("inspector-stop", id))

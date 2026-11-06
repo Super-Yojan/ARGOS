@@ -46,6 +46,8 @@ impl InspectorTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CalloutTag {
     Stopped,
+    /// The rover is backing up; the most urgent state short of a stop.
+    BackingUp,
     Driving,
     Attention,
     Goal,
@@ -54,6 +56,7 @@ impl CalloutTag {
     pub fn label(self) -> &'static str {
         match self {
             Self::Stopped => "Stopped",
+            Self::BackingUp => "Backing up",
             Self::Driving => "Driving",
             Self::Attention => "Attention",
             Self::Goal => "Goal",
@@ -200,6 +203,10 @@ pub fn callout(mark: &RoverMark, stop: Option<&StopCause>, driving: bool) -> Cal
     let stopped = stop.is_some();
     let (tag, state) = if let Some(stop) = stop {
         (Some(CalloutTag::Stopped), stop.label())
+    } else if let Some(state) = mark.drive.and_then(|drive| drive.backing_label()) {
+        (Some(CalloutTag::BackingUp), state)
+    } else if mark.reversing {
+        (Some(CalloutTag::BackingUp), "Backing up".into())
     } else if driving {
         (Some(CalloutTag::Driving), "Manual · you are driving".into())
     } else if let Some(reason) = &attention {
@@ -314,6 +321,12 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
     ];
     if let Some(step) = mark.reporting.next_step() {
         rows.push(("Next step", step.into()));
+    }
+    if let Some(drive) = mark
+        .drive
+        .filter(|d| d.commanded_linear != 0. || d.stalled())
+    {
+        rows.push(("Drive", drive.summary()));
     }
     // A hold of one tick is gone before anyone reads the Autonomy row.
     if let Some(hold) = &mark.sensor_hold {

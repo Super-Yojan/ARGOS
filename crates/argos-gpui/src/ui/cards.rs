@@ -12,6 +12,7 @@ use gpui_kit::{prelude::*, *};
 pub(super) fn callout_tag(tag: CalloutTag) -> Tag {
     match tag {
         CalloutTag::Stopped => Tag::danger(),
+        CalloutTag::BackingUp => Tag::warning(),
         CalloutTag::Driving => Tag::info(),
         CalloutTag::Attention => Tag::warning(),
         CalloutTag::Goal => Tag::secondary(),

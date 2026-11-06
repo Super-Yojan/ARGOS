@@ -198,6 +198,80 @@ pub struct AutonomyReport {
     pub sensor_hold: Option<SensorHold>,
     /// Bucket dock, once one has started this run.
     pub dock: Option<crate::DockReport>,
+    /// What the wheels are doing, from Terra builds that send `drive`.
+    pub drive: Option<DriveReport>,
+}
+
+/// Seconds the wheels must push without the rover moving before ARGOS calls it stalled.
+pub const DRIVE_STALL_SHOW_SECONDS: f64 = 1.0;
+
+/// What Terra's wheels are doing this tick (`autonomy/status.drive`).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct DriveReport {
+    /// Forward speed the velocity loop is asked for, m/s; negative backs up.
+    pub commanded_linear: f64,
+    /// Forward speed the phone measures, m/s.
+    pub measured_forward: Option<f64>,
+    /// Seconds the wheels have pushed without the rover moving; 0 while it moves.
+    pub stalled_s: f64,
+}
+impl DriveReport {
+    pub fn backing_up(&self) -> bool {
+        self.commanded_linear < 0.
+    }
+    pub fn stalled(&self) -> bool {
+        self.stalled_s >= DRIVE_STALL_SHOW_SECONDS
+    }
+    /// One line for the rover card while it backs up, for example
+    /// `Backing up · not moving (3 s)` or `Backing up · 0.12 m/s`.
+    pub fn backing_label(&self) -> Option<String> {
+        if !self.backing_up() {
+            return None;
+        }
+        Some(if self.stalled() {
+            format!("Backing up · not moving ({:.0} s)", self.stalled_s)
+        } else if let Some(speed) = self.measured_forward {
+            format!("Backing up · {:.2} m/s", -speed)
+        } else {
+            "Backing up".into()
+        })
+    }
+    /// Inspector row: direction, asked vs measured speed, and any stall.
+    pub fn summary(&self) -> String {
+        let direction = if self.backing_up() {
+            "Backing up"
+        } else if self.commanded_linear > 0. {
+            "Forward"
+        } else {
+            "Not driving"
+        };
+        let mut text = format!("{direction} · asked {:.2} m/s", self.commanded_linear.abs());
+        if let Some(speed) = self.measured_forward {
+            let along = if self.backing_up() { -speed } else { speed };
+            text.push_str(&format!(", moving {along:.2} m/s"));
+        }
+        if self.stalled() {
+            text.push_str(&format!(" · not moving for {:.0} s", self.stalled_s));
+        }
+        text
+    }
+}
+
+fn drive_report(value: &Value) -> Option<DriveReport> {
+    let drive = value.get("drive")?;
+    let commanded_linear = drive["commanded_linear"]
+        .as_f64()
+        .filter(|speed| speed.is_finite())?;
+    Some(DriveReport {
+        commanded_linear,
+        measured_forward: drive["measured_forward"]
+            .as_f64()
+            .filter(|speed| speed.is_finite()),
+        stalled_s: drive["stalled_s"]
+            .as_f64()
+            .filter(|s| s.is_finite() && *s >= 0.)
+            .unwrap_or(0.),
+    })
 }
 
 /// What tripped Terra's latest `sensor_unhealthy` hold (`autonomy/status.sensor_hold`).
@@ -313,7 +387,9 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
         revision: value["revision"].as_u64(),
         hold: hold_reason(value),
         reason: level("reason"),
-        commanded_linear: commanded_forward(value),
+        commanded_linear: drive_report(value)
+            .map(|drive| drive.commanded_linear)
+            .or_else(|| commanded_forward(value)),
         pose_quality: value
             .get("pose_quality")
             .and_then(|nested| pose_quality_value(nested).ok()),
@@ -321,6 +397,7 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
         arrival_radius: arrival_radius_m(value),
         sensor_hold: sensor_hold(value),
         dock: crate::decode_dock(value),
+        drive: drive_report(value),
     })
 }
 
@@ -558,5 +635,54 @@ pub fn geographic_goal_refusal(advertised: bool) -> Option<&'static str> {
         None
     } else {
         Some("Outdoor GPS goals are unsupported on this rover")
+    }
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    fn status(drive: Value) -> AutonomyReport {
+        let value = serde_json::json!({
+            "requested_level": "teleop",
+            "effective_level": "teleop",
+            "supported_levels": ["teleop"],
+            "drive": drive,
+        });
+        decode_autonomy_status(value.to_string().as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn backing_up_and_a_stall_read_from_the_drive_block() {
+        let report = status(serde_json::json!({
+            "commanded_linear": -0.15, "measured_forward": -0.12, "stalled_s": 0.0
+        }));
+        let drive = report.drive.unwrap();
+        assert_eq!(report.commanded_linear, Some(-0.15));
+        assert!(drive.backing_up() && !drive.stalled());
+        assert_eq!(drive.backing_label().unwrap(), "Backing up · 0.12 m/s");
+
+        let drive = status(serde_json::json!({
+            "commanded_linear": -0.15, "measured_forward": 0.0, "stalled_s": 2.6
+        }))
+        .drive
+        .unwrap();
+        assert!(drive.stalled());
+        assert_eq!(
+            drive.backing_label().unwrap(),
+            "Backing up · not moving (3 s)"
+        );
+        assert!(
+            drive.summary().ends_with("not moving for 3 s"),
+            "{}",
+            drive.summary()
+        );
+
+        let drive = status(serde_json::json!({"commanded_linear": 0.3}))
+            .drive
+            .unwrap();
+        assert_eq!(drive.backing_label(), None);
+        assert_eq!(drive.summary(), "Forward · asked 0.30 m/s");
+        assert!(status(serde_json::json!(null)).drive.is_none());
     }
 }
