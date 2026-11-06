@@ -237,6 +237,12 @@ pub fn callout(mark: &RoverMark, stop: Option<&StopCause>, driving: bool) -> Cal
             report.state_label()
         };
         (report.running().then_some(CalloutTag::Goal), state)
+    } else if mark.goal_active
+        && let Some(held) = goal_hold_label(mark)
+    {
+        // A goal is set but Terra is holding the rover still: say why rather
+        // than "Going to goal" over a rover that is not moving.
+        (Some(CalloutTag::Attention), held)
     } else if mark.goal_active {
         (Some(CalloutTag::Goal), "Going to goal".into())
     } else {
@@ -661,6 +667,25 @@ pub fn unlocated(marks: &[RoverMark], presence: &[RoverPresence]) -> Vec<Unlocat
         .collect()
 }
 
+/// Why Terra holds a rover that has a goal, when it reports a hold.
+/// `obstacle_blocked` and `boxed_in` alternate while the rover is stuck, so
+/// they share one label instead of flickering between two.
+fn goal_hold_label(mark: &RoverMark) -> Option<String> {
+    if mark.safety != "hold" {
+        return None;
+    }
+    let label = match mark.autonomy_reason.as_deref().map(str::trim) {
+        Some("obstacle_blocked" | "boxed_in") => "Blocked by obstacles · not moving".into(),
+        Some(reason) if let Some(text) = argos_core::route_hold_label(reason) => {
+            format!("Can't reach goal · {text}")
+        }
+        Some("sensor_unhealthy") => "Holding · sensors not ready".into(),
+        Some(reason) if !reason.is_empty() && reason != "idle" => format!("Holding · {reason}"),
+        _ => "Holding · not moving".into(),
+    };
+    Some(label)
+}
+
 fn level(mark: &RoverMark) -> &str {
     mark.effective_level
         .as_deref()
@@ -680,7 +705,12 @@ fn attention(mark: &RoverMark) -> Option<String> {
     }
     // Pose stale while hardware status still arrives. When both pause (a
     // Wi-Fi gap) the reporting hold above speaks for it, after its delay.
+    // Pose often arrives in bursts 2-4 s apart over Wi-Fi, so wait as long as
+    // the reporting hold does before asking a person to look.
     if mark.status == "pose stale"
+        && mark
+            .pose_age
+            .is_none_or(|age| age >= argos_core::ROVER_QUIET_SECONDS)
         && mark.requested_level.as_deref() != Some("teleop")
         && mark.hardware.present
         && mark.hardware.age < argos_core::HARDWARE_STATUS_STALE_SECONDS

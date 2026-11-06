@@ -41,6 +41,8 @@ pub struct RoverMark {
     pub sequence: u64,
     /// `online`, `pose stale`, or `offline`.
     pub status: String,
+    /// Seconds since the last pose arrived, when one has.
+    pub pose_age: Option<f64>,
     /// Whether the rover still sends pose or hardware status. The router
     /// link can look healthy while the phone has stopped publishing.
     pub reporting: argos_core::Reporting,
@@ -429,6 +431,7 @@ pub fn placed_fleet_marks(
                 yaw: pose.yaw,
                 sequence: pose.sequence,
                 status: status.into(),
+                pose_age: rover.pose_age,
                 reporting: if status == "offline" {
                     argos_core::Reporting::Fresh
                 } else {

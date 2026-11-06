@@ -18,6 +18,7 @@ fn mark(id: u64) -> RoverMark {
         yaw: 0.,
         sequence: 1,
         status: "online".into(),
+        pose_age: Some(0.1),
         reporting: argos_core::Reporting::Fresh,
         occupancy: String::new(),
         grid: None,
@@ -123,6 +124,7 @@ fn a_stop_outranks_driving_and_attention_but_trace_keeps_the_reason() {
 fn a_stale_pose_needs_a_person_except_under_manual_control() {
     let mut rover = mark(3);
     rover.status = "pose stale".into();
+    rover.pose_age = Some(6.);
     // Hardware status still arrives, so only the pose is missing.
     rover.hardware = HardwareObservation {
         present: true,
@@ -588,6 +590,7 @@ fn object_line_names_local_and_gps_positions() {
 fn quiet(id: u64, silent: f64) -> RoverMark {
     let mut rover = mark(id);
     rover.status = "pose stale".into();
+    rover.pose_age = Some(silent + 0.4);
     rover.hardware = HardwareObservation {
         present: true,
         connected: true,
@@ -603,6 +606,7 @@ fn quiet(id: u64, silent: f64) -> RoverMark {
 fn pose_stale_alone_keeps_the_pose_stale_callout() {
     let mut rover = mark(3);
     rover.status = "pose stale".into();
+    rover.pose_age = Some(6.);
     rover.hardware = HardwareObservation {
         present: true,
         connected: true,
@@ -610,7 +614,7 @@ fn pose_stale_alone_keeps_the_pose_stale_callout() {
         age: 0.2,
         ..HardwareObservation::default()
     };
-    rover.reporting = argos_core::Reporting::classify(Some(4.), &rover.hardware);
+    rover.reporting = argos_core::Reporting::classify(Some(6.), &rover.hardware);
     assert!(rover.reporting.is_fresh());
     assert_eq!(callout(&rover, None, false).state, "Pose stale");
     assert_eq!(link_label("healthy", &[rover.clone()]), "Link healthy");
@@ -869,4 +873,48 @@ fn backing_up_is_named_on_the_card_and_a_stall_says_not_moving() {
         callout(&rover, Some(&stop), false).tag,
         Some(CalloutTag::Stopped)
     );
+}
+
+#[test]
+fn a_short_pose_gap_does_not_blink_pose_stale() {
+    // 2026-11-06 field log: pose arrived 2-4 s apart while status kept
+    // flowing, so the callout blinked "Pose stale" every few seconds.
+    let mut rover = mark(3);
+    rover.status = "pose stale".into();
+    rover.pose_age = Some(3.2);
+    rover.hardware = HardwareObservation {
+        present: true,
+        connected: true,
+        ready: true,
+        age: 0.2,
+        ..HardwareObservation::default()
+    };
+    assert_eq!(callout(&rover, None, false).state, "L3 Planned · idle");
+    rover.pose_age = Some(5.5);
+    assert_eq!(callout(&rover, None, false).state, "Pose stale");
+}
+
+#[test]
+fn a_held_rover_with_a_goal_says_why_instead_of_going_to_goal() {
+    // 2026-11-06 field log: L3 goal, Terra reported safety hold with
+    // boxed_in / obstacle_blocked for 33 s, and the card said "Going to goal".
+    let mut rover = mark(0);
+    rover.goal_active = true;
+    rover.effective_level = None;
+    rover.safety = "hold".into();
+    for reason in ["boxed_in", "obstacle_blocked"] {
+        rover.autonomy_reason = Some(reason.into());
+        let callout = callout(&rover, None, false);
+        assert_eq!(callout.tag, Some(CalloutTag::Attention));
+        assert_eq!(callout.state, "Blocked by obstacles · not moving");
+    }
+    rover.autonomy_reason = Some("route_no_path".into());
+    assert!(
+        callout(&rover, None, false)
+            .state
+            .starts_with("Can't reach goal · ")
+    );
+    rover.safety = "clear".into();
+    rover.effective_level = Some("waypoint".into());
+    assert_eq!(callout(&rover, None, false).state, "Going to goal");
 }
