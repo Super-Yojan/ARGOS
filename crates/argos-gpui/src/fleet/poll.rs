@@ -111,6 +111,7 @@ pub(super) fn poll(
     stopped: &AtomicBool,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
+    let mut reporting_holds: BTreeMap<u64, argos_core::ReportingHold> = BTreeMap::new();
     let mut aligners: BTreeMap<u64, FrameAligner> = BTreeMap::new();
     let mut overlays = OverlayFrames::default();
     let issued_after_ms = unix_millis();
@@ -187,6 +188,14 @@ pub(super) fn poll(
             &mut marks,
         );
         let now = started.elapsed().as_secs_f64();
+        // Short telemetry gaps must not flicker the rover and its notices.
+        reporting_holds.retain(|id, _| ids.contains(id));
+        for mark in &mut marks {
+            mark.reporting = reporting_holds
+                .entry(mark.id)
+                .or_default()
+                .observe(mark.reporting, now);
+        }
         for mark in &mut marks {
             if mark.quality_reported {
                 continue;

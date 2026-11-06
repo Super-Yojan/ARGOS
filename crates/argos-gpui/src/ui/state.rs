@@ -421,7 +421,10 @@ impl Dashboard {
                     } else if self.selected == Some(mark.id) && self.claim.held(self.now) {
                         Some(Color::rgb(61, 204, 154))
                     } else {
-                        (mark.status != "online").then_some(Color::rgb(255, 160, 50))
+                        // Grey while it is not reporting or offline: still
+                        // drawn where it was last seen, never removed.
+                        (!mark.reporting.is_fresh() || mark.status == "offline")
+                            .then_some(Color::rgb(140, 140, 140))
                     },
                 )
             };
