@@ -74,6 +74,64 @@ pub fn encode_level_request(level: &str, token: &str) -> Result<Vec<u8>> {
         .map_err(|e| crate::Error(e.to_string()))
 }
 
+/// A repeat of the same level request within this many seconds is dropped.
+pub const LEVEL_REPEAT_SECONDS: f64 = 3.0;
+
+/// Why a level request should not be sent, or `None` to send it.
+///
+/// Terra treats every level request, even for the level it is already at, as a
+/// fresh selection: it clears the active goal and bumps the authority revision.
+/// A repeated click therefore cancels the rover's goal and makes the next goal
+/// (stamped with the old revision) bounce as `current_authority_required`.
+/// `authority` is the rover's latest `autonomy/status`; `last` is the level last
+/// sent to it and how many seconds ago.
+pub fn redundant_level_request(
+    level: &str,
+    authority: Option<&serde_json::Value>,
+    last: Option<(&str, f64)>,
+) -> Option<String> {
+    let label = level_label(level);
+    // L0 takeover is never held back.
+    if level != "teleop"
+        && last.is_some_and(|(sent, ago)| sent == level && ago < LEVEL_REPEAT_SECONDS)
+    {
+        return Some(format!("{label} already requested · waiting for the rover"));
+    }
+    // Only goal levels: reselecting L0 or L4 has uses (a fresh explore budget).
+    if matches!(level, "waypoint" | "waypoint_direct")
+        && authority.is_some_and(|a| a["effective_level"] == level && a["requested_level"] == level)
+    {
+        return Some(format!("Rover is already at {label}"));
+    }
+    None
+}
+
+#[cfg(test)]
+mod redundant_level_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_click_is_dropped_for_a_few_seconds() {
+        assert!(redundant_level_request("waypoint", None, Some(("waypoint", 0.8))).is_some());
+        assert!(redundant_level_request("explore", None, Some(("explore", 1.0))).is_some());
+        assert!(redundant_level_request("waypoint", None, Some(("waypoint", 3.5))).is_none());
+        assert!(redundant_level_request("waypoint", None, Some(("explore", 0.5))).is_none());
+        assert!(redundant_level_request("teleop", None, Some(("teleop", 0.2))).is_none());
+    }
+
+    #[test]
+    fn goal_level_already_held_is_not_reselected() {
+        let at_l3 = json!({"effective_level": "waypoint", "requested_level": "waypoint"});
+        assert!(redundant_level_request("waypoint", Some(&at_l3), None).is_some());
+        // Reselecting explore restarts its budget, so it still goes out.
+        let at_l4 = json!({"effective_level": "explore", "requested_level": "explore"});
+        assert!(redundant_level_request("explore", Some(&at_l4), None).is_none());
+        // During a hold Terra reports no effective level: send.
+        let held = json!({"effective_level": null, "requested_level": "waypoint"});
+        assert!(redundant_level_request("waypoint", Some(&held), None).is_none());
+    }
+}
+
 /// Levels a study condition can fix, in picker order. Supervised is not a
 /// study level, and Search runs inside a fixed L4.
 pub const STUDY_LEVELS: &[(&str, &str)] = &[

@@ -303,6 +303,29 @@ pub(crate) fn authority_handler(
                     "session_id": callback_session_id,
                     "payload": payload,
                 }));
+                // A refused goal never gets a goal/status packet; its only trace
+                // is this receipt. Free the pending goal and log why.
+                if kind == "autonomy/status"
+                    && let Some(status) = &payload
+                    && status["result"] == "rejected"
+                    && let Some(token) = status["token"].as_str()
+                {
+                    let reason = status["request_reason"]
+                        .as_str()
+                        .unwrap_or("unspecified reason");
+                    if fleet_cache.lock().unwrap().goal_refused(id, token, reason) {
+                        let _ = log.record(serde_json::json!({
+                            "kind": "goal_refused",
+                            "rover_id": id,
+                            "token": token,
+                            "reason": reason,
+                            "authority_revision": status["revision"],
+                            "time": now,
+                            "utc": utc(),
+                            "session_id": callback_session_id,
+                        }));
+                    }
+                }
                 if kind == "autonomy/status"
                     && let Some(status) = &payload
                 {
