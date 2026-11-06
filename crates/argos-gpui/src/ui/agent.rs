@@ -23,7 +23,8 @@ use argos_gpui::agent_mcp::McpProfile;
 use argos_gpui::agent_runner::{AgentCli, AgentRun, TICK_MARK, tick_reply};
 use argos_gpui::console::StopOrigin;
 use argos_gpui::voice::{
-    MAX_RECORD_S, MIN_RECORD_S, Recording, Transcriber, clip_seconds, transcribe_clip,
+    MAX_RECORD_S, MIN_RECORD_S, Recording, Transcriber, clip_seconds, download_model,
+    missing_model, transcribe_clip,
 };
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
@@ -158,6 +159,8 @@ pub(super) struct VoiceDesk {
     /// Last problem or result line for the panel, and whether it is a warning.
     note: Option<(String, bool)>,
     clips: u32,
+    /// The Whisper model downloading on first Talk.
+    download: Option<mpsc::Receiver<Result<(), String>>>,
 }
 
 /// What the window keeps for agents.
@@ -1250,7 +1253,27 @@ impl Dashboard {
             self.note = "Still working out what you said".into();
             return;
         }
+        if self.agent.voice.download.is_some() {
+            self.note = "Still downloading the speech model".into();
+            return;
+        }
         if let Err(error) = Transcriber::from_env() {
+            // whisper.cpp from Homebrew ships without a model: fetch it once.
+            if let Some((_, dest)) = missing_model() {
+                let (send, receive) = mpsc::channel();
+                let path = dest.clone();
+                std::thread::spawn(move || {
+                    let _ = send.send(download_model(&path));
+                });
+                self.agent.voice.download = Some(receive);
+                self.agent.voice.note = None;
+                self.note = format!(
+                    "Downloading the Whisper speech model (~150 MB, once) to {}",
+                    dest.display()
+                );
+                self.feed.record(json!({"kind": "operator_voice", "event": "model_download", "to": dest.display().to_string()}));
+                return;
+            }
             self.agent.voice.note = Some((error, true));
             return;
         }
@@ -1314,6 +1337,25 @@ impl Dashboard {
             .is_some_and(|recording| recording.seconds() >= MAX_RECORD_S)
         {
             self.finish_voice();
+        }
+        if let Some(receive) = self.agent.voice.download.as_ref() {
+            let done = match receive.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("The model download stopped".into()))
+                }
+            };
+            if let Some(result) = done {
+                self.agent.voice.download = None;
+                match result {
+                    Ok(()) => {
+                        self.note = "Speech model ready. Press Talk and speak".into();
+                        self.agent.voice.note = None;
+                    }
+                    Err(error) => self.agent.voice.note = Some((error, true)),
+                }
+            }
         }
         let Some((receive, started)) = self.agent.voice.pending.as_ref() else {
             return;
@@ -2101,10 +2143,11 @@ fn composer(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> AnyElement {
     let talk_label = match (&voice.recording, &voice.pending) {
         (Some(recording), _) => format!("● Stop · {:.0} s", recording.seconds()),
         (None, Some(_)) => "Transcribing…".to_string(),
+        (None, None) if voice.download.is_some() => "Getting model…".to_string(),
         (None, None) => "Talk".to_string(),
     };
     let recording = voice.recording.is_some();
-    let busy = voice.pending.is_some();
+    let busy = voice.pending.is_some() || voice.download.is_some();
     // A heard phrase already shows as the operator's bubble; only problems show here.
     let voice_problem = voice
         .note
