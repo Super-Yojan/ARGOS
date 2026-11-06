@@ -30,6 +30,7 @@ fn mark(id: u64) -> RoverMark {
         degrade_reason: String::new(),
         quality_reported: false,
         reversing: false,
+        drive: None,
         hold: None,
         autonomy_reason: None,
         sensor_hold: None,
@@ -812,4 +813,39 @@ fn a_specific_rover_reason_outranks_this_windows_stop() {
         stop_cause(&rover, sent, 4.),
         Some(StopCause::Operator { .. })
     ));
+}
+
+#[test]
+fn backing_up_is_named_on_the_card_and_a_stall_says_not_moving() {
+    let mut rover = mark(3);
+    rover.reversing = true;
+    rover.drive = Some(argos_core::DriveReport {
+        commanded_linear: -0.15,
+        measured_forward: Some(-0.1),
+        stalled_s: 0.,
+    });
+    let moving = callout(&rover, None, true);
+    assert_eq!(moving.tag, Some(CalloutTag::BackingUp));
+    assert_eq!(moving.state, "Backing up · 0.10 m/s");
+    rover.drive = Some(argos_core::DriveReport {
+        commanded_linear: -0.15,
+        measured_forward: Some(0.),
+        stalled_s: 2.,
+    });
+    assert_eq!(
+        callout(&rover, None, false).state,
+        "Backing up · not moving (2 s)"
+    );
+    let rows = trace(&rover, false);
+    assert!(
+        rows.iter()
+            .any(|(k, v)| *k == "Drive" && v.contains("not moving for 2 s")),
+        "{rows:?}"
+    );
+    // A stop still outranks backing up.
+    let stop = StopCause::Rover { reason: None };
+    assert_eq!(
+        callout(&rover, Some(&stop), false).tag,
+        Some(CalloutTag::Stopped)
+    );
 }

@@ -56,6 +56,8 @@ pub struct RoverMark {
     /// True when a pose/quality report, not the yaw-rate fallback, set `degraded`.
     pub quality_reported: bool,
     pub reversing: bool,
+    /// What the wheels are doing, from Terra builds that send it.
+    pub drive: Option<argos_core::DriveReport>,
     pub hold: Option<String>,
     /// Terra's reason for the current decision; explains a hold when no level is in effect.
     pub autonomy_reason: Option<String>,
@@ -464,6 +466,7 @@ pub fn placed_fleet_marks(
                 reversing: report
                     .as_ref()
                     .is_some_and(|report| report.commanded_linear.is_some_and(|speed| speed < 0.)),
+                drive: report.as_ref().and_then(|report| report.drive),
                 hold: report.as_ref().and_then(|report| report.hold.clone()),
                 autonomy_reason: report.as_ref().and_then(|report| report.reason.clone()),
                 sensor_hold: report
