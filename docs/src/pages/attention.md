@@ -12,6 +12,12 @@ ARGOS writes what the operator attends to into the session log (`Documents/ARGOS
 | Wait time (WT) | rover needs help | operator turns to it: select, video, or a gaze dwell |
 | Interaction time (IT) | operator turns to it | rover resumes |
 
+## Timeline panel
+
+**Panels → Timeline** (or the View menu, Cmd+Opt+7) opens a bottom panel with one row per rover: the last 5 minutes and the next 10, with a fixed now line. Solid blue is interaction, amber is waiting on you, a thin line is neglect (running alone), and ◇ marks a predicted need: explore or task budget ending, or arrival at the goal at the rover's recent speed. Rows are in queue order: longest wait first, then soonest predicted need, then rovers you are working with. Click a row to select that rover.
+
+A rover waits from the moment it needs help until you select it; from then until it runs again is interaction. A rover at L0/L1 that nobody is driving counts as waiting.
+
 ## What is logged
 
 | Record | When | Key fields |

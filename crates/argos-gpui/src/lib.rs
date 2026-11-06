@@ -29,6 +29,8 @@ pub mod console;
 
 pub mod gaze;
 
+pub mod timeline;
+
 pub mod voice;
 
 mod selection;
