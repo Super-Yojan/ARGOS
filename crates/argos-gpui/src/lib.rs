@@ -29,6 +29,8 @@ pub mod console;
 
 pub mod gaze;
 
+pub mod voice;
+
 mod selection;
 pub use selection::{SELECTION_HOLD_SECONDS, SelectionHold};
 

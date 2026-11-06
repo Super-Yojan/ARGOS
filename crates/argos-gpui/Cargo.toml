@@ -28,6 +28,7 @@ bytes.workspace = true
 uuid.workspace = true
 image.workspace = true
 smallvec.workspace = true
+cpal = "0.15"
 
 [[bin]]
 name = "fpv-test-sender"

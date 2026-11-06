@@ -127,6 +127,27 @@ Everything lands in the session log next to the rest of the run, so a study can 
 
 Commands carry the source in their token too (`gpui-agent-…`, `gpui-rec-…`). Each engine run's full output is in its `argos-agent-<engine>-<time>.log`.
 
+### Tell the agents what to do (voice or typed)
+
+The Agent panel has a **Task for the agents** box. Press **Talk** (or Cmd/Ctrl+Shift+V, also under the **Agent** menu), say what the fleet should do, and press it again. Or type the task and press **Send**.
+
+```text
+Talk ─▶ microphone ─▶ speech-to-text ─▶ operator_task ─▶ engine tick now ─▶ "Plan: …" + cards ─▶ you Accept / Reject
+```
+
+- The engine (Claude, Codex or OpenCode) runs at once with the task in its prompt and in `get_briefing` (`operator_task`). It answers with a one-line plan, shown in the panel, and up to 3 cards for the first steps. Later steps come on later ticks.
+- The task stays in every tick until you press **Clear** or give a new one.
+- Nothing new can move a rover: cards still need your Accept, and **Let it command** is still off until you press it. Stop all, Space and the study lock work as before.
+- While the task box has focus, W/A/S/D and Space are text, like the L5 task box. Cmd/Ctrl+. still stops all.
+
+| Speech-to-text | Used when | Notes |
+| --- | --- | --- |
+| `ARGOS_STT_CMD` | set | Shell command; `{wav}` is the clip, stdout is the text |
+| whisper.cpp | `whisper-cli` on PATH and a model in `~/.cache/whisper` (or `ARGOS_WHISPER_MODEL`) | Offline. `brew install whisper-cpp`, then put `ggml-base.en.bin` in `~/.cache/whisper` |
+| OpenAI | `OPENAI_API_KEY` set | `curl` to `/v1/audio/transcriptions`, model `whisper-1` |
+
+Clips are saved as `argos-agent-voice-<n>.wav` in the session folder. The session log gets `operator_voice` (what was heard, the clip) and `operator_task` (`set` / `cleared`, `voice` or `typed`), and each `agent_run` names the `task_id` it planned. On macOS the first Talk asks for microphone access.
+
 ## Settings
 
 Read from the environment only, not `.env`.
@@ -139,3 +160,5 @@ Read from the environment only, not `.env`.
 | `ARGOS_AGENT_CLI` | none | Engine at launch: `claude`, `codex` or `opencode` |
 | `ARGOS_AGENT_ENV` | none | More variable names an engine may see, comma-separated |
 | `ARGOS_AGENT_CMD` | unset | A long-running command ARGOS starts once the bridge is up |
+| `ARGOS_STT_CMD` | unset | Speech-to-text command for Talk; `{wav}` is the clip |
+| `ARGOS_WHISPER_MODEL` | best `ggml-*.bin` in `~/.cache/whisper` | whisper.cpp model for Talk |

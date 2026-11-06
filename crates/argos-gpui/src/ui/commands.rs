@@ -33,6 +33,7 @@ actions!(
         ShowMission,
         ShowVideo,
         ShowAgent,
+        TalkToAgents,
     ]
 );
 
@@ -55,6 +56,7 @@ pub(crate) fn install(cx: &mut App) {
         KeyBinding::new("alt-secondary-4", ShowMission, None),
         KeyBinding::new("alt-secondary-5", ShowVideo, None),
         KeyBinding::new("alt-secondary-6", ShowAgent, None),
+        KeyBinding::new("secondary-shift-v", TalkToAgents, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.set_menus([
@@ -77,6 +79,10 @@ pub(crate) fn install(cx: &mut App) {
             MenuItem::action("Take Over (L0 Manual)", TakeOver),
             MenuItem::action("Stop Selected Rover (Space)", StopRover),
             MenuItem::action("Reset Stop", ResetStop),
+        ]),
+        Menu::new("Agent").items([
+            MenuItem::action("Talk to Agents (start / stop)", TalkToAgents),
+            MenuItem::action(PanelKind::Agent.title(), ShowAgent),
         ]),
         Menu::new("Fleet").items([
             MenuItem::action("Control Fleet / Release", ControlFleet),
@@ -169,6 +175,10 @@ pub(crate) fn handlers(root: Stateful<Div>, cx: &mut Context<Dashboard>) -> Stat
         }))
         .on_action(cx.listener(|this, _: &ToggleGrid, _, cx| {
             this.show_occupancy = !this.show_occupancy;
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &TalkToAgents, _, cx| {
+            this.toggle_voice();
             cx.notify();
         }))
         .on_action(cx.listener(|this, _: &ToggleMuted, _, cx| {
