@@ -53,6 +53,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | --- | --- | --- |
 | A button or section in the rover panel | `argos-gpui/src/ui/` | `inspector.rs` (`overview_tab`), `levels.rs`, `task.rs`, `sections.rs`, `drive.rs` |
 | The top console bar | `ui/console_bar.rs` | `console_bar`, Map / Panels / More menus |
+| A menu bar item or keyboard shortcut | `ui/commands.rs` | `install` (menus, `bind_keys`), `handlers` |
 | Which panels exist, where they open, what is basic vs optional | `ui/panels.rs` | `PanelKind`, `Docks::new`, `Docks::toggle` |
 | What a panel shows | `ui/render.rs`, `ui/inspector.rs` | `panel_body`, `basics` (Rover panel), `details_panel`, `autonomy_panel`, `goal_panel` |
 | Rover cards on the map | `ui/cards.rs` | `rover_card` |

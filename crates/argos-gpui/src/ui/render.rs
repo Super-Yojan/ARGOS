@@ -7,6 +7,7 @@ use super::cards::CARD_HEIGHT_REM;
 use super::cards::CARD_WIDTH_REM;
 use super::cards::card_group;
 use super::cards::offscreen_tabs;
+use super::commands;
 use super::console_bar::console_bar;
 use super::drive::drive_key;
 use super::inspector::{Facts, autonomy_panel, details_panel, goal_panel, rover_inspector};
@@ -77,13 +78,33 @@ impl Render for Dashboard {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .font_family(".SystemUIFont")
-            .child(console_bar(self, status, cx))
+            .map(|root| commands::handlers(root, cx))
+            .child(console_bar(self, cx))
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .w_full()
                     .child(self.docks.area.clone()),
+            )
+            // macOS-style status bar: the latest command result or note.
+            .child(
+                div()
+                    .id("console-status")
+                    .flex_none()
+                    .h(px(24.))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(div().truncate().child(if status.is_empty() {
+                        "Ready".to_string()
+                    } else {
+                        status
+                    })),
             )
     }
 }

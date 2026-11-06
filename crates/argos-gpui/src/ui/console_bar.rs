@@ -1,7 +1,8 @@
-//! Top console bar. Always shown: 2D/3D, the Map menu (imagery, grid),
-//! status, control claim, link health, Panels, More (fleet, export), and
+//! Top console bar. Always shown: title and fleet, 2D/3D, the Map menu
+//! (imagery, grid), fleet control, link health, Panels, More (fleet, export), and
 //! Stop all.
 
+use super::palette;
 use super::panels::PanelKind;
 use super::video::stop_fpv_button;
 use super::widgets::Picked;
@@ -19,18 +20,13 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::*, *};
 use terra_map::MapMode;
 
-/// Window chrome for the console: map camera and grid, the latest status,
+/// Window chrome for the console: map camera and grid,
 /// this window's control claim, link health, and the fleet stop.
-pub(super) fn console_bar(
-    dashboard: &Dashboard,
-    status: String,
-    cx: &mut Context<Dashboard>,
-) -> impl IntoElement {
+pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let mode = dashboard.map_mode;
     let fleet = dashboard.fleet_mode;
     let held = dashboard.claim.held(dashboard.now);
     let detail: SharedString = format!("{} · {}", dashboard.link, dashboard.detail).into();
-    let status: SharedString = status.into();
     // Video keeps running when its rover leaves the field; without a
     // selection there is no inspector to stop it from.
     let orphan_video = dashboard
@@ -45,7 +41,22 @@ pub(super) fn console_bar(
                 .gap_3()
                 .flex_1()
                 .min_w_0()
-                .child(div().text_sm().font_semibold().child("ARGOS"))
+                // Window title with the fleet as its subtitle.
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_baseline()
+                        .child(div().text_sm().font_semibold().child("ARGOS"))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(match fleet {
+                                    LaunchMode::Sim => "Simulator",
+                                    LaunchMode::Real => "Real rovers",
+                                }),
+                        ),
+                )
                 .child(
                     ButtonGroup::new("map-mode")
                         .outline()
@@ -122,22 +133,7 @@ pub(super) fn console_bar(
                                         .on_click(toggle_grid),
                                 )
                         })
-                })
-                .child(
-                    div()
-                        .id("console-status")
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .when(!status.is_empty(), |line| {
-                            let full = status.clone();
-                            line.tooltip(move |window, cx| {
-                                Tooltip::new(full.clone()).build(window, cx)
-                            })
-                        })
-                        .child(status),
-                ),
+                }),
         )
         .child(
             h_flex()
@@ -157,41 +153,39 @@ pub(super) fn console_bar(
                         .small()
                         .picked(held)
                         .label(if held {
-                            "Release control"
+                            "Release fleet"
                         } else {
-                            "Take control"
+                            "Control fleet"
+                        })
+                        .tooltip(if held {
+                            "Give up this window's control of the fleet (⌘⇧C)"
+                        } else {
+                            "Let this window send commands to the rovers (⌘⇧C)"
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
-                            if this.claim.held(this.now) {
-                                this.claim.release();
-                                // Releasing control also closes the rover panel.
-                                this.stop_drive();
-                                this.drag = None;
-                                this.selected = None;
-                                this.selection_hold.clear();
-                                this.note = "Control released".into();
-                            } else {
-                                this.claim.take(this.now);
-                                this.note = "Control held by this window".into();
-                            }
+                            this.toggle_claim();
                             this.focus.focus(window, cx);
                             cx.notify();
                         })),
                 )
-                .child(
-                    div()
+                // Link as a coloured dot; words only when something is wrong.
+                .child({
+                    let fresh = dashboard.marks.iter().all(|mark| mark.reporting.is_fresh())
+                        && dashboard.link == "healthy";
+                    let label = console::link_label(&dashboard.link, &dashboard.marks);
+                    h_flex()
                         .id("link-health")
+                        .gap_1p5()
                         .text_xs()
-                        .text_color(
-                            if dashboard.marks.iter().all(|mark| mark.reporting.is_fresh()) {
-                                cx.theme().muted_foreground
-                            } else {
-                                cx.theme().danger
-                            },
-                        )
+                        .text_color(cx.theme().danger)
                         .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
-                        .child(console::link_label(&dashboard.link, &dashboard.marks)),
-                )
+                        .child(div().size_2().rounded_full().bg(rgb(if fresh {
+                            palette::SUCCESS
+                        } else {
+                            palette::DANGER
+                        })))
+                        .when(!fresh, |link| link.child(label))
+                })
                 .child({
                     let weak = weak.clone();
                     Button::new("panels-menu")
@@ -265,7 +259,9 @@ pub(super) fn console_bar(
                         .danger()
                         .small()
                         .label("Stop all")
-                        .tooltip("Safety stop every rover. Each needs Reset stop to move again.")
+                        .tooltip(
+                            "Safety stop every rover (⌘.). Each needs Reset stop to move again.",
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.stop_all(StopOrigin::StopAll);
                             this.focus.focus(window, cx);

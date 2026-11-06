@@ -36,10 +36,16 @@ pub(super) fn level_group(
             .enumerate()
             .map(|(offset, (wire, label))| {
                 let index = start + offset;
+                let permitted = level_permitted(lock.as_deref(), wire);
                 Button::new(("level", index as u64))
                     .label(*label)
                     .picked(requested == Some(index))
-                    .disabled(!level_permitted(lock.as_deref(), wire))
+                    .disabled(!permitted)
+                    .when(!permitted, |button| {
+                        button.tooltip(
+                            "The study condition fixes the level. Change it in Study & tasks.",
+                        )
+                    })
             }),
     )
     .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {

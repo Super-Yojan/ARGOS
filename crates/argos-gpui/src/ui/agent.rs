@@ -1139,7 +1139,7 @@ impl Dashboard {
         };
         // Like the buttons, a card that sends something needs the operator lease.
         if !matches!(entry.rec.action, RecAction::Attention) && !self.claim.held(self.now) {
-            self.note = "Take control to accept this card".into();
+            self.note = "Control the fleet to accept this card".into();
             return;
         }
         if self

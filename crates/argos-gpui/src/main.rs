@@ -151,6 +151,7 @@ fn main() {
     });
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        ui::commands::install(cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         gpui_kit::open_window(
             WindowOptions {

@@ -180,7 +180,7 @@ impl Dashboard {
 
     fn start_mission(&mut self, id: u64) {
         if !self.claim.held(self.now) {
-            self.note = "Take control to start a mission".into();
+            self.note = "Control the fleet to start a mission".into();
             return;
         }
         if self.driving {

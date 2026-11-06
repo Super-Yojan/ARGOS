@@ -6,7 +6,7 @@ use crate::Dashboard;
 
 use argos_gpui::console::{self, CalloutTag};
 use gpui_kit::base::{h_flex, v_flex};
-use gpui_kit::component::{ActiveTheme, Sizable, button::Button, tag::Tag};
+use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, button::Button, tag::Tag};
 use gpui_kit::{prelude::*, *};
 
 pub(super) fn callout_tag(tag: CalloutTag) -> Tag {
@@ -95,11 +95,7 @@ fn rover_card(
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(format!("Rover {id}")),
-                        )
+                        .child(div().font_semibold().child(format!("Rover {id}")))
                         .children(callout.tag.map(callout_tag)),
                 )
                 .child(

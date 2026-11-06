@@ -6,6 +6,7 @@
 //! | `state.rs` | Startup, the 100 ms sync from `FleetFeed`, 3D rover markers |
 //! | `actions.rs` | What buttons and keys do: select, stop, drive, study, explore, task |
 //! | `render.rs` | The window layout and its mouse and key handlers |
+//! | `commands.rs` | Menu bar, keyboard shortcuts, and the actions they send |
 //! | `console_bar.rs` | Top bar: map mode, grid, status, link, Stop all |
 //! | `cards.rs` | Rover callout cards and off-screen tabs |
 //! | `popups.rs` | Dump approval and click-to-goal confirm popups |
@@ -31,6 +32,7 @@ mod actions;
 pub(crate) mod agent;
 pub(crate) mod attention;
 mod cards;
+pub(crate) mod commands;
 mod console_bar;
 mod drive;
 mod inspector;
