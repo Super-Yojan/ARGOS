@@ -21,7 +21,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ASSETS = [ROOT / "crates" / "terra-map" / "src" / "assets" / "robot.glb"]
+ASSETS = [ROOT / "crates" / "terra-map" / "src" / "assets" / "terra.glb"]
 
 README = """ARGOS {version}
 ==============

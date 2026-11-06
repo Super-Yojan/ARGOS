@@ -6,12 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
-/// The rover marker model.
+/// The rover marker model: Terra's CAD body (CrabTrapBot) from Zorvane's
+/// `crab_trap_bot_sim.glb`, simplified to about 47k triangles, in metres,
+/// front along glTF −Z, base at y = 0. About 0.61 m square, true size.
 pub fn robot_model() -> PathBuf {
     let source =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terra-map/src/assets/robot.glb");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terra-map/src/assets/terra.glb");
     let exe = std::env::current_exe().ok();
-    packaged_asset(exe.as_deref(), "robot.glb").unwrap_or(source)
+    packaged_asset(exe.as_deref(), "terra.glb").unwrap_or(source)
 }
 
 /// `name` in a packaged layout around `exe`, if it is there.

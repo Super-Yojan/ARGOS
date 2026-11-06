@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use terra_map::{Color, Follow, GeoPosition, Map, MapEvent, MapMode, MapView};
 
-// Measured 35-inch square footprint, including wheels. Asset is Z-up after loading.
-const ROVER_AXIS_SCALE: [f64; 3] = [0.61 / 2.45, 0.61 / 2.5, 0.61 / 2.5];
+// `terra.glb` is Terra's CAD body at true size in metres (0.61 m square).
+const ROVER_AXIS_SCALE: [f64; 3] = [1., 1., 1.];
 
 impl Dashboard {
     pub(crate) fn new(

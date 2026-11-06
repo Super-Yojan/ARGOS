@@ -30,6 +30,10 @@ struct Varying {
         let toned = vec3<f32>(0.16, 0.21, 0.24) + vec3<f32>(0.46, 0.48, 0.50) * pow(max(luminance, 0.0), 0.7);
         color = vec4<f32>(toned, color.a);
     }
-    color = vec4<f32>(mix(color.rgb, uniforms.highlight.rgb, uniforms.highlight.a * 0.85), color.a);
+    // Tint toward the highlight but keep the model's light and shade, so a
+    // selected rover still reads as a 3D shape instead of a flat silhouette.
+    let shade = dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let tinted = uniforms.highlight.rgb * (0.45 + 0.9 * shade);
+    color = vec4<f32>(mix(color.rgb, tinted, uniforms.highlight.a * 0.85), color.a);
     return color;
 }
