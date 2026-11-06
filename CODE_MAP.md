@@ -76,6 +76,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | Attention log: help episodes, selection, gaze, blinks | `argos-zenoh/src/attention.rs`, `ui/attention.rs`, `argos-gpui/src/gaze.rs` | eye tracker: `scripts/argos_eye_tracker.py` |
 | Timeline panel (neglect / waiting / interaction per rover) | `argos-gpui/src/timeline.rs`, `ui/timeline.rs` | `Timeline::observe`, `timeline_panel` |
 | The 3D map, camera, tiles | `terra-map/src/maps/` | `camera.rs`, `renderer.rs` |
+| Chase camera (Follow button) | `terra-map/src/maps/chase.rs`, `ui/state.rs` | `Chase::step`, `toggle_follow`, `sync_follow` |
 
 ## Before you push
 

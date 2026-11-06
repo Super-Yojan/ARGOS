@@ -25,6 +25,6 @@
 //! view receives its first nonzero viewport. One controller represents one view.
 //! See the `fleet` example and `src/MAPS.md` for configuration and model conventions.
 mod maps;
-pub use maps::api::{Color, GeoPosition, Map, MapError, MapEvent, ObjectId, ObjectStatus};
+pub use maps::api::{Color, Follow, GeoPosition, Map, MapError, MapEvent, ObjectId, ObjectStatus};
 pub use maps::camera::MapMode;
 pub use maps::{MapConfig, MapView};

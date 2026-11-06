@@ -61,6 +61,8 @@ struct Dashboard {
     show_occupancy: bool,
     /// Map imagery in muted survey tones instead of true colour.
     muted_map: bool,
+    /// Chase camera behind the selected rover (View > Follow Selected Rover).
+    following: bool,
     /// Map in the center, Rover panel on the right, optional panels.
     docks: ui::panels::Docks,
     driving: bool,

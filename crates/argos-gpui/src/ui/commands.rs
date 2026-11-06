@@ -27,6 +27,7 @@ actions!(
         Map3D,
         ToggleGrid,
         ToggleMuted,
+        ToggleFollow,
         ShowDetails,
         ShowStudy,
         ShowGoal,
@@ -51,6 +52,7 @@ pub(crate) fn install(cx: &mut App) {
         KeyBinding::new("secondary-3", Map3D, None),
         KeyBinding::new("secondary-g", ToggleGrid, None),
         KeyBinding::new("secondary-shift-m", ToggleMuted, None),
+        KeyBinding::new("secondary-shift-f", ToggleFollow, None),
         KeyBinding::new("alt-secondary-1", ShowDetails, None),
         KeyBinding::new("alt-secondary-2", ShowStudy, None),
         KeyBinding::new("alt-secondary-3", ShowGoal, None),
@@ -66,6 +68,7 @@ pub(crate) fn install(cx: &mut App) {
         Menu::new("View").items([
             MenuItem::action("2D Map", Map2D),
             MenuItem::action("3D Map", Map3D),
+            MenuItem::action("Follow Selected Rover", ToggleFollow),
             MenuItem::separator(),
             MenuItem::action("Muted Imagery", ToggleMuted),
             MenuItem::action("Occupancy Grid", ToggleGrid),
@@ -182,6 +185,10 @@ pub(crate) fn handlers(root: Stateful<Div>, cx: &mut Context<Dashboard>) -> Stat
         }))
         .on_action(cx.listener(|this, _: &TalkToAgents, _, cx| {
             this.toggle_voice();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &ToggleFollow, _, cx| {
+            this.toggle_follow();
             cx.notify();
         }))
         .on_action(cx.listener(|this, _: &ToggleMuted, _, cx| {

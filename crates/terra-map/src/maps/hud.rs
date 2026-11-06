@@ -244,7 +244,10 @@ impl MapView {
                 {
                     let x = f32::from(event.position.x - last.x) as f64;
                     let y = f32::from(event.position.y - last.y) as f64;
-                    if event.modifiers.shift || this.camera.mode == MapMode::TwoD {
+                    if let Some(chase) = this.chase.as_mut() {
+                        // Following: drag swings around the rover, never pans away.
+                        chase.orbit(&mut this.camera, x, y);
+                    } else if event.modifiers.shift || this.camera.mode == MapMode::TwoD {
                         this.camera.pan_in_view(
                             x,
                             y,

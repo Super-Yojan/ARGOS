@@ -12,7 +12,7 @@ use argos_gpui::LaunchMode;
 use argos_gpui::console::{self, StopOrigin};
 use gpui_kit::base::h_flex;
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt, TitleBar,
+    ActiveTheme, Disableable, Sizable, StyledExt, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     menu::{DropdownMenu, PopupMenuItem},
     tooltip::Tooltip,
@@ -24,6 +24,8 @@ use terra_map::MapMode;
 /// this window's control claim, link health, and the fleet stop.
 pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let mode = dashboard.map_mode;
+    let following = dashboard.following;
+    let can_follow = following || dashboard.selected.is_some();
     let fleet = dashboard.fleet_mode;
     let held = dashboard.claim.held(dashboard.now);
     let detail: SharedString = format!("{} · {}", dashboard.link, dashboard.detail).into();
@@ -81,6 +83,27 @@ pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                             cx.notify();
                         })),
                 )
+                .child({
+                    let button = Button::new("map-follow")
+                        .small()
+                        .label(if following { "Following" } else { "Follow" })
+                        .tooltip(if can_follow {
+                            "Chase camera behind the selected rover (⇧⌘F)"
+                        } else {
+                            "Select a rover to follow"
+                        })
+                        .disabled(!can_follow)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_follow();
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        }));
+                    if following {
+                        button.primary()
+                    } else {
+                        button.outline()
+                    }
+                })
                 .child({
                     let weak = weak.clone();
                     Button::new("map-menu")

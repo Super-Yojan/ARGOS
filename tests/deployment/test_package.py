@@ -30,7 +30,7 @@ class PackageTests(unittest.TestCase):
             mode = archive.getinfo('argos-1.2.3-linux-x64/argos').external_attr >> 16
         self.assertTrue({
             'argos-1.2.3-linux-x64/argos',
-            'argos-1.2.3-linux-x64/assets/robot.glb',
+            'argos-1.2.3-linux-x64/assets/terra.glb',
             'argos-1.2.3-linux-x64/.env.example',
             'argos-1.2.3-linux-x64/README.txt',
             'argos-1.2.3-linux-x64/NOTICE.txt',
@@ -46,7 +46,7 @@ class PackageTests(unittest.TestCase):
         out = self.package('macos-arm64')
         app = out / 'argos-1.2.3-macos-arm64/ARGOS.app/Contents'
         self.assertTrue((app / 'MacOS/argos').is_file())
-        self.assertTrue((app / 'Resources/assets/robot.glb').is_file())
+        self.assertTrue((app / 'Resources/assets/terra.glb').is_file())
         self.assertIn('<string>1.2.3</string>', (app / 'Info.plist').read_text())
         self.assertFalse((out / 'argos-1.2.3-macos-arm64.zip').exists())
 

@@ -2,6 +2,12 @@ use glam::{DMat4, DVec3, DVec4};
 
 pub const EARTH_RADIUS: f64 = 6_378_137.0;
 pub const FOV: f64 = 50.0_f64.to_radians();
+/// Closest the orbit camera comes to its target, metres.
+pub const MIN_DISTANCE: f64 = 20.;
+/// Closest and farthest the chase camera sits behind a followed object, metres.
+/// A small rover needs the camera a couple of metres away to read as 3D.
+pub const CHASE_MIN_DISTANCE: f64 = 1.5;
+pub const CHASE_MAX_DISTANCE: f64 = 80.;
 
 pub fn ecef(latitude: f64, longitude: f64, altitude: f64) -> DVec3 {
     let (lat, lon) = (latitude.to_radians(), longitude.to_radians());
@@ -58,6 +64,8 @@ pub struct Camera {
     pub distance: f64,
     pub heading: f64,
     pub pitch: f64,
+    /// Chase camera: allow a close 3D distance behind a followed object.
+    pub chase: bool,
 }
 
 impl Camera {
@@ -76,10 +84,24 @@ impl Camera {
             latitude,
             longitude,
             altitude,
-            distance: distance.clamp(20., 5_000_000.),
+            distance: distance.clamp(MIN_DISTANCE, 5_000_000.),
             heading: heading.to_radians(),
             pitch: pitch.to_radians().clamp(0.1, 1.55),
+            chase: false,
         }
+    }
+    /// Distance limits for the current mode. Only the 3D chase view comes close.
+    pub fn distance_range(&self) -> (f64, f64) {
+        if self.chase && self.mode == MapMode::ThreeD {
+            (CHASE_MIN_DISTANCE, CHASE_MAX_DISTANCE)
+        } else {
+            (MIN_DISTANCE, 5_000_000.)
+        }
+    }
+    /// Keep `distance` inside the current mode's limits.
+    pub fn clamp_distance(&mut self) {
+        let (low, high) = self.distance_range();
+        self.distance = self.distance.clamp(low, high);
     }
     pub fn set_mode(&mut self, mode: MapMode) {
         if self.mode == mode {
@@ -109,7 +131,8 @@ impl Camera {
         self.pitch = (self.pitch + y * 0.005).clamp(0.1, 1.55);
     }
     pub fn zoom(&mut self, delta: f64) {
-        self.distance = (self.distance * (-delta * 0.002).exp()).clamp(20., 5_000_000.);
+        let (low, high) = self.distance_range();
+        self.distance = (self.distance * (-delta * 0.002).exp()).clamp(low, high);
     }
     /// Pointer deltas are logical pixels; match the orthographic map footprint.
     pub fn pan_in_view(&mut self, x: f64, y: f64, logical_height: f64) {
@@ -303,7 +326,10 @@ impl Camera {
                 up
             },
         );
-        let near = (self.distance * 0.0001).clamp(0.5, 500.);
+        // A close chase camera must not clip the followed object.
+        let near = (self.distance * 0.0001)
+            .clamp(0.5, 500.)
+            .min(self.distance * 0.2);
         let aspect = width.max(1) as f64 / height.max(1) as f64;
         let half_height = self.distance * (FOV * 0.5).tan();
         let projection = if self.mode == MapMode::TwoD {
