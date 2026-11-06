@@ -37,6 +37,13 @@ impl GeoPosition {
         }
     }
 }
+/// What the chase camera follows: where the object is and which way it faces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Follow {
+    pub position: GeoPosition,
+    /// Degrees clockwise from north, the way the object faces.
+    pub bearing: f64,
+}
 /// An opaque instance handle, scoped to the Map that created it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectId {
@@ -133,6 +140,7 @@ pub(super) struct Snapshot {
     pub navigation: Option<(u64, GeoPosition)>,
     pub mode: Option<(u64, MapMode)>,
     pub survey: Option<(u64, bool)>,
+    pub follow: Option<Follow>,
 }
 struct State {
     revision: u64,
@@ -145,6 +153,7 @@ struct State {
     navigation: Option<(u64, GeoPosition)>,
     mode: Option<(u64, MapMode)>,
     survey: Option<(u64, bool)>,
+    follow: Option<Follow>,
     events: VecDeque<MapEvent>,
 }
 /// Cloneable, thread-safe controller. Create one MapView per controller.
@@ -194,6 +203,7 @@ impl Map {
                 navigation: None,
                 mode: None,
                 survey: None,
+                follow: None,
                 events: VecDeque::new(),
             })),
         })
@@ -239,6 +249,24 @@ impl Map {
         let mut s = self.state.lock().unwrap();
         s.revision += 1;
         s.survey = Some((s.revision, survey));
+    }
+    /// Ride a chase camera behind this object, or `None` to go back to the
+    /// orbit camera. Call again with each new position; the view eases
+    /// between calls. While following, `show_lat_lon` is ignored.
+    pub fn follow(&self, target: Option<Follow>) -> Result<(), MapError> {
+        if let Some(target) = target {
+            target.position.validate()?;
+            if !target.bearing.is_finite() {
+                return Err(MapError::InvalidTransform);
+            }
+        }
+        let mut s = self.state.lock().unwrap();
+        if s.follow == target {
+            return Ok(());
+        }
+        s.revision += 1;
+        s.follow = target;
+        Ok(())
     }
     /// Schedule a local GLB/glTF load. Inspect object_status or poll_event for its result.
     pub fn add_3d_obj(
@@ -366,6 +394,7 @@ impl Map {
             navigation: s.navigation,
             mode: s.mode,
             survey: s.survey,
+            follow: s.follow,
         }
     }
     pub(super) fn worker_started(&self) -> u64 {

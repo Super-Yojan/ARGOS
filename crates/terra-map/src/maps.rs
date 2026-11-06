@@ -4,6 +4,7 @@
 //! synthetic textured GPU fixture without making any network requests.
 pub(crate) mod api;
 pub(crate) mod camera;
+mod chase;
 mod content;
 mod hud;
 mod metrics;
@@ -19,7 +20,10 @@ mod worker;
 
 use camera::{Camera, MapMode};
 use gpui_kit::{prelude::*, *};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use worker::{MapWorker, Update};
 
 /// Credentials are intentionally excluded from Debug output.
@@ -92,6 +96,9 @@ pub struct MapView {
     mode_revision: u64,
     survey_revision: u64,
     flight: Option<navigation::Flight>,
+    /// Chase camera behind a followed object, while the app asks for one.
+    chase: Option<chase::Chase>,
+    last_tick: Instant,
     camera: Camera,
     worker: MapWorker,
     image: Option<Arc<RenderImage>>,
@@ -157,9 +164,11 @@ impl MapView {
                                     image_started.elapsed().as_secs_f64() * 1000.;
                             }
                             // Keep close zoom above the same visible surface used by rover models.
-                            if let Some(altitude) = this
-                                .controller
-                                .surface_altitude(this.camera.latitude, this.camera.longitude)
+                            // The chase camera takes the followed object's height instead.
+                            if this.chase.is_none()
+                                && let Some(altitude) = this
+                                    .controller
+                                    .surface_altitude(this.camera.latitude, this.camera.longitude)
                                 && (altitude - this.camera.altitude).abs() > 0.05
                             {
                                 this.camera.altitude = altitude;
@@ -194,6 +203,8 @@ impl MapView {
             mode_revision: 0,
             survey_revision: 0,
             flight: None,
+            chase: None,
+            last_tick: Instant::now(),
             camera: config.camera(),
             config,
             worker,
@@ -240,16 +251,44 @@ impl MapView {
                     self.imagery(cx);
                 }
             }
+            match (snapshot.follow, self.chase.as_mut()) {
+                (Some(target), Some(chase)) => chase.target = target,
+                (Some(target), None) => {
+                    self.flight = None;
+                    self.drag = None;
+                    self.chase = Some(chase::Chase::begin(&mut self.camera, target));
+                }
+                (None, Some(_)) => {
+                    if let Some(chase) = self.chase.take() {
+                        chase.end(&mut self.camera);
+                    }
+                    self.send();
+                    cx.notify();
+                }
+                (None, None) => {}
+            }
             if let Some((revision, position)) = snapshot.navigation
                 && revision != self.navigation_revision
             {
                 self.navigation_revision = revision;
-                self.flight = Some(navigation::Flight::new(
-                    &self.camera,
-                    position,
-                    self.config.fly_duration,
-                ));
+                // The chase camera owns the view while following.
+                if self.chase.is_none() {
+                    self.flight = Some(navigation::Flight::new(
+                        &self.camera,
+                        position,
+                        self.config.fly_duration,
+                    ));
+                }
             }
+        }
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.25);
+        self.last_tick = now;
+        if let Some(chase) = self.chase.as_mut()
+            && chase.step(&mut self.camera, dt)
+        {
+            self.send();
+            cx.notify();
         }
         if let Some(flight) = &self.flight {
             let finished = flight.advance(&mut self.camera);
@@ -423,6 +462,12 @@ impl MapView {
     }
     fn reset(&mut self, cx: &mut Context<Self>) {
         self.flight = None;
+        if let Some(chase) = self.chase.as_mut() {
+            chase.reset(&mut self.camera);
+            self.send();
+            cx.notify();
+            return;
+        }
         let mode = self.camera.mode;
         self.camera = self.config.camera();
         self.camera.set_mode(mode);
@@ -435,6 +480,9 @@ impl MapView {
             return;
         }
         self.camera.set_mode(mode);
+        if let Some(chase) = self.chase.as_mut() {
+            chase.mode_changed(&mut self.camera);
+        }
         self.drag = None;
         self.epoch = self.epoch.wrapping_add(1);
         self.send();
@@ -451,7 +499,10 @@ impl MapView {
             return;
         }
         self.flight = None;
+        // Panning would fight the chase camera; zoom, reset and 2D/3D still work.
+        let following = self.chase.is_some();
         match event.keystroke.key.as_str() {
+            "up" | "w" | "down" | "s" | "left" | "a" | "right" | "d" if following => return,
             "up" | "w" => self.camera.pan(0., -40.),
             "down" | "s" => self.camera.pan(0., 40.),
             "left" | "a" => self.camera.pan(40., 0.),

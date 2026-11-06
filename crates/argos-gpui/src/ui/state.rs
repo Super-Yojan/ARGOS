@@ -19,7 +19,7 @@ use gpui_kit::{prelude::*, *};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use terra_map::{Color, GeoPosition, Map, MapEvent, MapMode, MapView};
+use terra_map::{Color, Follow, GeoPosition, Map, MapEvent, MapMode, MapView};
 
 // Measured 35-inch square footprint, including wheels. Asset is Z-up after loading.
 const ROVER_AXIS_SCALE: [f64; 3] = [0.61 / 2.45, 0.61 / 2.5, 0.61 / 2.5];
@@ -109,6 +109,7 @@ impl Dashboard {
             inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
             muted_map: false,
+            following: false,
             docks: super::panels::Docks::new(window, cx),
             driving: false,
             held: BTreeSet::new(),
@@ -202,10 +203,12 @@ impl Dashboard {
         self.log_rover_stops();
         self.sync_markers(&seen, false, self.view.read(cx).ground_altitude());
         self.sync_markers(&seen, true, self.view.read(cx).ground_altitude());
+        self.sync_follow();
         if seen.is_empty() {
             self.framed.clear();
             self.framed_center = None;
-        } else if self.drag.is_none()
+        } else if !self.following
+            && self.drag.is_none()
             && !self.driving
             && let Some((ids, latitude, longitude)) =
                 reframing_target(&self.framed, self.framed_center, &self.marks)
@@ -528,6 +531,57 @@ impl Dashboard {
         self.command.clear();
         self.note = format!("Switched to {} · {}", mode.label(), self.detail);
         window.set_window_title(mode.title());
+    }
+    /// Turn the chase camera behind the selected rover on or off.
+    pub(super) fn toggle_follow(&mut self) {
+        if self.following {
+            self.following = false;
+            let _ = self.map.follow(None);
+            self.note = "Follow off".into();
+            return;
+        }
+        if self.selected.is_none() {
+            self.note = "Select a rover to follow".into();
+            return;
+        }
+        self.following = true;
+        self.note = "Following the selected rover. Drag to look around".into();
+        self.sync_follow();
+    }
+    /// Keep the chase camera on the selected rover, where its model is drawn.
+    fn sync_follow(&mut self) {
+        if !self.following {
+            return;
+        }
+        let Some(mark) = self
+            .selected
+            .and_then(|id| self.marks.iter().find(|mark| mark.id == id))
+        else {
+            self.following = false;
+            let _ = self.map.follow(None);
+            self.note = "Follow off: no rover selected".into();
+            return;
+        };
+        let preview = self
+            .drag
+            .as_ref()
+            .filter(|active| active.from_map)
+            .map(|active| &active.goal);
+        let (latitude, longitude) = model_position(
+            mark.id,
+            (mark.latitude, mark.longitude),
+            mark.overlay_frame,
+            preview,
+        );
+        let Some(altitude) = self.map.surface_altitude(latitude, longitude) else {
+            // No ground under the rover yet: keep the last view.
+            return;
+        };
+        let _ = self.map.follow(Some(Follow {
+            position: GeoPosition::new(latitude, longitude, altitude),
+            // Marker heading is a compass bearing (clockwise from north).
+            bearing: mark.heading,
+        }));
     }
     pub(super) fn set_map_mode(&mut self, mode: MapMode) {
         self.map_mode = mode;
