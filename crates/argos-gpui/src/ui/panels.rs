@@ -32,17 +32,20 @@ pub(crate) enum PanelKind {
     Video,
     /// Agent bridge and recommendation cards.
     Agent,
+    /// Per-rover neglect, waiting and interaction over time.
+    Timeline,
 }
 
 impl PanelKind {
     /// Optional panels, in the order the Panels menu lists them.
-    pub(crate) const OPTIONAL: [PanelKind; 6] = [
+    pub(crate) const OPTIONAL: [PanelKind; 7] = [
         PanelKind::Details,
         PanelKind::Autonomy,
         PanelKind::Goal,
         PanelKind::Mission,
         PanelKind::Video,
         PanelKind::Agent,
+        PanelKind::Timeline,
     ];
 
     /// Stable name for saved layouts. Never change one.
@@ -56,6 +59,7 @@ impl PanelKind {
             PanelKind::Mission => "argos.mission",
             PanelKind::Video => "argos.video",
             PanelKind::Agent => "argos.agent",
+            PanelKind::Timeline => "argos.timeline",
         }
     }
 
@@ -69,6 +73,7 @@ impl PanelKind {
             PanelKind::Mission => "Mission",
             PanelKind::Video => "Video",
             PanelKind::Agent => "Agent",
+            PanelKind::Timeline => "Timeline",
         }
     }
 
@@ -77,7 +82,7 @@ impl PanelKind {
         match self {
             PanelKind::Map => DockPlacement::Center,
             PanelKind::Agent => DockPlacement::Left,
-            PanelKind::Video => DockPlacement::Bottom,
+            PanelKind::Video | PanelKind::Timeline => DockPlacement::Bottom,
             _ => DockPlacement::Right,
         }
     }

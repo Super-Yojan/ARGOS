@@ -33,6 +33,7 @@ actions!(
         ShowMission,
         ShowVideo,
         ShowAgent,
+        ShowTimeline,
         TalkToAgents,
     ]
 );
@@ -56,6 +57,7 @@ pub(crate) fn install(cx: &mut App) {
         KeyBinding::new("alt-secondary-4", ShowMission, None),
         KeyBinding::new("alt-secondary-5", ShowVideo, None),
         KeyBinding::new("alt-secondary-6", ShowAgent, None),
+        KeyBinding::new("alt-secondary-7", ShowTimeline, None),
         KeyBinding::new("secondary-shift-v", TalkToAgents, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -74,6 +76,7 @@ pub(crate) fn install(cx: &mut App) {
             MenuItem::action(PanelKind::Mission.title(), ShowMission),
             MenuItem::action(PanelKind::Video.title(), ShowVideo),
             MenuItem::action(PanelKind::Agent.title(), ShowAgent),
+            MenuItem::action(PanelKind::Timeline.title(), ShowTimeline),
         ]),
         Menu::new("Rover").items([
             MenuItem::action("Take Over (L0 Manual)", TakeOver),
@@ -191,5 +194,6 @@ pub(crate) fn handlers(root: Stateful<Div>, cx: &mut Context<Dashboard>) -> Stat
     let root = panel::<ShowGoal>(root, PanelKind::Goal, cx);
     let root = panel::<ShowMission>(root, PanelKind::Mission, cx);
     let root = panel::<ShowVideo>(root, PanelKind::Video, cx);
-    panel::<ShowAgent>(root, PanelKind::Agent, cx)
+    let root = panel::<ShowAgent>(root, PanelKind::Agent, cx);
+    panel::<ShowTimeline>(root, PanelKind::Timeline, cx)
 }

@@ -23,6 +23,7 @@
 //! | `map_overlay.rs`, `local_map.rs` | Grid, route, and goal drawing on the 3D map |
 //! | `palette.rs` | Console colors |
 //! | `panels.rs` | Dock panels: Map center, Rover right, optional panels from the Panels menu |
+//! | `timeline.rs` | Timeline panel: per-rover neglect, waiting, interaction, predicted need |
 //! | `attention.rs` | Attention log: selection, video, window focus, card states, poses, gaze, blinks |
 //!
 //! Fleet data, `.env` settings, and sending commands live in the library
@@ -48,5 +49,6 @@ mod render;
 mod sections;
 mod state;
 mod task;
+mod timeline;
 mod video;
 mod widgets;

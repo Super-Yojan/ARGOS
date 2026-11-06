@@ -152,6 +152,10 @@ impl Dashboard {
             // The chat lays out its own scrolling conversation and composer.
             return agent::agent_panel(self, cx);
         }
+        if kind == PanelKind::Timeline {
+            // Every rover, not just the selected one.
+            return self.timeline_panel(cx);
+        }
         if kind == PanelKind::Video {
             // No scroll wrapper: the picture fills the panel and the controls stay
             // in view at any panel height.

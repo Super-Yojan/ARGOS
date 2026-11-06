@@ -138,6 +138,7 @@ impl Dashboard {
             fleet_mode,
             agent: agent::AgentDesk::start(),
             attention: super::attention::AttentionLog::start(),
+            timeline: Default::default(),
             missions: Default::default(),
             _poll: poll,
         }
@@ -213,6 +214,7 @@ impl Dashboard {
             self.framed = ids;
             self.framed_center = Some((latitude, longitude));
         }
+        self.sync_timeline(now);
         self.sync_study();
         self.seed_preview();
     }
