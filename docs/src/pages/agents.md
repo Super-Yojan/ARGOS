@@ -129,7 +129,16 @@ Commands carry the source in their token too (`gpui-agent-…`, `gpui-rec-…`).
 
 ### Tell the agents what to do (voice or typed)
 
-The Agent panel has a **Task for the agents** box. Press **Talk** (or Cmd/Ctrl+Shift+V, also under the **Agent** menu), say what the fleet should do, and press it again. Or type the task and press **Send**.
+The Agent panel is a chat. Press **Talk** (or Cmd/Ctrl+Shift+V, also under the **Agent** menu), say what the fleet should do, and press it again. Or type the task in the box at the bottom and press **Enter** or **Send**.
+
+| Part of the panel | What it shows |
+| --- | --- |
+| Header | Status dot, engine menu (None / Claude / Codex / OpenCode), Off / Advise / Operator, link status, and in Operator mode the **Let it command** strip |
+| Conversation | Your tasks (right), the engine's full reply after each run (left), quiet notes (mode changes, cards accepted or rejected, task cleared), problems in an amber box, and "Planning your task…" while a run is going |
+| Inline cards | The drive request and every open recommendation, each with Accept / Reject as before |
+| Composer | The current task with **Clear**, the task box, **Talk**, **Send** |
+
+The conversation is display only and keeps the last 200 lines. An engine reply that repeats the previous one is not shown again. Claude Code prints only its final answer, so its reply is shown in full (up to 1,500 characters); for other engines the panel shows the tail of what they printed.
 
 ```text
 Talk ─▶ microphone ─▶ speech-to-text ─▶ operator_task ─▶ engine tick now ─▶ "Plan: …" + cards ─▶ you Accept / Reject
