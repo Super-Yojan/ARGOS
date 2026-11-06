@@ -476,16 +476,13 @@ impl Renderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(if self.survey {
-                            // #F1F4F3 in linear light, matching the console background.
-                            wgpu::Color {
-                                r: 0.8796,
-                                g: 0.9047,
-                                b: 0.8963,
-                                a: 1.,
-                            }
-                        } else {
-                            wgpu::Color::WHITE
+                        // #F1F4F3 in linear light, matching the console background,
+                        // in both survey and true-colour modes.
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.8796,
+                            g: 0.9047,
+                            b: 0.8963,
+                            a: 1.,
                         }),
                         store: wgpu::StoreOp::Store,
                     },

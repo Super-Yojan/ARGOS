@@ -1,11 +1,12 @@
 //! Rover callout cards on the map and tabs for rovers off screen or with
 //! no position.
 
+use super::widgets::Picked;
 use crate::Dashboard;
 
 use argos_gpui::console::{self, CalloutTag};
 use gpui_kit::base::{h_flex, v_flex};
-use gpui_kit::component::{ActiveTheme, Selectable, Sizable, button::Button, tag::Tag};
+use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, button::Button, tag::Tag};
 use gpui_kit::{prelude::*, *};
 
 pub(super) fn callout_tag(tag: CalloutTag) -> Tag {
@@ -85,7 +86,7 @@ fn rover_card(
         .py_1()
         .max_w(rems(CARD_WIDTH_REM))
         .bg(cx.theme().popover)
-        .selected(selected)
+        .picked(selected)
         .child(
             v_flex()
                 .items_start()
@@ -94,11 +95,7 @@ fn rover_card(
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(
-                            div()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(format!("Rover {id}")),
-                        )
+                        .child(div().font_semibold().child(format!("Rover {id}")))
                         .children(callout.tag.map(callout_tag)),
                 )
                 .child(
@@ -143,7 +140,7 @@ pub(super) fn offscreen_tabs(
                         .outline()
                         .small()
                         .bg(cx.theme().popover)
-                        .selected(selected == Some(id))
+                        .picked(selected == Some(id))
                         .tooltip("Off screen. Centers the map on this rover and selects it.")
                         .child(
                             h_flex()

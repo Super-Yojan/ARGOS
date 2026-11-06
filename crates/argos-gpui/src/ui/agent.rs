@@ -8,6 +8,7 @@
 use super::interaction::geographic_gate;
 use super::levels::gps_blocks;
 use super::task::task_agent_choice;
+use super::widgets::Picked;
 use super::widgets::{caution, hint};
 use crate::Dashboard;
 use argos_core::{
@@ -25,7 +26,7 @@ use argos_gpui::console::StopOrigin;
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Selectable, Sizable, StyledExt, ThemeStyled,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonGroup},
     tag::Tag,
 };
@@ -1138,7 +1139,7 @@ impl Dashboard {
         };
         // Like the buttons, a card that sends something needs the operator lease.
         if !matches!(entry.rec.action, RecAction::Attention) && !self.claim.held(self.now) {
-            self.note = "Take control to accept this card".into();
+            self.note = "Control the fleet to accept this card".into();
             return;
         }
         if self
@@ -1269,14 +1270,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
     let rejecting = desk.rejecting.clone();
     let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
     v_flex()
-        .popover_style(cx)
         .id("agent-panel")
-        .absolute()
-        .bottom_3()
-        .left_3()
-        .w(px(340.))
-        .max_h(px(520.))
-        .p_2()
         .gap_2()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1291,7 +1285,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                         .children(AgentMode::ALL.iter().enumerate().map(|(index, each)| {
                             Button::new(("agent-mode", index as u64))
                                 .label(each.label())
-                                .selected(*each == mode)
+                                .picked(*each == mode)
                         }))
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                             if let Some(mode) = clicks.first().and_then(|index| AgentMode::ALL.get(*index)) {
@@ -1309,11 +1303,11 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                     ButtonGroup::new("agent-engine")
                         .outline()
                         .xsmall()
-                        .child(Button::new(("agent-engine", 0u64)).label("None").selected(engine.is_none()))
+                        .child(Button::new(("agent-engine", 0u64)).label("None").picked(engine.is_none()))
                         .children(AgentCli::ALL.iter().enumerate().map(|(index, cli)| {
                             Button::new(("agent-engine", index as u64 + 1))
                                 .label(cli.label())
-                                .selected(engine == Some(*cli))
+                                .picked(engine == Some(*cli))
                         }))
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                             if let Some(index) = clicks.first() {

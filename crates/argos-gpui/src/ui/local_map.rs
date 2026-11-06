@@ -1,12 +1,13 @@
 //! Occupancy cell colors and dotted strokes for the main map overlay.
+use super::palette;
 use argos_core::CellClass;
 use gpui_kit::*;
 
 pub(super) fn cell_color(class: CellClass) -> u32 {
     match class {
-        CellClass::Unknown => 0x6e7c84,
-        CellClass::Free => 0xd7efe0,
-        CellClass::Occupied => 0x12161a,
+        CellClass::Unknown => palette::MAP_UNKNOWN,
+        CellClass::Free => palette::MAP_FREE,
+        CellClass::Occupied => palette::MAP_OBSTACLE,
     }
 }
 
@@ -30,6 +31,20 @@ pub(super) fn stroke(
         }
         let t = step as f32 / steps as f32;
         let at = point(from.x + px(dx * t), from.y + px(dy * t));
+        // A dark halo keeps the line readable on bright imagery.
+        let mut halo = rgb(palette::MAP_INK);
+        halo.a = 0.55;
+        window.paint_quad(quad(
+            Bounds {
+                origin: point(at.x - px(2.5), at.y - px(2.5)),
+                size: size(px(5.), px(5.)),
+            },
+            Corners::all(px(2.5)),
+            halo,
+            Edges::default(),
+            transparent_black(),
+            BorderStyle::default(),
+        ));
         window.paint_quad(quad(
             Bounds {
                 origin: point(at.x - px(1.5), at.y - px(1.5)),
@@ -49,10 +64,10 @@ pub(super) fn stroke(
                 origin: point(at.x - px(4.), at.y - px(4.)),
                 size: size(px(8.), px(8.)),
             },
-            Corners::default(),
+            Corners::all(px(4.)),
             color,
-            Edges::default(),
-            transparent_black(),
+            Edges::all(px(1.)),
+            rgb(palette::MAP_INK),
             BorderStyle::default(),
         ));
     }

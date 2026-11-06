@@ -1,5 +1,6 @@
 //! Teleop: the Drive section, turning limit chips, and the W/A/S/D pad.
 
+use super::widgets::Picked;
 use super::widgets::hint;
 use super::widgets::section;
 use crate::Dashboard;
@@ -8,7 +9,7 @@ use argos_gpui::RoverMark;
 use argos_gpui::console::{self};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
+    Disableable, Sizable,
     button::{Button, ButtonGroup},
 };
 use gpui_kit::{prelude::*, *};
@@ -35,7 +36,7 @@ pub(super) fn drive_section(
                         .map(|(index, value)| {
                             Button::new(("speed", index as u64))
                                 .label(format!("{value:.1} m/s"))
-                                .selected(speed == Some(index))
+                                .picked(speed == Some(index))
                         }),
                 )
                 .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
@@ -103,7 +104,7 @@ fn turning_row(limits: argos_core::TeleopLimits, cx: &mut Context<Dashboard>) ->
             Button::new("spin")
                 .outline()
                 .small()
-                .selected(limits.allow_spin)
+                .picked(limits.allow_spin)
                 .label(if limits.allow_spin {
                     "In-place spin on"
                 } else {
@@ -135,7 +136,7 @@ fn autonomy_turning_row(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl I
             Button::new("autonomy-spin")
                 .outline()
                 .small()
-                .selected(reported == Some(true))
+                .picked(reported == Some(true))
                 .label(match reported {
                     Some(true) => "Autonomy spin on",
                     Some(false) => "Autonomy spin off",
@@ -158,7 +159,7 @@ fn autonomy_turning_row(mark: &RoverMark, cx: &mut Context<Dashboard>) -> impl I
             Button::new("explore-through-unknown")
                 .outline()
                 .small()
-                .selected(through == Some(true))
+                .picked(through == Some(true))
                 .disabled(through.is_none())
                 .label(match through {
                     Some(true) => "Explore through unknown on",
@@ -229,7 +230,7 @@ fn drive_pad(held: &BTreeSet<String>, cx: &mut Context<Dashboard>) -> impl IntoE
             .small()
             .w(px(36.))
             .label(label)
-            .selected(held.contains(name))
+            .picked(held.contains(name))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {

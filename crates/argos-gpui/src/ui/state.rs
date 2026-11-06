@@ -9,7 +9,7 @@ use crate::{ActiveDrag, Dashboard};
 use argos_core::{
     ControlClaim, DragAnchor, DragGate, DragSpace, GoalDrag, PlanarPoint, STUDY_LEVELS, drive_block,
 };
-use argos_gpui::console::{self, InspectorTab};
+use argos_gpui::console;
 use argos_gpui::{
     DashboardConfig, FleetFeed, FpvController, LaunchMode, RoverMark, model_position,
     reframing_target,
@@ -93,7 +93,8 @@ impl Dashboard {
             field_frame: Arc::new(Mutex::new(None)),
             inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
-            inspector_tab: InspectorTab::default(),
+            muted_map: false,
+            docks: super::panels::Docks::new(window, cx),
             driving: false,
             held: BTreeSet::new(),
             link: initial.link,

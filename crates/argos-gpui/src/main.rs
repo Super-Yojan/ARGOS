@@ -18,7 +18,7 @@ mod ui;
 use ui::{agent, palette};
 
 use argos_core::{ControlClaim, GoalDrag};
-use argos_gpui::console::{InspectorTab, StopOrigin};
+use argos_gpui::console::StopOrigin;
 use argos_gpui::{DashboardConfig, FleetFeed, FpvController, LaunchMode, RoverMark, RoverPresence};
 use gpui_kit::component::{Theme, ThemeMode, TitleBar, input::InputState};
 use gpui_kit::{prelude::*, *};
@@ -59,7 +59,10 @@ struct Dashboard {
     field_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     inspector_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     show_occupancy: bool,
-    inspector_tab: InspectorTab,
+    /// Map imagery in muted survey tones instead of true colour.
+    muted_map: bool,
+    /// Map in the center, Rover panel on the right, optional panels.
+    docks: ui::panels::Docks,
     driving: bool,
     held: BTreeSet<String>,
     link: String,
@@ -137,6 +140,8 @@ fn main() {
         latitude: config.start_latitude,
         longitude: config.start_longitude,
         show_controls: false,
+        // True-colour imagery; the console bar can switch to muted tones.
+        survey: false,
         api_key: maps_api_key,
         ..MapConfig::default()
     })
@@ -146,6 +151,7 @@ fn main() {
     });
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        ui::commands::install(cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         gpui_kit::open_window(
             WindowOptions {
@@ -178,6 +184,19 @@ fn main() {
                     (theme.danger, theme.danger_hover, theme.danger_active) =
                         status(palette::DANGER);
                     theme.warning_foreground = gpui::white();
+                    // Picked toggles take the accent; see `widgets::Picked`.
+                    let accent: Hsla = rgb(palette::ACCENT).into();
+                    theme.primary = accent;
+                    theme.primary_hover = accent.opacity(0.9);
+                    theme.primary_active = accent.opacity(0.8);
+                    theme.primary_foreground = gpui::white();
+                    // Safety buttons (Stop, Stop all) are solid red with white
+                    // text, not the kit's pale pink, so they read first.
+                    let danger: Hsla = rgb(palette::DANGER).into();
+                    theme.button_danger = danger;
+                    theme.button_danger_hover = danger.opacity(0.9);
+                    theme.button_danger_active = danger.opacity(0.8);
+                    theme.button_danger_foreground = gpui::white();
                 });
                 let view =
                     cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, mode, window, cx));

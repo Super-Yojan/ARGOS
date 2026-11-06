@@ -90,6 +90,7 @@ pub struct MapView {
     observed_revision: u64,
     navigation_revision: u64,
     mode_revision: u64,
+    survey_revision: u64,
     flight: Option<navigation::Flight>,
     camera: Camera,
     worker: MapWorker,
@@ -191,6 +192,7 @@ impl MapView {
             observed_revision: 0,
             navigation_revision: 0,
             mode_revision: 0,
+            survey_revision: 0,
             flight: None,
             camera: config.camera(),
             config,
@@ -227,6 +229,16 @@ impl MapView {
             {
                 self.mode_revision = revision;
                 self.set_mode(mode, cx);
+            }
+            if let Some((revision, survey)) = snapshot.survey
+                && revision != self.survey_revision
+            {
+                self.survey_revision = revision;
+                if survey {
+                    self.survey(cx);
+                } else {
+                    self.imagery(cx);
+                }
             }
             if let Some((revision, position)) = snapshot.navigation
                 && revision != self.navigation_revision

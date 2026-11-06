@@ -156,7 +156,7 @@ impl MapView {
         self.send();
         cx.notify();
     }
-    fn survey(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn survey(&mut self, cx: &mut Context<Self>) {
         if self.config.survey {
             return;
         }
@@ -165,7 +165,7 @@ impl MapView {
         self.send();
         cx.notify();
     }
-    fn imagery(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn imagery(&mut self, cx: &mut Context<Self>) {
         if !self.config.survey {
             return;
         }
@@ -599,52 +599,86 @@ impl MapView {
                         ),
                 )
             })
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .min_h(px(80.))
-                    .occlude()
-                    .bg(rgb(PANEL))
-                    .border_t_1()
-                    .border_color(rgb(RULE))
-                    .px_6()
-                    .py_3()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
+            .map(|this| {
+                if self.config.show_controls {
+                    return this.child(
                         div()
+                            .absolute()
+                            .bottom_0()
+                            .left_0()
+                            .right_0()
+                            .min_h(px(80.))
+                            .occlude()
+                            .bg(rgb(PANEL))
+                            .border_t_1()
+                            .border_color(rgb(RULE))
+                            .px_6()
+                            .py_3()
                             .flex()
-                            .flex_wrap()
-                            .justify_between()
+                            .flex_col()
                             .gap_2()
                             .child(
                                 div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(if self.config.demo {
-                                        "Offline GPU fixture"
-                                    } else {
-                                        "Google Maps"
-                                    }),
+                                    .flex()
+                                    .flex_wrap()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(div().font_weight(FontWeight::BOLD).child(
+                                        if self.config.demo {
+                                            "Offline GPU fixture"
+                                        } else {
+                                            "Google Maps"
+                                        },
+                                    ))
+                                    .child(div().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                                        if self.status.is_empty() {
+                                            format!(
+                                                "{} tiles in view · {resolution}",
+                                                self.tile_count
+                                            )
+                                        } else {
+                                            self.status.clone()
+                                        },
+                                    )),
                             )
-                            .child(div().text_size(px(12.)).text_color(rgb(MUTED)).child(
-                                if self.status.is_empty() {
-                                    format!("{} tiles in view · {resolution}", self.tile_count)
-                                } else {
-                                    self.status.clone()
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(MUTED))
-                            .child(self.credits.clone()),
-                    ),
-            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(MUTED))
+                                    .child(self.credits.clone()),
+                            ),
+                    );
+                }
+                // Embedded (no explorer controls): a small attribution chip in
+                // the corner instead of the full-width footer. Source and
+                // credits stay visible.
+                let source = if self.config.demo {
+                    "Offline GPU fixture"
+                } else {
+                    "Google Maps"
+                };
+                let credits = if self.credits.is_empty() {
+                    source.to_string()
+                } else {
+                    format!("{source} · {}", self.credits)
+                };
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_2()
+                        .right_2()
+                        .max_w(px(520.))
+                        .occlude()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(rgba(0xffffffd9))
+                        .text_size(px(11.))
+                        .text_color(rgb(0x3c3c43))
+                        .truncate()
+                        .child(credits),
+                )
+            })
     }
 }
 

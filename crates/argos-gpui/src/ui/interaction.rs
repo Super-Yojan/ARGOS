@@ -19,7 +19,7 @@ impl Dashboard {
             return;
         }
         if !self.claim.held(self.now) {
-            self.note = "Take control to place a destination".into();
+            self.note = "Control the fleet to place a destination".into();
             return;
         }
         self.drag = None;
