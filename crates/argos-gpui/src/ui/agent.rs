@@ -8,6 +8,7 @@
 use super::interaction::geographic_gate;
 use super::levels::gps_blocks;
 use super::task::task_agent_choice;
+use super::widgets::Picked;
 use super::widgets::{caution, hint};
 use crate::Dashboard;
 use argos_core::{
@@ -25,7 +26,7 @@ use argos_gpui::console::StopOrigin;
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Selectable, Sizable, StyledExt, ThemeStyled,
+    ActiveTheme, Sizable, StyledExt, ThemeStyled,
     button::{Button, ButtonGroup},
     tag::Tag,
 };
@@ -1291,7 +1292,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                         .children(AgentMode::ALL.iter().enumerate().map(|(index, each)| {
                             Button::new(("agent-mode", index as u64))
                                 .label(each.label())
-                                .selected(*each == mode)
+                                .picked(*each == mode)
                         }))
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                             if let Some(mode) = clicks.first().and_then(|index| AgentMode::ALL.get(*index)) {
@@ -1309,11 +1310,11 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                     ButtonGroup::new("agent-engine")
                         .outline()
                         .xsmall()
-                        .child(Button::new(("agent-engine", 0u64)).label("None").selected(engine.is_none()))
+                        .child(Button::new(("agent-engine", 0u64)).label("None").picked(engine.is_none()))
                         .children(AgentCli::ALL.iter().enumerate().map(|(index, cli)| {
                             Button::new(("agent-engine", index as u64 + 1))
                                 .label(cli.label())
-                                .selected(engine == Some(*cli))
+                                .picked(engine == Some(*cli))
                         }))
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                             if let Some(index) = clicks.first() {

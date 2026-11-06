@@ -59,6 +59,8 @@ struct Dashboard {
     field_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     inspector_frame: Arc<Mutex<Option<Bounds<Pixels>>>>,
     show_occupancy: bool,
+    /// Map imagery in muted survey tones instead of true colour.
+    muted_map: bool,
     inspector_tab: InspectorTab,
     driving: bool,
     held: BTreeSet<String>,
@@ -137,6 +139,8 @@ fn main() {
         latitude: config.start_latitude,
         longitude: config.start_longitude,
         show_controls: false,
+        // True-colour imagery; the console bar can switch to muted tones.
+        survey: false,
         api_key: maps_api_key,
         ..MapConfig::default()
     })
@@ -178,6 +182,19 @@ fn main() {
                     (theme.danger, theme.danger_hover, theme.danger_active) =
                         status(palette::DANGER);
                     theme.warning_foreground = gpui::white();
+                    // Picked toggles take the accent; see `widgets::Picked`.
+                    let accent: Hsla = rgb(palette::ACCENT).into();
+                    theme.primary = accent;
+                    theme.primary_hover = accent.opacity(0.9);
+                    theme.primary_active = accent.opacity(0.8);
+                    theme.primary_foreground = gpui::white();
+                    // Safety buttons (Stop, Stop all) are solid red with white
+                    // text, not the kit's pale pink, so they read first.
+                    let danger: Hsla = rgb(palette::DANGER).into();
+                    theme.button_danger = danger;
+                    theme.button_danger_hover = danger.opacity(0.9);
+                    theme.button_danger_active = danger.opacity(0.8);
+                    theme.button_danger_foreground = gpui::white();
                 });
                 let view =
                     cx.new(|cx| Dashboard::new(map, feed, fpv, maps_notice, mode, window, cx));

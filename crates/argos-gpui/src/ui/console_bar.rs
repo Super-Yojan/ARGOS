@@ -2,13 +2,14 @@
 //! health, fleet switch, and Stop all.
 
 use super::video::stop_fpv_button;
+use super::widgets::Picked;
 use crate::Dashboard;
 
 use argos_gpui::LaunchMode;
 use argos_gpui::console::{self, StopOrigin};
 use gpui_kit::base::h_flex;
 use gpui_kit::component::{
-    ActiveTheme, Selectable, Sizable, StyledExt, TitleBar,
+    ActiveTheme, Sizable, StyledExt, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     tooltip::Tooltip,
 };
@@ -48,13 +49,13 @@ pub(super) fn console_bar(
                         .child(
                             Button::new("fleet-sim")
                                 .label("Sim")
-                                .selected(fleet == LaunchMode::Sim)
+                                .picked(fleet == LaunchMode::Sim)
                                 .tooltip("Local Zorvane simulator at tcp/127.0.0.1:7447"),
                         )
                         .child(
                             Button::new("fleet-real")
                                 .label("Real")
-                                .selected(fleet == LaunchMode::Real)
+                                .picked(fleet == LaunchMode::Real)
                                 .tooltip("Real fleet from the environment and .env"),
                         )
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, window, cx| {
@@ -77,12 +78,12 @@ pub(super) fn console_bar(
                         .child(
                             Button::new("map-2d")
                                 .label("2D")
-                                .selected(mode == MapMode::TwoD),
+                                .picked(mode == MapMode::TwoD),
                         )
                         .child(
                             Button::new("map-3d")
                                 .label("3D")
-                                .selected(mode == MapMode::ThreeD),
+                                .picked(mode == MapMode::ThreeD),
                         )
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, window, cx| {
                             this.set_map_mode(if clicks.contains(&0) {
@@ -95,10 +96,33 @@ pub(super) fn console_bar(
                         })),
                 )
                 .child(
+                    ButtonGroup::new("map-style")
+                        .outline()
+                        .small()
+                        .child(
+                            Button::new("map-colour")
+                                .label("Colour")
+                                .picked(!dashboard.muted_map)
+                                .tooltip("True-colour satellite imagery"),
+                        )
+                        .child(
+                            Button::new("map-muted")
+                                .label("Muted")
+                                .picked(dashboard.muted_map)
+                                .tooltip("Muted blue-grey imagery so overlays stand out"),
+                        )
+                        .on_click(cx.listener(|this, clicks: &Vec<usize>, window, cx| {
+                            this.muted_map = !clicks.contains(&0);
+                            this.map.set_survey(this.muted_map);
+                            this.focus.focus(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .child(
                     Button::new("occupancy-overlay")
                         .outline()
                         .small()
-                        .selected(dashboard.show_occupancy)
+                        .picked(dashboard.show_occupancy)
                         .label("Map grid")
                         .tooltip("Show the selected rover's occupancy grid on the map")
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -139,7 +163,7 @@ pub(super) fn console_bar(
                     Button::new("control-claim")
                         .outline()
                         .small()
-                        .selected(held)
+                        .picked(held)
                         .label(if held {
                             "Release control"
                         } else {

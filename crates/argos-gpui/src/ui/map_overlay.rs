@@ -1,5 +1,6 @@
 //! Geographic occupancy, route, and destination overlays on the 3D map.
 use super::local_map::{cell_color, stroke};
+use super::palette;
 use crate::Dashboard;
 use argos_core::point_capture::{LiveCloud, PointLabel, label_color};
 use argos_core::{CellClass, DragSpace, LocalFrame, Travel, geodesic_metres};
@@ -68,9 +69,9 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                             from,
                             at,
                             if sample.travel == Travel::Reverse {
-                                rgb(0xf0c36a)
+                                rgb(palette::MAP_REVERSE)
                             } else {
-                                rgb(0x7eb6ff)
+                                rgb(palette::MAP_ROUTE)
                             },
                             sample.travel == Travel::Reverse,
                         );
@@ -100,7 +101,7 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                         Corners::all(px(if ball { half } else { 2. })),
                         rgb(object.object.marker_color()),
                         Edges::all(px(2.)),
-                        rgb(0x12161a),
+                        rgb(palette::MAP_INK),
                         BorderStyle::default(),
                     ));
                 }
@@ -125,7 +126,7 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
             };
             let rover_at = map.project(mark.latitude, mark.longitude);
             if let Some(rover) = rover_at {
-                stroke(window, rover, ghost, rgb(0xf0c36a), false);
+                stroke(window, rover, ghost, rgb(palette::MAP_GOAL), false);
             }
             if let Some(radius) = goal.arrival_radius_m {
                 let mut metres = ground_metres_per_pixel(map, latitude, longitude);
@@ -149,7 +150,7 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                             size: size(px(4.), px(4.)),
                         },
                         Corners::default(),
-                        rgb(0xf0c36a),
+                        rgb(palette::MAP_GOAL),
                         Edges::default(),
                         transparent_black(),
                         BorderStyle::default(),
@@ -161,10 +162,10 @@ pub(super) fn map_paint(dashboard: &Dashboard) -> impl IntoElement {
                     origin: point(ghost.x - px(6.), ghost.y - px(6.)),
                     size: size(px(12.), px(12.)),
                 },
-                Corners::default(),
-                rgb(0xf0c36a),
-                Edges::default(),
-                transparent_black(),
+                Corners::all(px(6.)),
+                rgb(palette::MAP_GOAL),
+                Edges::all(px(2.)),
+                rgb(palette::MAP_INK),
                 BorderStyle::default(),
             ));
         },
@@ -217,8 +218,8 @@ fn paint_occupancy(window: &mut Window, map: &MapView, marks: &[RoverMark]) {
             };
             let mut color = rgb(cell_color(class));
             color.a = match class {
-                CellClass::Free => 0.38,
-                CellClass::Occupied => 0.78,
+                CellClass::Free => 0.28,
+                CellClass::Occupied => 0.72,
                 CellClass::Unknown => 0.,
             };
             let mut path = gpui::PathBuilder::fill();
@@ -317,7 +318,7 @@ fn paint_mission(
         .collect();
     for pair in placed.windows(2) {
         if let [Some(from), Some(to)] = pair {
-            stroke(window, *from, *to, rgb(0xe8eef4), true);
+            stroke(window, *from, *to, rgb(palette::MAP_MISSION), true);
         }
     }
     for (index, (at, (_, _, color))) in placed.iter().zip(points).enumerate() {
@@ -333,7 +334,7 @@ fn paint_mission(
                 Corners::all(px(11.)),
                 transparent_black(),
                 Edges::all(px(2.)),
-                rgb(0xffffff),
+                rgb(palette::MAP_PAPER),
                 BorderStyle::default(),
             ));
         }
@@ -345,7 +346,7 @@ fn paint_mission(
             Corners::all(px(2.)),
             rgb(*color),
             Edges::all(px(1.5)),
-            rgb(0x12161a),
+            rgb(palette::MAP_INK),
             BorderStyle::default(),
         ));
     }

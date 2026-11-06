@@ -1,6 +1,7 @@
 //! L4 Explore and L5 Task sections of the Overview tab.
 
 use super::levels::gps_blocks;
+use super::widgets::Picked;
 use super::widgets::caution;
 use super::widgets::hint;
 use super::widgets::rows;
@@ -11,7 +12,7 @@ use argos_core::{EXPLORE_BUDGETS_MIN, TASK_BUDGETS_MIN, explore_refusal, task_re
 use argos_gpui::RoverMark;
 use gpui_kit::base::h_flex;
 use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
+    Disableable, Sizable,
     button::{Button, ButtonGroup},
     input::Input,
 };
@@ -35,7 +36,7 @@ pub(super) fn explore_section(
                 .children(EXPLORE_BUDGETS_MIN.iter().enumerate().map(|(index, minutes)| {
                     Button::new(("explore-budget", index as u64))
                         .label(format!("{minutes} min"))
-                        .selected(dashboard.explore_budget == index)
+                        .picked(dashboard.explore_budget == index)
                 }))
                 .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                     if let Some(index) = clicks
@@ -110,7 +111,7 @@ pub(super) fn task_section(
                     .children(agents.iter().enumerate().map(|(index, agent)| {
                         Button::new(("task-agent", index as u64))
                             .label(agent.label())
-                            .selected(*agent == chosen)
+                            .picked(*agent == chosen)
                     }))
                     .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
                         if let Some(agent) = clicks.first().and_then(|index| agents.get(*index)) {
@@ -131,7 +132,7 @@ pub(super) fn task_section(
                         .children(TASK_BUDGETS_MIN.iter().enumerate().map(|(index, minutes)| {
                             Button::new(("task-budget", index as u64))
                                 .label(format!("{minutes} min"))
-                                .selected(dashboard.task_budget == index)
+                                .picked(dashboard.task_budget == index)
                         }))
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                             if let Some(index) = clicks

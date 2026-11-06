@@ -4,6 +4,7 @@
 //! `argos_core::MissionRun`; this file keeps one per rover, ticks it every
 //! sync, sends what it asks for, and draws the tab.
 
+use super::widgets::Picked;
 use super::widgets::{caution, hint, section};
 use crate::Dashboard;
 
@@ -14,7 +15,7 @@ use argos_core::{
 use argos_gpui::RoverMark;
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonGroup, ButtonVariants},
 };
 use gpui_kit::{prelude::*, *};
@@ -425,7 +426,7 @@ fn plan_section(
                 .children(placeable.iter().enumerate().map(|(index, kind)| {
                     Button::new(("mission-kind", index as u64))
                         .label(kind.label())
-                        .selected(placing == Some(*kind))
+                        .picked(placing == Some(*kind))
                 }))
                 .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
                     if this.selected == Some(id)
@@ -494,7 +495,7 @@ fn plan_section(
                         .outline()
                         .small()
                         .label("Repeat")
-                        .selected(plan.repeat)
+                        .picked(plan.repeat)
                         .tooltip("After the last step, start again from step 1")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let plan = this.missions.plans.entry(id).or_default();

@@ -2,6 +2,7 @@
 
 use super::inspector::Facts;
 use super::inspector::goal_line;
+use super::widgets::Picked;
 use super::widgets::hint;
 use super::widgets::rows;
 use super::widgets::section;
@@ -11,7 +12,7 @@ use argos_gpui::RoverMark;
 use argos_gpui::console::{self};
 use gpui_kit::base::h_flex;
 use gpui_kit::component::{
-    Selectable, Sizable,
+    Sizable,
     button::{Button, ButtonVariants},
 };
 use gpui_kit::{prelude::*, *};
@@ -118,7 +119,7 @@ pub(super) fn capture_section(
                     Button::new(("live-3d", id))
                         .outline()
                         .small()
-                        .selected(live_on)
+                        .picked(live_on)
                         .label("Live 3D")
                         .tooltip(
                             "Streams the rover's depth labelled by its map rules and draws it on the map under the rover. Turn off to stop the stream",

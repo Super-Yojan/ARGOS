@@ -43,3 +43,17 @@ pub(super) fn rows(items: Vec<(&'static str, String)>) -> DescriptionList {
                 .map(|(label, value)| DescriptionItem::new(label).value(value)),
         )
 }
+
+/// Selected styling that reads at a glance: a picked button takes the accent
+/// (primary) colour instead of the kit's faint grey "active" fill.
+pub(super) trait Picked {
+    fn picked(self, on: bool) -> Self;
+}
+
+impl Picked for gpui_kit::component::button::Button {
+    fn picked(self, on: bool) -> Self {
+        use gpui_kit::component::{Selectable, button::ButtonVariants};
+        let button = self.selected(on);
+        if on { button.primary() } else { button }
+    }
+}

@@ -156,7 +156,7 @@ impl MapView {
         self.send();
         cx.notify();
     }
-    fn survey(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn survey(&mut self, cx: &mut Context<Self>) {
         if self.config.survey {
             return;
         }
@@ -165,7 +165,7 @@ impl MapView {
         self.send();
         cx.notify();
     }
-    fn imagery(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn imagery(&mut self, cx: &mut Context<Self>) {
         if !self.config.survey {
             return;
         }

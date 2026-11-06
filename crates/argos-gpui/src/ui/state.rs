@@ -93,6 +93,7 @@ impl Dashboard {
             field_frame: Arc::new(Mutex::new(None)),
             inspector_frame: Arc::new(Mutex::new(None)),
             show_occupancy: true,
+            muted_map: false,
             inspector_tab: InspectorTab::default(),
             driving: false,
             held: BTreeSet::new(),

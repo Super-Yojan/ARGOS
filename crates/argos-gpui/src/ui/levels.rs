@@ -1,5 +1,6 @@
 //! Autonomy level buttons and the study condition lock.
 
+use super::widgets::Picked;
 use super::widgets::caution;
 use super::widgets::hint;
 use super::widgets::section;
@@ -8,7 +9,7 @@ use crate::Dashboard;
 use argos_core::{OPERATOR_LEVELS, STUDY_LEVELS, level_label, level_permitted};
 use argos_gpui::RoverMark;
 use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
+    Disableable, Sizable,
     button::{Button, ButtonGroup},
 };
 use gpui_kit::prelude::*;
@@ -37,7 +38,7 @@ pub(super) fn level_group(
                 let index = start + offset;
                 Button::new(("level", index as u64))
                     .label(*label)
-                    .selected(requested == Some(index))
+                    .picked(requested == Some(index))
                     .disabled(!level_permitted(lock.as_deref(), wire))
             }),
     )
@@ -110,11 +111,11 @@ pub(super) fn study_section(
             ButtonGroup::new("study")
                 .outline()
                 .small()
-                .child(Button::new(("study", 0u64)).label("Off").selected(selected == 0))
+                .child(Button::new(("study", 0u64)).label("Off").picked(selected == 0))
                 .children(STUDY_LEVELS.iter().enumerate().map(|(index, (_, short))| {
                     Button::new(("study", index as u64 + 1))
                         .label(*short)
-                        .selected(selected == index + 1)
+                        .picked(selected == index + 1)
                 }))
                 .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
                     if let Some(index) = clicks.first() {

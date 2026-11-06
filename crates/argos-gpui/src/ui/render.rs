@@ -274,8 +274,8 @@ impl Render for Dashboard {
                             .top(at.y - px(18.))
                             .px_1()
                             .rounded_sm()
-                            .bg(rgb(0x12161a))
-                            .text_color(rgb(0xffffff))
+                            .bg(rgb(super::palette::MAP_INK))
+                            .text_color(rgb(super::palette::MAP_PAPER))
                             .text_xs()
                             .child(number.to_string())
                     }))
@@ -310,17 +310,20 @@ impl Render for Dashboard {
                             .top(at.y - px(9.))
                             .w(px(18.))
                             .h(px(18.))
-                            .rounded_md()
+                            .rounded_full()
+                            .border_2()
+                            .border_color(rgb(super::palette::MAP_PAPER))
+                            .shadow_sm()
                             .cursor_pointer()
-                            .bg(
-                                if anchor == DragAnchor::Goal
-                                    || (selected == Some(id) && control_held)
-                                {
-                                    cx.theme().success
-                                } else {
-                                    cx.theme().warning
-                                },
-                            )
+                            // Goal: the goal colour. Rover: green when this
+                            // window holds it and can drag it, slate otherwise.
+                            .bg(rgb(if anchor == DragAnchor::Goal {
+                                super::palette::MAP_GOAL
+                            } else if selected == Some(id) && control_held {
+                                super::palette::SUCCESS
+                            } else {
+                                super::palette::MAP_ROVER
+                            }))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, window, cx| {

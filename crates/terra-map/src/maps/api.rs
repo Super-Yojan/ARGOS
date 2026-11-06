@@ -132,6 +132,7 @@ pub(super) struct Snapshot {
     pub objects: Arc<Vec<ObjectRecord>>,
     pub navigation: Option<(u64, GeoPosition)>,
     pub mode: Option<(u64, MapMode)>,
+    pub survey: Option<(u64, bool)>,
 }
 struct State {
     revision: u64,
@@ -143,6 +144,7 @@ struct State {
     statuses: HashMap<ObjectId, ObjectStatus>,
     navigation: Option<(u64, GeoPosition)>,
     mode: Option<(u64, MapMode)>,
+    survey: Option<(u64, bool)>,
     events: VecDeque<MapEvent>,
 }
 /// Cloneable, thread-safe controller. Create one MapView per controller.
@@ -191,6 +193,7 @@ impl Map {
                 statuses: HashMap::new(),
                 navigation: None,
                 mode: None,
+                survey: None,
                 events: VecDeque::new(),
             })),
         })
@@ -230,6 +233,12 @@ impl Map {
         let mut s = self.state.lock().unwrap();
         s.revision += 1;
         s.mode = Some((s.revision, mode));
+    }
+    /// Survey (muted blue-green tones) or true-colour imagery.
+    pub fn set_survey(&self, survey: bool) {
+        let mut s = self.state.lock().unwrap();
+        s.revision += 1;
+        s.survey = Some((s.revision, survey));
     }
     /// Schedule a local GLB/glTF load. Inspect object_status or poll_event for its result.
     pub fn add_3d_obj(
@@ -356,6 +365,7 @@ impl Map {
             objects: Arc::new(s.objects.values().cloned().collect()),
             navigation: s.navigation,
             mode: s.mode,
+            survey: s.survey,
         }
     }
     pub(super) fn worker_started(&self) -> u64 {

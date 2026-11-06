@@ -12,6 +12,7 @@ use super::sections::goal_section;
 use super::task::explore_section;
 use super::task::task_section;
 use super::video::video_tab;
+use super::widgets::Picked;
 use super::widgets::caution;
 use super::widgets::hint;
 use super::widgets::rows;
@@ -26,7 +27,7 @@ use argos_gpui::console::{self, InspectorTab, StopOrigin};
 use argos_gpui::{RoverMark, position_label};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, ThemeStyled,
+    ActiveTheme, Disableable, Sizable, StyledExt, ThemeStyled,
     button::{Button, ButtonGroup, ButtonVariants},
     scroll::ScrollableElement,
     tab::{Tab, TabBar},
@@ -368,8 +369,8 @@ fn overview_tab(
             section("Autonomy", cx)
                 .child(hint(console::level_line(mark), cx))
                 // L0–L3, then L4 and L5, so neither row wraps.
-                .child(level_group(id, level, lock.clone(), 0..4, cx))
-                .child(level_group(id, level, lock, 4..OPERATOR_LEVELS.len(), cx)),
+                .child(level_group(id, level, lock.clone(), 0..3, cx))
+                .child(level_group(id, level, lock, 3..OPERATOR_LEVELS.len(), cx)),
         )
         .child(study_section(dashboard, mark, cx))
         .child(explore_section(dashboard, mark, stopped, cx))
@@ -384,7 +385,7 @@ fn overview_tab(
                             |(index, (_, label))| {
                                 Button::new(("source", index as u64))
                                     .label(*label)
-                                    .selected(source == index)
+                                    .picked(source == index)
                             },
                         ))
                         .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {

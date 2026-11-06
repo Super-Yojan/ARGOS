@@ -5,10 +5,10 @@
 //! `telemetry`, `occupancy`, and `search` decode their respective reports. Keep
 //! networking and native UI bindings in `argos-zenoh` and `argos-ffi`.
 
+mod alignment;
 mod contract;
 mod state;
 mod telemetry;
-mod alignment;
 pub use alignment::*;
 pub use contract::*;
 pub use state::*;
