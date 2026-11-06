@@ -26,7 +26,7 @@ use argos_gpui::console::StopOrigin;
 use argos_gpui::{AGENT_PORT, AgentBridge, AgentProcess, RoverMark};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt, ThemeStyled,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonGroup},
     tag::Tag,
 };
@@ -1270,14 +1270,7 @@ pub(super) fn agent_panel(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
     let rejecting = desk.rejecting.clone();
     let cards: Vec<RecEntry> = desk.book.open().into_iter().cloned().collect();
     v_flex()
-        .popover_style(cx)
         .id("agent-panel")
-        .absolute()
-        .bottom_3()
-        .left_3()
-        .w(px(340.))
-        .max_h(px(520.))
-        .p_2()
         .gap_2()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())

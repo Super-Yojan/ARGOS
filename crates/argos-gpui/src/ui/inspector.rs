@@ -11,7 +11,6 @@ use super::sections::dock_section;
 use super::sections::goal_section;
 use super::task::explore_section;
 use super::task::task_section;
-use super::video::video_tab;
 use super::widgets::Picked;
 use super::widgets::caution;
 use super::widgets::hint;
@@ -23,14 +22,13 @@ use argos_core::{
     APP_UPDATE_REQUIRED, DragGate, HEADING_MAX_AGE_S, HEADING_MAX_UNCERTAINTY_DEG, OPERATOR_LEVELS,
     OutdoorReport, drag_disabled_reason, drive_block, phase_label,
 };
-use argos_gpui::console::{self, InspectorTab, StopOrigin};
+use argos_gpui::console::{self, StopOrigin};
 use argos_gpui::{RoverMark, position_label};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Sizable, StyledExt, ThemeStyled,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonGroup, ButtonVariants},
     scroll::ScrollableElement,
-    tab::{Tab, TabBar},
     tag::Tag,
 };
 use gpui_kit::{prelude::*, *};
@@ -54,7 +52,6 @@ pub(super) fn rover_inspector(
     let stop = dashboard.stop_cause(mark);
     let stopped = stop.is_some();
     let driving = dashboard.driving;
-    let tab = dashboard.inspector_tab;
     let callout = console::callout(mark, stop.as_ref(), driving);
     let manual = mark.requested_level.as_deref() == Some("teleop");
     let primary = if stopped {
@@ -88,43 +85,22 @@ pub(super) fn rover_inspector(
             }))
     };
     let reversing = mark.reversing || (facts.reversing_key && driving);
-    let body = match tab {
-        InspectorTab::Overview => overview_tab(dashboard, mark, &facts, cx).into_any_element(),
-        InspectorTab::Mission => {
-            super::mission::mission_tab(dashboard, mark, cx).into_any_element()
-        }
-        InspectorTab::Video => video_tab(dashboard, cx).into_any_element(),
-    };
+    let body = basics(dashboard, mark, &facts, cx).into_any_element();
     v_flex()
-        .absolute()
-        .top_3()
-        .right_3()
-        .bottom_3()
-        .w(px(360.))
-        .popover_style(cx)
+        .size_full()
+        .bg(cx.theme().background)
         .overflow_hidden()
-        // Measured so rover cards can stay out from under the inspector.
-        .child({
-            let frame = dashboard.inspector_frame.clone();
-            canvas(
-                move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             v_flex()
                 .flex_none()
                 .p_4()
-                .pb_2()
+                .pb_3()
                 .gap_3()
-                // Stop sits top right, on the title row: away from Take over
-                // and two rows above the tab strip, so a reach for the tabs
-                // cannot land on it. Still one click, plus Space anywhere.
+                .border_b_1()
+                .border_color(cx.theme().border)
+                // Stop sits top right, on the title row, away from Take over.
+                // Still one click, plus Space anywhere.
                 .child(
                     h_flex()
                         .justify_between()
@@ -133,9 +109,8 @@ pub(super) fn rover_inspector(
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_sm()
+                                        .text_base()
                                         .font_semibold()
-                                        .font_family(cx.theme().mono_font_family.clone())
                                         .child(format!("Rover {id}")),
                                 )
                                 .when(reversing, |tags| {
@@ -155,35 +130,22 @@ pub(super) fn rover_inspector(
                                 })),
                         ),
                 )
-                .child(div().text_base().font_medium().child(callout.state))
-                // Above the tabs, so the way out shows on Overview and Video alike.
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(callout.state),
+                )
                 .when_some(callout.recovery, |header, recovery| {
                     header.child(caution(recovery, cx))
                 })
-                .child(h_flex().gap_2().child(primary.outline().small()))
-                .child(div().h_2()),
-        )
-        .child(
-            TabBar::new("inspector-tabs")
-                .underline()
-                .small()
-                .px_2()
-                .selected_index(tab.index())
-                .children(
-                    InspectorTab::ALL
-                        .into_iter()
-                        .map(|tab| Tab::new().label(tab.label())),
-                )
-                .on_click(cx.listener(|this, index: &usize, _, cx| {
-                    this.inspector_tab = InspectorTab::from_index(*index);
-                    cx.notify();
-                })),
+                .child(h_flex().gap_2().child(primary.outline().small())),
         )
         .child(
             v_flex()
                 .id("inspector-body")
                 // Zero basis: the body takes only the height left under the
-                // header and tab bar, and scrolls the rest.
+                // header, and scrolls the rest.
                 .h_0()
                 .flex_1()
                 .min_h_0()
@@ -253,7 +215,9 @@ pub(super) fn goal_line(
     }
 }
 
-fn overview_tab(
+/// The Rover panel body: only what an operator needs every minute. Level,
+/// what a goal drag would do, found buckets, and the drive pad while driving.
+fn basics(
     dashboard: &Dashboard,
     mark: &RoverMark,
     facts: &Facts,
@@ -262,9 +226,75 @@ fn overview_tab(
     let id = mark.id;
     let stopped = dashboard.is_stopped(mark);
     let driving = dashboard.driving;
-    let (hardware_status, hardware_detail) = console::hardware_lines(mark, stopped);
+    let (_, hardware_detail) = console::hardware_lines(mark, stopped);
     let level = console::level_index(mark);
     let lock = dashboard.study_lock(mark).map(str::to_owned);
+    v_flex()
+        .gap_5()
+        .when(driving, |tab| {
+            tab.child(drive_section(dashboard, mark, facts.limits, cx))
+        })
+        .child(
+            section("Autonomy", cx)
+                .child(hint(console::level_line(mark), cx))
+                .child(level_group(id, level, lock.clone(), 0..3, cx))
+                .child(level_group(id, level, lock, 3..OPERATOR_LEVELS.len(), cx)),
+        )
+        .child(section("Goal", cx).child(hint(goal_line(mark, facts.drag, &dashboard.link), cx)))
+        .when_some(hardware_detail, |tab, detail| {
+            tab.child(section("Hardware", cx).child(caution(detail.to_owned(), cx)))
+        })
+        .when(!mark.objects.is_empty(), |tab| {
+            let docking = mark.dock.as_ref().is_some_and(|dock| dock.active());
+            tab.child(
+                section("Found objects", cx).children(mark.objects.iter().map(|object| {
+                    let object_id = object.object.id;
+                    let bucket = object.object.class == "bucket";
+                    // The line wraps so a long GPS fix cannot push Dock out of the panel.
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(console::object_line(object)),
+                        )
+                        .when(bucket, |row| {
+                            row.child(
+                                div().flex_none().child(
+                                    Button::new(("dock-start", id * 1000 + u64::from(object_id)))
+                                        .outline()
+                                        .small()
+                                        .label("Dock")
+                                        .disabled(stopped || docking)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.feed.start_dock(id, object_id);
+                                            this.note = "Docking on the bucket".into();
+                                            cx.notify();
+                                        })),
+                                ),
+                            )
+                        })
+                })),
+            )
+        })
+        .when_some(mark.dock.clone(), |tab, dock| {
+            tab.child(dock_section(id, dock, cx))
+        })
+        .child(hint("More controls: Panels menu in the top bar.", cx))
+}
+
+/// Details panel: the trace, hardware, and navigation source and fix.
+pub(super) fn details_panel(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let id = mark.id;
+    let stopped = dashboard.is_stopped(mark);
+    let (_, hardware_detail) = console::hardware_lines(mark, stopped);
     let source = console::source_index(mark);
     let mut navigation = Vec::new();
     if let Some(gps) = mark.raw_gps {
@@ -305,76 +335,10 @@ fn overview_tab(
     v_flex()
         .gap_5()
         .child(rows(console::trace(mark, stopped)))
-        // Found buckets and the dock sit up top: Dock is the next step once one is found.
-        .when(!mark.objects.is_empty(), |tab| {
-            let docking = mark.dock.as_ref().is_some_and(|dock| dock.active());
-            tab.child(
-                section("Found objects", cx).children(mark.objects.iter().map(|object| {
-                    let object_id = object.object.id;
-                    let bucket = object.object.class == "bucket";
-                    // The line wraps so a long GPS fix cannot push Dock out of the panel.
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_sm()
-                                .child(console::object_line(object)),
-                        )
-                        .when(bucket, |row| {
-                            row.child(
-                                div().flex_none().child(
-                                Button::new(("dock-start", id * 1000 + u64::from(object_id)))
-                                    .outline()
-                                    .small()
-                                    .label("Dock")
-                                    .disabled(stopped || docking)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.feed.start_dock(id, object_id);
-                                        this.note = "Docking on the bucket".into();
-                                        cx.notify();
-                                    })),
-                                ),
-                            )
-                        })
-                })),
-            )
+        // The trace already names the hardware state; only its detail adds.
+        .when_some(hardware_detail, |tab, detail| {
+            tab.child(section("Hardware", cx).child(caution(detail.to_owned(), cx)))
         })
-        .when_some(mark.dock.clone(), |tab, dock| tab.child(dock_section(id, dock, cx)))
-        .child(
-            section("Hardware", cx)
-                .child(div().text_sm().child(hardware_status.to_owned()))
-                .when_some(hardware_detail, |section, detail| {
-                    section.child(caution(detail.to_owned(), cx))
-                })
-                // Reset stop clears this window's latch or the rover's own stop.
-                .when(stopped, |section| {
-                    section.child(
-                        h_flex().child(
-                            Button::new(("reset-stop", id))
-                                .outline()
-                                .small()
-                                .label("Reset stop")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.reset_safety(id);
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                }),
-        )
-        .child(
-            section("Autonomy", cx)
-                .child(hint(console::level_line(mark), cx))
-                // L0–L3, then L4 and L5, so neither row wraps.
-                .child(level_group(id, level, lock.clone(), 0..3, cx))
-                .child(level_group(id, level, lock, 3..OPERATOR_LEVELS.len(), cx)),
-        )
-        .child(study_section(dashboard, mark, cx))
-        .child(explore_section(dashboard, mark, stopped, cx))
-        .child(task_section(dashboard, mark, stopped, cx))
         .child(
             section("Navigation", cx)
                 .child(
@@ -435,11 +399,35 @@ fn overview_tab(
                     },
                 ),
         )
+}
+
+/// Study & tasks panel: study condition, L4 explore budget, L5 task box.
+pub(super) fn autonomy_panel(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    let stopped = dashboard.is_stopped(mark);
+    v_flex()
+        .gap_5()
+        .child(study_section(dashboard, mark, cx))
+        .child(explore_section(dashboard, mark, stopped, cx))
+        .child(task_section(dashboard, mark, stopped, cx))
+}
+
+/// Goal & capture panel: typed goals and 3D point capture.
+pub(super) fn goal_panel(
+    dashboard: &Dashboard,
+    mark: &RoverMark,
+    facts: &Facts,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    v_flex()
+        .gap_5()
         .child(goal_section(dashboard, mark, facts, cx))
-        .child(capture_section(dashboard, id, cx))
-        .when(driving, |tab| tab.child(drive_section(dashboard, mark, facts.limits, cx)))
+        .child(capture_section(dashboard, mark.id, cx))
         .child(hint(
-            "Click the map to place a destination, then Send goal in the popup. The rover stays at its live position. Outdoor GPS sends WGS84. Esc or Cancel sends nothing. Drive sends commands while keys are held. Stop halts the rover; Reset stop clears the stop.",
+            "Click the map to place a destination, then Send goal in the popup. Outdoor GPS sends WGS84. Esc or Cancel sends nothing.",
             cx,
         ))
 }

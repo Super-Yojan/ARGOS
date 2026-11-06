@@ -18,7 +18,7 @@ mod ui;
 use ui::{agent, palette};
 
 use argos_core::{ControlClaim, GoalDrag};
-use argos_gpui::console::{InspectorTab, StopOrigin};
+use argos_gpui::console::StopOrigin;
 use argos_gpui::{DashboardConfig, FleetFeed, FpvController, LaunchMode, RoverMark, RoverPresence};
 use gpui_kit::component::{Theme, ThemeMode, TitleBar, input::InputState};
 use gpui_kit::{prelude::*, *};
@@ -61,7 +61,8 @@ struct Dashboard {
     show_occupancy: bool,
     /// Map imagery in muted survey tones instead of true colour.
     muted_map: bool,
-    inspector_tab: InspectorTab,
+    /// Map in the center, Rover panel on the right, optional panels.
+    docks: ui::panels::Docks,
     driving: bool,
     held: BTreeSet<String>,
     link: String,

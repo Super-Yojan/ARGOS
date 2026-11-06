@@ -9,18 +9,20 @@ use super::cards::card_group;
 use super::cards::offscreen_tabs;
 use super::console_bar::console_bar;
 use super::drive::drive_key;
-use super::inspector::Facts;
-use super::inspector::rover_inspector;
+use super::inspector::{Facts, autonomy_panel, details_panel, goal_panel, rover_inspector};
 use super::interaction::goal_geo;
 use super::map_overlay::map_paint;
+use super::panels::PanelKind;
 use super::popups::dump_popups;
 use super::popups::goal_popup;
+use super::video::video_tab;
+use super::widgets::hint;
 use crate::Dashboard;
 
 use argos_core::{DragAnchor, DragSpace};
 use argos_gpui::console;
 use gpui_kit::base::v_flex;
-use gpui_kit::component::{ActiveTheme, ThemeStyled};
+use gpui_kit::component::{ActiveTheme, StyledExt, ThemeStyled, scroll::ScrollableElement};
 use gpui_kit::{prelude::*, *};
 
 impl Render for Dashboard {
@@ -32,12 +34,65 @@ impl Render for Dashboard {
         if self.drag.is_some() && !window.is_window_active() {
             self.cancel_drag();
         }
-        let selected = self.selected;
-        let control_held = self.claim.held(self.now);
-        let driving = self.driving;
-        let limits = self.feed.limits();
-        let mark = self.selected_mark().cloned();
-        let drag_local = self.drag.as_ref().and_then(|active| {
+        let status = console::status_line(&self.note, &self.command).to_owned();
+        div()
+            .id("argos")
+            .track_focus(&self.focus)
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+                if this.typing(window, cx) {
+                    return;
+                }
+                if let Some(key) = drive_key(&event.keystroke.key) {
+                    this.hold(key, false);
+                    cx.stop_propagation();
+                }
+            }))
+            // Capture phase: Space stops even when a focused button would
+            // otherwise take it as activation.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // Space in a task text box is a space; Stop all stays on the console bar.
+                if event.keystroke.key == "space" && !this.typing(window, cx) {
+                    this.estop();
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    this.cancel_drag();
+                    cx.stop_propagation();
+                    return;
+                }
+                if this.typing(window, cx) {
+                    return;
+                }
+                if let Some(key) = drive_key(&event.keystroke.key) {
+                    this.hold(key, true);
+                    cx.stop_propagation();
+                }
+            }))
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .font_family(".SystemUIFont")
+            .child(console_bar(self, status, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(self.docks.area.clone()),
+            )
+    }
+}
+
+impl Dashboard {
+    /// Live telemetry the rover panels draw: the drag in progress, teleop
+    /// limits, and whether S is held.
+    fn facts(&self) -> Facts {
+        let drag = self.drag.as_ref().and_then(|active| {
             let goal = &active.goal;
             let local = match goal.space {
                 DragSpace::Local => Some((goal.cursor.x, goal.cursor.y)),
@@ -54,7 +109,63 @@ impl Render for Dashboard {
                 goal.arrival_radius_m,
             ))
         });
-        let status = console::status_line(&self.note, &self.command).to_owned();
+        Facts {
+            drag,
+            limits: self.feed.limits(),
+            reversing_key: self.driving && self.held.contains("s"),
+        }
+    }
+
+    /// One dock panel's body. Rover panels show a short prompt until a rover
+    /// is selected.
+    pub(crate) fn panel_body(
+        &mut self,
+        kind: PanelKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if kind == PanelKind::Map {
+            return self.map_field(window, cx);
+        }
+        if kind == PanelKind::Agent {
+            return panel_scroll("agent", agent::agent_panel(self, cx), cx);
+        }
+        if kind == PanelKind::Video {
+            return panel_scroll("video", video_tab(self, cx).into_any_element(), cx);
+        }
+        let Some(mark) = self.selected_mark().cloned() else {
+            return v_flex()
+                .size_full()
+                .p_4()
+                .gap_2()
+                .bg(cx.theme().background)
+                .child(div().text_sm().font_semibold().child("No rover selected"))
+                .child(hint(
+                    "Click a rover or its card on the map. Its controls show here.",
+                    cx,
+                ))
+                .into_any_element();
+        };
+        let facts = self.facts();
+        let body = match kind {
+            PanelKind::Rover => rover_inspector(self, &mark, facts, cx).into_any_element(),
+            PanelKind::Details => details_panel(self, &mark, cx).into_any_element(),
+            PanelKind::Autonomy => autonomy_panel(self, &mark, cx).into_any_element(),
+            PanelKind::Goal => goal_panel(self, &mark, &facts, cx).into_any_element(),
+            PanelKind::Mission => super::mission::mission_tab(self, &mark, cx).into_any_element(),
+            _ => div().into_any_element(),
+        };
+        if kind == PanelKind::Rover {
+            return body;
+        }
+        panel_scroll(kind.title(), body, cx)
+    }
+
+    /// The map with its overlays, rover cards, and popups: the Map panel.
+    pub(crate) fn map_field(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.selected;
+        let control_held = self.claim.held(self.now);
+        let driving = self.driving;
         let unlocated = console::unlocated(&self.marks, &self.presence);
         let mut notices = console::reporting_notices(&self.marks);
         notices.extend(console::field_notices(
@@ -62,7 +173,6 @@ impl Render for Dashboard {
             &self.detail,
             self.maps_notice.as_deref(),
         ));
-        let reversing_key = self.driving && self.held.contains("s");
         let handles: Vec<(u64, DragAnchor, Point<Pixels>)> = {
             let map = self.view.read(cx);
             let mut handles = Vec::new();
@@ -177,204 +287,156 @@ impl Render for Dashboard {
             (CARD_WIDTH_REM * rem, CARD_HEIGHT_REM * rem),
         );
         let overlay = map_paint(self);
-        let inspector = mark.map(|mark| {
-            rover_inspector(
-                self,
-                &mark,
-                Facts {
-                    drag: drag_local,
-                    limits,
-                    reversing_key,
-                },
-                cx,
-            )
-            .into_any_element()
-        });
         div()
-            .id("argos")
-            .track_focus(&self.focus)
-            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
-                if this.typing(window, cx) {
-                    return;
-                }
-                if let Some(key) = drive_key(&event.keystroke.key) {
-                    this.hold(key, false);
-                    cx.stop_propagation();
-                }
-            }))
-            // Capture phase: Space stops even when a focused button would
-            // otherwise take it as activation.
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                // Space in a task text box is a space; Stop all stays on the console bar.
-                if event.keystroke.key == "space" && !this.typing(window, cx) {
-                    this.estop();
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" {
-                    this.cancel_drag();
-                    cx.stop_propagation();
-                    return;
-                }
-                if this.typing(window, cx) {
-                    return;
-                }
-                if let Some(key) = drive_key(&event.keystroke.key) {
-                    this.hold(key, true);
-                    cx.stop_propagation();
-                }
-            }))
+            .relative()
             .size_full()
-            .flex()
-            .flex_col()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .font_family(".SystemUIFont")
-            .child(console_bar(self, status, cx))
-            .child(
+            // Bubbles up from the map; cards, tabs, the inspector,
+            // and the popup stop it first.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, _| {
+                    this.press = Some(event.position);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    let Some(press) = this.press.take() else {
+                        return;
+                    };
+                    let moved = f32::from(event.position.x - press.x)
+                        .hypot(f32::from(event.position.y - press.y));
+                    if moved <= CLICK_SLOP_PX {
+                        this.click_map(event.position, cx);
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.press = None),
+            )
+            .child(self.view.clone())
+            .child(overlay)
+            .children(badges.into_iter().map(|(number, at)| {
                 div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    // Bubbles up from the map; cards, tabs, the inspector,
-                    // and the popup stop it first.
+                    .absolute()
+                    .left(at.x + px(7.))
+                    .top(at.y - px(18.))
+                    .px_1()
+                    .rounded_sm()
+                    .bg(rgb(super::palette::MAP_INK))
+                    .text_color(rgb(super::palette::MAP_PAPER))
+                    .text_xs()
+                    .child(number.to_string())
+            }))
+            .children(model_handles.into_iter().map(|(id, bounds)| {
+                div()
+                    .id(("model-drag", id))
+                    .absolute()
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _, _| {
-                            this.press = Some(event.position);
+                        cx.listener(move |this, _, window, cx| {
+                            this.focus.focus(window, cx);
+                            this.select(id);
+                            cx.stop_propagation();
+                            cx.notify();
                         }),
                     )
-                    .on_mouse_up(
+            }))
+            .children(handles.into_iter().map(|(id, anchor, at)| {
+                let slot = match anchor {
+                    DragAnchor::Rover => 2,
+                    DragAnchor::Goal => 3,
+                };
+                div()
+                    .id(("map-drag", id.saturating_mul(4).saturating_add(slot)))
+                    .absolute()
+                    .left(at.x - px(9.))
+                    .top(at.y - px(9.))
+                    .w(px(18.))
+                    .h(px(18.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(rgb(super::palette::MAP_PAPER))
+                    .shadow_sm()
+                    .cursor_pointer()
+                    // Goal: the goal colour. Rover: green when this
+                    // window holds it and can drag it, slate otherwise.
+                    .bg(rgb(if anchor == DragAnchor::Goal {
+                        super::palette::MAP_GOAL
+                    } else if selected == Some(id) && control_held {
+                        super::palette::SUCCESS
+                    } else {
+                        super::palette::MAP_ROVER
+                    }))
+                    .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, event: &MouseUpEvent, _, cx| {
-                            let Some(press) = this.press.take() else {
-                                return;
-                            };
-                            let moved = f32::from(event.position.x - press.x)
-                                .hypot(f32::from(event.position.y - press.y));
-                            if moved <= CLICK_SLOP_PX {
-                                this.click_map(event.position, cx);
-                                cx.notify();
-                            }
+                        cx.listener(move |this, _, window, cx| {
+                            this.focus.focus(window, cx);
+                            this.select(id);
+                            cx.stop_propagation();
+                            cx.notify();
                         }),
                     )
-                    .on_mouse_up_out(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.press = None),
-                    )
-                    .child(self.view.clone())
-                    .child(overlay)
-                    .children(badges.into_iter().map(|(number, at)| {
-                        div()
-                            .absolute()
-                            .left(at.x + px(7.))
-                            .top(at.y - px(18.))
-                            .px_1()
-                            .rounded_sm()
-                            .bg(rgb(super::palette::MAP_INK))
-                            .text_color(rgb(super::palette::MAP_PAPER))
-                            .text_xs()
-                            .child(number.to_string())
-                    }))
-                    .children(model_handles.into_iter().map(|(id, bounds)| {
-                        div()
-                            .id(("model-drag", id))
-                            .absolute()
-                            .left(bounds.origin.x)
-                            .top(bounds.origin.y)
-                            .w(bounds.size.width)
-                            .h(bounds.size.height)
-                            .cursor_pointer()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.focus.focus(window, cx);
-                                    this.select(id);
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }),
-                            )
-                    }))
-                    .children(handles.into_iter().map(|(id, anchor, at)| {
-                        let slot = match anchor {
-                            DragAnchor::Rover => 2,
-                            DragAnchor::Goal => 3,
-                        };
-                        div()
-                            .id(("map-drag", id.saturating_mul(4).saturating_add(slot)))
-                            .absolute()
-                            .left(at.x - px(9.))
-                            .top(at.y - px(9.))
-                            .w(px(18.))
-                            .h(px(18.))
-                            .rounded_full()
-                            .border_2()
-                            .border_color(rgb(super::palette::MAP_PAPER))
-                            .shadow_sm()
-                            .cursor_pointer()
-                            // Goal: the goal colour. Rover: green when this
-                            // window holds it and can drag it, slate otherwise.
-                            .bg(rgb(if anchor == DragAnchor::Goal {
-                                super::palette::MAP_GOAL
-                            } else if selected == Some(id) && control_held {
-                                super::palette::SUCCESS
-                            } else {
-                                super::palette::MAP_ROVER
-                            }))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.focus.focus(window, cx);
-                                    this.select(id);
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }),
-                            )
-                    }))
-                    .child({
-                        let frame = self.field_frame.clone();
-                        canvas(
-                            move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                    })
-                    .children(
-                        groups.into_iter().map(|group| {
-                            card_group(group, &field, selected, cx).into_any_element()
-                        }),
-                    )
-                    .when(!notices.is_empty(), |field| {
-                        field.child(
-                            v_flex()
-                                .absolute()
-                                .top_3()
-                                .left_3()
-                                .max_w(px(420.))
-                                .px_2()
-                                .py_1()
-                                .gap_1()
-                                .popover_style(cx)
-                                .text_xs()
-                                .text_color(cx.theme().warning)
-                                .children(notices),
-                        )
-                    })
-                    .child(offscreen_tabs(&field, &unlocated, selected, cx))
-                    .child(agent::agent_panel(self, cx))
-                    .children(confirm)
-                    .children(inspector)
-                    .child(dump_popups(&self.marks, cx)),
+            }))
+            .child({
+                let frame = self.field_frame.clone();
+                canvas(
+                    move |bounds, _, _| *frame.lock().unwrap() = Some(bounds),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+            })
+            .children(
+                groups
+                    .into_iter()
+                    .map(|group| card_group(group, &field, selected, cx).into_any_element()),
             )
+            .when(!notices.is_empty(), |field| {
+                field.child(
+                    v_flex()
+                        .absolute()
+                        .top_3()
+                        .left_3()
+                        .max_w(px(420.))
+                        .px_2()
+                        .py_1()
+                        .gap_1()
+                        .popover_style(cx)
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .children(notices),
+                )
+            })
+            .child(offscreen_tabs(&field, &unlocated, selected, cx))
+            .children(confirm)
+            .child(dump_popups(&self.marks, cx))
+            .into_any_element()
     }
 }
 
 /// How far the pointer may move between press and release and still count
 /// as a click rather than a camera orbit or pan.
 const CLICK_SLOP_PX: f32 = 4.;
+
+/// A panel body that scrolls on the console background.
+fn panel_scroll(id: &'static str, body: AnyElement, cx: &mut Context<Dashboard>) -> AnyElement {
+    v_flex()
+        .id(SharedString::from(format!("panel-{id}")))
+        .size_full()
+        .p_4()
+        .gap_5()
+        .bg(cx.theme().background)
+        .child(body)
+        .overflow_y_scrollbar()
+        .into_any_element()
+}

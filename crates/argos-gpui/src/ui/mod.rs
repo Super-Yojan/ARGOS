@@ -21,6 +21,7 @@
 //! | `interaction.rs` | Click-to-place goals and goal submission |
 //! | `map_overlay.rs`, `local_map.rs` | Grid, route, and goal drawing on the 3D map |
 //! | `palette.rs` | Console colors |
+//! | `panels.rs` | Dock panels: Map center, Rover right, optional panels from the Panels menu |
 //! | `attention.rs` | Attention log: selection, video, window focus, card states, poses, gaze, blinks |
 //!
 //! Fleet data, `.env` settings, and sending commands live in the library
@@ -39,6 +40,7 @@ mod local_map;
 mod map_overlay;
 pub(crate) mod mission;
 pub(crate) mod palette;
+pub(crate) mod panels;
 mod popups;
 mod render;
 mod sections;
