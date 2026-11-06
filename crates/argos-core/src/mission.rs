@@ -169,9 +169,21 @@ pub struct MissionView<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MissionCommand {
-    Goal { x: f64, y: f64, yaw: Option<f64> },
-    Dock { bucket: u32 },
-    CancelGoal,
+    Goal {
+        x: f64,
+        y: f64,
+        yaw: Option<f64>,
+    },
+    Dock {
+        bucket: u32,
+    },
+    /// Stop where the rover is: a goal at its own position. Terra drops L2/L3
+    /// to L0 on a goal cancel, so the mission never cancels a goal; a hold
+    /// keeps the level and a new goal can follow.
+    Hold {
+        x: f64,
+        y: f64,
+    },
     CancelDock,
 }
 
@@ -449,10 +461,12 @@ impl MissionRun {
         tick
     }
 
-    pub fn pause_now(&mut self, why: &str) -> MissionTick {
+    /// Pause now. With the rover's view, a goal in flight is held where the
+    /// rover is and a dock is cancelled; without one (rover gone) nothing is sent.
+    pub fn pause_now(&mut self, why: &str, view: Option<&MissionView>) -> MissionTick {
         let mut tick = MissionTick::default();
-        if matches!(self.phase, Phase::Driving { .. } | Phase::Docking { .. }) {
-            tick.commands.push(self.cancel_command());
+        if let Some(view) = view {
+            self.halt_motion(view, &mut tick);
         }
         if !matches!(self.phase, Phase::Done | Phase::Paused(_)) {
             self.pause(why.to_string(), &mut tick);
@@ -484,11 +498,15 @@ impl MissionRun {
         if !self.active() {
             return tick;
         }
-        if matches!(self.phase, Phase::Driving { .. } | Phase::Docking { .. }) {
-            tick.commands.push(self.cancel_command());
+        // A dock has to end before the next goal; a goal in flight is simply
+        // replaced by the next step's goal (never cancelled, see `Hold`).
+        if matches!(self.phase, Phase::Docking { .. }) {
+            tick.commands.push(MissionCommand::CancelDock);
         }
         self.log(&mut tick, "skipped", None);
+        let last = self.index + 1 >= self.plan.steps.len() && !self.plan.repeat;
         if let Some(reason) = mission_block(view) {
+            self.halt_driving(view, &mut tick);
             self.index = (self.index + 1).min(self.plan.steps.len());
             self.resume_docking = false;
             if self.index >= self.plan.steps.len() {
@@ -497,16 +515,19 @@ impl MissionRun {
                 self.pause(reason, &mut tick);
             }
         } else {
+            if last {
+                self.halt_driving(view, &mut tick);
+            }
             self.next(self.index + 1, view, now, &mut tick);
         }
         tick
     }
 
-    /// End the mission; cancels the goal or dock it had in flight.
-    pub fn stop(&mut self) -> MissionTick {
+    /// End the mission; holds the goal or cancels the dock it had in flight.
+    pub fn stop(&mut self, view: Option<&MissionView>) -> MissionTick {
         let mut tick = MissionTick::default();
-        if matches!(self.phase, Phase::Driving { .. } | Phase::Docking { .. }) {
-            tick.commands.push(self.cancel_command());
+        if let Some(view) = view {
+            self.halt_motion(view, &mut tick);
         }
         if self.active() {
             self.log(&mut tick, "stopped", None);
@@ -515,10 +536,21 @@ impl MissionRun {
         tick
     }
 
-    fn cancel_command(&self) -> MissionCommand {
+    /// Stop what the current step has in flight, keeping the rover's level.
+    fn halt_motion(&self, view: &MissionView, tick: &mut MissionTick) {
         match self.phase {
-            Phase::Docking { .. } => MissionCommand::CancelDock,
-            _ => MissionCommand::CancelGoal,
+            Phase::Docking { .. } => tick.commands.push(MissionCommand::CancelDock),
+            Phase::Driving { .. } => self.halt_driving(view, tick),
+            _ => {}
+        }
+    }
+
+    fn halt_driving(&self, view: &MissionView, tick: &mut MissionTick) {
+        if matches!(self.phase, Phase::Driving { .. }) {
+            tick.commands.push(MissionCommand::Hold {
+                x: view.x,
+                y: view.y,
+            });
         }
     }
 

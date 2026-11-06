@@ -233,6 +233,12 @@ fn apply_commands(rx: &Receiver<(String, Vec<u8>)>, rovers: &mut [Rover]) {
             "goal" => {
                 if value["cancel"] == true {
                     rover.goal = None;
+                    // As Terra: a goal cancel drops L2/L3 to manual.
+                    if matches!(rover.effective, "waypoint" | "waypoint_direct") {
+                        rover.requested = "teleop";
+                        rover.effective = "teleop";
+                        rover.revision = rover.revision.saturating_add(1);
+                    }
                     println!("fixture rover {id} goal cancel");
                 } else if let (Some(x), Some(y)) = (value["x"].as_f64(), value["y"].as_f64()) {
                     let mut next = goal(rover.x, rover.y, x, y);

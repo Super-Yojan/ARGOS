@@ -216,16 +216,86 @@ fn a_failed_dock_pauses_and_resume_docks_again() {
 }
 
 #[test]
-fn stop_and_pause_cancel_what_is_in_flight() {
+fn stop_and_pause_hold_the_rover_instead_of_cancelling_its_goal() {
+    // Terra drops L2/L3 to L0 on a goal cancel, so the mission holds instead.
     let p = plan(vec![MissionStep::at(StepKind::Waypoint, 1., 2.)], false);
-    let (mut run, _) = MissionRun::start(p.clone(), &view("waypoint", None, None), 0.).unwrap();
+    let v = view("waypoint", Some((1., 2., "active")), None);
+    let (mut run, _) = MissionRun::start(p.clone(), &v, 0.).unwrap();
     assert_eq!(
-        run.pause_now("operator").commands,
-        vec![MissionCommand::CancelGoal]
+        run.pause_now("operator", Some(&v)).commands,
+        vec![MissionCommand::Hold { x: 0., y: 0. }]
     );
-    let (mut run, _) = MissionRun::start(p, &view("waypoint", None, None), 0.).unwrap();
-    assert_eq!(run.stop().commands, vec![MissionCommand::CancelGoal]);
+    // Still at L3, so Resume sends the step again.
+    assert_eq!(goal(&run.resume(&v, 1.).unwrap()), (1., 2.));
+    let (mut run, _) = MissionRun::start(p.clone(), &v, 0.).unwrap();
+    assert_eq!(
+        run.stop(Some(&v)).commands,
+        vec![MissionCommand::Hold { x: 0., y: 0. }]
+    );
     assert!(!run.active());
+    // Rover gone: nothing to send.
+    let (mut run, _) = MissionRun::start(p, &v, 0.).unwrap();
+    assert!(
+        run.pause_now("Rover left the fleet", None)
+            .commands
+            .is_empty()
+    );
+}
+
+#[test]
+fn skip_sends_the_next_goal_without_cancelling() {
+    let p = plan(
+        vec![
+            MissionStep::at(StepKind::Waypoint, 1., 2.),
+            MissionStep::at(StepKind::Collect, 5., 0.),
+        ],
+        false,
+    );
+    let v = view("waypoint", Some((1., 2., "active")), None);
+    let (mut run, _) = MissionRun::start(p, &v, 0.).unwrap();
+    run.tick(&v, 1.);
+    let tick = run.skip(&v, 2.);
+    assert_eq!(
+        tick.commands,
+        vec![MissionCommand::Goal {
+            x: 5.,
+            y: 0.,
+            yaw: None
+        }]
+    );
+    assert!(matches!(run.phase, Phase::Driving { .. }));
+    assert_eq!(run.index, 1);
+    // Skipping the last step holds the rover and ends the mission.
+    let tick = run.skip(&view("waypoint", Some((5., 0., "active")), None), 3.);
+    assert_eq!(tick.commands, vec![MissionCommand::Hold { x: 0., y: 0. }]);
+    assert_eq!(run.phase, Phase::Done);
+}
+
+#[test]
+fn skip_during_a_dock_cancels_the_dock_then_drives_on() {
+    let p = plan(
+        vec![
+            MissionStep::score(4, "Orange bucket 4".into(), 2., 0.),
+            MissionStep::at(StepKind::Home, 0., -1.),
+        ],
+        false,
+    );
+    let mut v = view("waypoint", None, None);
+    let (mut run, _) = MissionRun::start(p, &v, 0.).unwrap();
+    v.goal = Some((0.5, 0., "arrived"));
+    run.tick(&v, 1.);
+    let tick = run.skip(&v, 2.);
+    assert_eq!(
+        tick.commands,
+        vec![
+            MissionCommand::CancelDock,
+            MissionCommand::Goal {
+                x: 0.,
+                y: -1.,
+                yaw: None
+            }
+        ]
+    );
 }
 
 #[test]

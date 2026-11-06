@@ -109,7 +109,7 @@ impl Dashboard {
             };
             let tick = match &mark {
                 Some(mark) => with_view(mark, |view| run.tick(view, now)),
-                None => run.pause_now("Rover left the fleet"),
+                None => run.pause_now("Rover left the fleet", None),
             };
             self.apply_mission(id, tick);
         }
@@ -123,7 +123,10 @@ impl Dashboard {
                         .publish_goal(id, GoalRequest::Local { x, y, yaw }, None)
                 }
                 MissionCommand::Dock { bucket } => self.feed.start_dock(id, bucket),
-                MissionCommand::CancelGoal => self.feed.cancel_goal(id),
+                MissionCommand::Hold { x, y } => {
+                    self.feed
+                        .publish_goal(id, GoalRequest::Local { x, y, yaw: None }, None)
+                }
                 MissionCommand::CancelDock => self.feed.cancel_dock(id),
             }
         }
@@ -232,7 +235,8 @@ impl Dashboard {
     /// Stops the rover's mission, if one runs (Stop, takeover, fleet switch).
     pub(super) fn halt_mission(&mut self, id: u64, why: &str) {
         if let Some(run) = self.missions.runs.get_mut(&id).filter(|run| run.active()) {
-            let tick = run.pause_now(why);
+            // Fleet switch: the old feed is going away, so nothing is sent.
+            let tick = run.pause_now(why, None);
             self.apply_mission(id, tick);
         }
     }
@@ -361,8 +365,8 @@ fn run_section(
                         .label("Pause")
                         .tooltip("Cancels the goal or dock in flight; Resume repeats this step")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.mission_action(id, |run, _, _| {
-                                Ok(run.pause_now("operator paused"))
+                            this.mission_action(id, |run, view, _| {
+                                Ok(run.pause_now("operator paused", Some(view)))
                             });
                             cx.notify();
                         }))
@@ -383,7 +387,7 @@ fn run_section(
                         .small()
                         .label("End mission")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.mission_action(id, |run, _, _| Ok(run.stop()));
+                            this.mission_action(id, |run, view, _| Ok(run.stop(Some(view))));
                             cx.notify();
                         })),
                 ),
