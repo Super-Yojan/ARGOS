@@ -122,6 +122,14 @@ fn a_stop_outranks_driving_and_attention_but_trace_keeps_the_reason() {
 fn a_stale_pose_needs_a_person_except_under_manual_control() {
     let mut rover = mark(3);
     rover.status = "pose stale".into();
+    // Hardware status still arrives, so only the pose is missing.
+    rover.hardware = HardwareObservation {
+        present: true,
+        connected: true,
+        ready: true,
+        age: 0.2,
+        ..HardwareObservation::default()
+    };
     assert_eq!(callout(&rover, None, false).state, "Pose stale");
     rover.requested_level = Some("teleop".into());
     rover.effective_level = Some("teleop".into());
@@ -621,21 +629,34 @@ fn pose_and_hardware_stale_reads_as_not_reporting_with_a_timer() {
     });
     let callout = callout(&rover, None, false);
     assert_eq!(callout.tag, Some(CalloutTag::Attention));
-    assert_eq!(callout.state, "Not reporting · holding · 12 s");
+    assert_eq!(callout.state, "Not reporting · 12 s");
     let rows = trace(&rover, false);
-    assert!(rows.contains(&("Goal", "active · on hold, rover not reporting".into())));
+    assert!(rows.contains(&("Goal", "active · rover not reporting".into())));
     assert!(
         rows.iter()
-            .any(|(name, step)| *name == "Next step" && step.contains("holds still"))
+            .any(|(name, step)| *name == "Next step" && step.contains("keeps working on its goal"))
     );
     // The top bar never says healthy next to a rover that stopped reporting.
     assert_eq!(
         link_label("healthy", &[mark(1), rover.clone()]),
-        "Rover 0 not reporting · holding · 12 s"
+        "Rover 0 not reporting · 12 s"
     );
+    // A rover on its own level keeps driving through a gap: no banner.
+    assert!(reporting_notices(&[rover.clone()]).is_empty());
+    // In teleop the rover holds, so the banner says what to do.
+    rover.requested_level = Some("teleop".into());
     let notices = reporting_notices(&[rover]);
     assert_eq!(notices.len(), 1);
-    assert!(notices[0].starts_with("Rover 0 not reporting · holding · 12 s · Waiting"));
+    assert!(notices[0].starts_with("Rover 0 not reporting · 12 s · Waiting"));
+}
+
+#[test]
+fn pose_stale_during_a_wifi_gap_does_not_flash_a_callout() {
+    // Pose and hardware both paused for 3 s: below the reporting delay, and
+    // not a pose-only problem either, so the card stays calm.
+    let mut rover = quiet(0, 3.);
+    rover.reporting = argos_core::Reporting::Fresh;
+    assert_eq!(callout(&rover, None, false).attention, None);
 }
 
 #[test]

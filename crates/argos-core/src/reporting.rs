@@ -7,6 +7,13 @@ use crate::{HARDWARE_STATUS_STALE_SECONDS, HardwareObservation, STALE_SECONDS};
 pub const ROVER_DATA_STALE_SECONDS: f64 = STALE_SECONDS;
 /// A rover silent this long reads as link lost, with a next step.
 pub const ROVER_LINK_LOST_SECONDS: f64 = 15.;
+/// The dashboard shows a rover as not reporting only after this much silence.
+/// TerraPhone on outdoor Wi-Fi often goes quiet for 2-4 s while it keeps
+/// driving its goal, and flagging each of those made the rover flicker.
+pub const ROVER_QUIET_SECONDS: f64 = 5.;
+/// A rover shown as not reporting must send data this long before it reads
+/// as fresh again, so a short burst between gaps does not flash it back.
+pub const ROVER_RECOVER_SECONDS: f64 = 3.;
 
 /// One rover's data freshness, as the dashboard shows it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -75,9 +82,7 @@ impl Reporting {
         };
         match self {
             Self::Fresh => None,
-            Self::NotReporting { silent_s } => {
-                Some(format!("Not reporting · holding · {}", timer(silent_s)))
-            }
+            Self::NotReporting { silent_s } => Some(format!("Not reporting · {}", timer(silent_s))),
             Self::LinkLost { silent_s } => Some(format!("Link lost · {}", timer(silent_s))),
         }
     }
@@ -86,11 +91,46 @@ impl Reporting {
         match self {
             Self::Fresh => None,
             Self::NotReporting { .. } => Some(
-                "Waiting for the rover. It holds still, and a goal carries on by itself when its data returns. In teleop, release and press the drive keys again.",
+                "Waiting for the rover's data. A rover on its own level keeps working on its goal meanwhile. In teleop it holds: release and press the drive keys again.",
             ),
             Self::LinkLost { .. } => Some(
                 "Check that TerraPhone is open in the foreground and on Wi-Fi. When it reports again, resend the goal if the rover dropped it, or take over. In teleop, release and press the drive keys again.",
             ),
         }
+    }
+}
+
+/// Hysteresis over [`Reporting::classify`] for one rover, so short telemetry
+/// gaps do not make the rover and its notices flicker.
+///
+/// - Fresh to not reporting only after [`ROVER_QUIET_SECONDS`] of silence.
+/// - Back to fresh only after [`ROVER_RECOVER_SECONDS`] of steady data. Until
+///   then the last quiet reading is kept, timer frozen.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ReportingHold {
+    shown: Reporting,
+    fresh_since: Option<f64>,
+}
+
+impl ReportingHold {
+    /// Feed the raw reading at `now` (seconds, any steady clock); returns
+    /// what the dashboard should show.
+    pub fn observe(&mut self, raw: Reporting, now: f64) -> Reporting {
+        match raw {
+            Reporting::Fresh => {
+                let since = *self.fresh_since.get_or_insert(now);
+                if !self.shown.is_fresh() && now - since >= ROVER_RECOVER_SECONDS {
+                    self.shown = Reporting::Fresh;
+                }
+            }
+            quiet => {
+                self.fresh_since = None;
+                let silent_s = quiet.silent_s().unwrap_or(f64::INFINITY);
+                if !self.shown.is_fresh() || silent_s >= ROVER_QUIET_SECONDS {
+                    self.shown = quiet;
+                }
+            }
+        }
+        self.shown
     }
 }

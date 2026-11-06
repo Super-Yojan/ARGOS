@@ -261,7 +261,7 @@ pub fn trace(mark: &RoverMark, stopped: bool) -> Vec<(&'static str, String)> {
         (None, _) => "None".into(),
     };
     let goal = if mark.goal_active && !mark.reporting.is_fresh() {
-        format!("{goal} · on hold, rover not reporting")
+        format!("{goal} · rover not reporting")
     } else {
         goal
     };
@@ -504,9 +504,20 @@ pub fn reporting_changes(before: &[RoverMark], after: &[RoverMark]) -> Vec<serde
 }
 
 /// Field notices for rovers that stopped reporting, with the next step.
+///
+/// The banner is for a lost link, or a quiet rover in teleop (it holds and
+/// the keys must be pressed again). A rover on its own level keeps driving
+/// through a short gap, so that only shows on its card and panel.
 pub fn reporting_notices(marks: &[RoverMark]) -> Vec<String> {
     marks
         .iter()
+        .filter(|mark| match mark.reporting {
+            argos_core::Reporting::LinkLost { .. } => true,
+            argos_core::Reporting::NotReporting { .. } => {
+                mark.requested_level.as_deref() == Some("teleop")
+            }
+            argos_core::Reporting::Fresh => false,
+        })
         .filter_map(|mark| {
             let label = mark.reporting.label()?;
             let step = mark.reporting.next_step()?;
@@ -654,7 +665,13 @@ fn attention(mark: &RoverMark) -> Option<String> {
     if let Some(label) = mark.reporting.label() {
         return Some(label);
     }
-    if mark.status == "pose stale" && mark.requested_level.as_deref() != Some("teleop") {
+    // Pose stale while hardware status still arrives. When both pause (a
+    // Wi-Fi gap) the reporting hold above speaks for it, after its delay.
+    if mark.status == "pose stale"
+        && mark.requested_level.as_deref() != Some("teleop")
+        && mark.hardware.present
+        && mark.hardware.age < argos_core::HARDWARE_STATUS_STALE_SECONDS
+    {
         return Some("Pose stale".into());
     }
     if let Some(label) = mark
