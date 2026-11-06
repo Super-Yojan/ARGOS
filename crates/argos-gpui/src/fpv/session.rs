@@ -7,10 +7,10 @@
 use super::config::FpvConfig;
 use super::decode::VideoDecoder;
 use super::link::Bus;
-use super::{VideoFrame, gpu_frame};
+use super::{VideoFrame, gpu_frame, rotate_frame};
 use crate::DashboardConfig;
 use fpv_signaling::{CallState, Effect, SignalingSession, Topic};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -72,6 +72,17 @@ pub struct FpvView {
     pub image: Option<Arc<gpui_kit::RenderImage>>,
     /// Frames the UI thread should remove from the sprite atlas.
     pub retired: Vec<Arc<gpui_kit::RenderImage>>,
+    /// Clockwise quarter turns per rover, kept across calls.
+    pub rotations: BTreeMap<u64, u8>,
+}
+
+impl FpvView {
+    /// Clockwise quarter turns applied to the rover now on video.
+    pub fn rotation(&self) -> u8 {
+        self.phone_id
+            .and_then(|id| self.rotations.get(&id).copied())
+            .unwrap_or(0)
+    }
 }
 
 impl Default for FpvView {
@@ -91,6 +102,7 @@ impl Default for FpvView {
             frame: None,
             image: None,
             retired: Vec::new(),
+            rotations: BTreeMap::new(),
         }
     }
 }
@@ -144,6 +156,24 @@ impl FpvController {
 
     pub fn stop(&self) {
         let _ = self.tx.send(Command::Stop);
+    }
+
+    /// Turn rover `phone_id`'s picture 90° clockwise and return its new
+    /// quarter-turn count. The last frame redraws at once when it is on video.
+    pub fn rotate(&self, phone_id: u64) -> u8 {
+        let mut current = self.view.lock().unwrap();
+        let turns = current.rotations.entry(phone_id).or_insert(0);
+        *turns = (*turns + 1) % 4;
+        let turns = *turns;
+        if current.phone_id == Some(phone_id)
+            && let Some(frame) = current.frame.clone()
+        {
+            if let Some(previous) = current.image.take() {
+                current.retired.push(previous);
+            }
+            current.image = gpu_frame(&rotate_frame(&frame, turns));
+        }
+        turns
     }
 
     pub fn view(&self) -> FpvView {
@@ -233,8 +263,14 @@ async fn answer_phone(
 ) -> Result<(), String> {
     {
         let mut current = view.lock().unwrap();
+        let rotations = std::mem::take(&mut current.rotations);
+        let mut retired = std::mem::take(&mut current.retired);
+        // The old call's last picture leaves the sprite atlas too.
+        retired.extend(current.image.take());
         *current = FpvView {
             phone_id: Some(phone_id),
+            rotations,
+            retired,
             phase: FpvPhase::Starting,
             detail: format!("Asking rover {phone_id} for video"),
             ..FpvView::default()
@@ -685,7 +721,7 @@ fn store_frame(view: &Mutex<FpvView>, frame: VideoFrame, rates: &Rates) {
     if let Some(previous) = current.image.take() {
         current.retired.push(previous);
     }
-    current.image = gpu_frame(&frame);
+    current.image = gpu_frame(&rotate_frame(&frame, current.rotation()));
     current.frame = Some(frame);
     if current.phase != FpvPhase::Connected {
         current.phase = FpvPhase::Connected;

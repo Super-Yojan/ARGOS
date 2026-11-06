@@ -224,3 +224,45 @@ fn local_sender_delivers_a_frame() {
         "no video frame arrived: {detail}"
     );
 }
+
+#[test]
+fn rotate_frame_turns_clockwise_in_quarter_steps() {
+    use super::{VideoFrame, rotate_frame};
+    // 2×1 frame: pixel A at (0,0), pixel B at (1,0).
+    let a = [1u8, 2, 3, 4];
+    let b = [5u8, 6, 7, 8];
+    let frame = VideoFrame {
+        width: 2,
+        height: 1,
+        bgra: [a, b].concat().into(),
+    };
+    let once = rotate_frame(&frame, 1);
+    assert_eq!((once.width, once.height), (1, 2));
+    // Clockwise: the left pixel ends on top.
+    assert_eq!(once.bgra.as_ref(), [a, b].concat().as_slice());
+    let twice = rotate_frame(&frame, 2);
+    assert_eq!((twice.width, twice.height), (2, 1));
+    assert_eq!(twice.bgra.as_ref(), [b, a].concat().as_slice());
+    let thrice = rotate_frame(&frame, 3);
+    assert_eq!((thrice.width, thrice.height), (1, 2));
+    assert_eq!(thrice.bgra.as_ref(), [b, a].concat().as_slice());
+    let full = rotate_frame(&frame, 4);
+    assert_eq!(full.bgra.as_ref(), frame.bgra.as_ref());
+}
+
+#[test]
+fn rotate_frame_moves_a_corner_on_a_wide_frame() {
+    use super::{VideoFrame, rotate_frame};
+    // 3×2 frame, mark the top-right pixel.
+    let mut bytes = vec![0u8; 3 * 2 * 4];
+    bytes[(0 * 3 + 2) * 4] = 9;
+    let frame = VideoFrame {
+        width: 3,
+        height: 2,
+        bgra: bytes.into(),
+    };
+    let turned = rotate_frame(&frame, 1);
+    assert_eq!((turned.width, turned.height), (2, 3));
+    // Top-right goes to bottom-right after a clockwise quarter turn.
+    assert_eq!(turned.bgra[(2 * 2 + 1) * 4], 9);
+}
