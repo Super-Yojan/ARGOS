@@ -94,6 +94,8 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key>
   <string>ARGOS connects to rovers and the Zorvane simulator on your network.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>ARGOS listens when you press Talk, so you can say a task for the agents.</string>
 </dict>
 </plist>
 """

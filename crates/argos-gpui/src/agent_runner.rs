@@ -31,12 +31,33 @@ pub struct AgentRun<'a> {
     pub profile: McpProfile,
     /// Where config files for the CLI are written (the session folder).
     pub dir: &'a Path,
+    /// What the operator asked the fleet to do, spoken or typed, if anything.
+    pub task: Option<&'a str>,
 }
 
 const TICK: &str = "You are the recommendation engine for ARGOS, a station where one human \
 operator supervises several rovers. Use the argos MCP tools: call get_briefing first and follow it. \
 Then either call propose once with up to 3 cards, or answer \"no recommendation\" and why in one \
 line. Do not edit files or run other commands.";
+
+/// The tick instruction, plus the operator's task when there is one. The
+/// engine plans; every move still reaches the rovers as a card or a checked
+/// operator-tool call, never directly.
+pub fn tick_text(task: Option<&str>) -> String {
+    match task.map(str::trim).filter(|task| !task.is_empty()) {
+        None => TICK.to_string(),
+        Some(task) => format!(
+            "{TICK}\n\nThe operator gave the fleet this task in their own words (often spoken \
+             and transcribed, so expect small slips): \"{task}\"\n\
+             Plan how the fleet carries it out with the rovers and levels in the briefing. Propose \
+             the first steps as cards, up to 3, most urgent first; later steps come on later \
+             ticks as the field changes. End your answer with one line that starts with \"Plan:\" \
+             (which rover does what, in what order); the operator sees that line. If the task \
+             cannot be done with what ARGOS offers, propose nothing and give the reason on that \
+             line."
+        ),
+    }
+}
 
 /// Environment every CLI keeps: enough to find its binary, its login and the network.
 const BASE_ENV: &[&str] = &[
@@ -175,6 +196,7 @@ impl AgentCli {
     pub fn command(self, run: &AgentRun) -> std::io::Result<Command> {
         let exe = run.exe.display().to_string();
         let args = self.mcp_args(run);
+        let prompt = tick_text(run.task);
         let mut command = Command::new(self.program());
         command.env_clear();
         for name in self.env_allowed() {
@@ -192,7 +214,7 @@ impl AgentCli {
                 )?;
                 command
                     .arg("-p")
-                    .arg(TICK)
+                    .arg(&prompt)
                     .arg("--mcp-config")
                     .arg(config)
                     .arg("--strict-mcp-config")
@@ -213,7 +235,7 @@ impl AgentCli {
                     .arg(format!("mcp_servers.argos.command={}", quoted(&exe)))
                     .arg("-c")
                     .arg(format!("mcp_servers.argos.args={list}"))
-                    .arg(TICK);
+                    .arg(&prompt);
             }
             Self::OpenCode => {
                 let mut local = vec![exe];
@@ -227,7 +249,10 @@ impl AgentCli {
                         "mcp": {"argos": {"type": "local", "command": local, "enabled": true}},
                     }),
                 )?;
-                command.env("OPENCODE_CONFIG", config).arg("run").arg(TICK);
+                command
+                    .env("OPENCODE_CONFIG", config)
+                    .arg("run")
+                    .arg(&prompt);
             }
         }
         Ok(command)

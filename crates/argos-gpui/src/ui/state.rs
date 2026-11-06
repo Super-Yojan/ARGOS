@@ -41,6 +41,8 @@ impl Dashboard {
         });
         let task_reply =
             cx.new(|cx| InputState::new(window, cx).placeholder("Answer or extra guidance"));
+        let agent_task_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Task for the fleet, or press Talk"));
         let view = cx.new(|cx| MapView::new(map.clone(), cx));
         let focus = cx.focus_handle();
         let poll = cx.spawn(async |this, cx| {
@@ -114,6 +116,7 @@ impl Dashboard {
             explore_budget: 1,
             task_input,
             task_reply,
+            agent_task_input,
             task_budget: 1,
             task_agent: None,
             fpv,
@@ -542,5 +545,10 @@ impl Dashboard {
     pub(super) fn typing(&self, window: &Window, cx: &App) -> bool {
         self.task_input.read(cx).focus_handle(cx).is_focused(window)
             || self.task_reply.read(cx).focus_handle(cx).is_focused(window)
+            || self
+                .agent_task_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
     }
 }

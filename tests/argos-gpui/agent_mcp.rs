@@ -1,6 +1,6 @@
 use argos_core::{AgentMode, agent_permitted};
 use argos_gpui::agent_mcp::{BridgeClient, McpProfile, McpServer, RULES, agent_cli};
-use argos_gpui::agent_runner::{AgentCli, AgentRun};
+use argos_gpui::agent_runner::{AgentCli, AgentRun, tick_text};
 use argos_gpui::{AGENT_BRIDGE_FILE, AgentBridge};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -217,6 +217,7 @@ fn each_engine_gets_argos_mcp_its_own_way() {
         bridge: &bridge,
         profile: McpProfile::Advise,
         dir: &dir,
+        task: None,
     };
 
     let claude = AgentCli::Claude.command(&run).unwrap();
@@ -262,6 +263,34 @@ fn each_engine_gets_argos_mcp_its_own_way() {
 }
 
 #[test]
+fn operator_task_reaches_every_engine_prompt() {
+    let dir = std::env::temp_dir().join(format!("argos-task-{}", std::process::id()));
+    let bridge = dir.join(AGENT_BRIDGE_FILE);
+    let task = "Rover 2 explores the left side while rover 1 goes home";
+    assert!(!tick_text(None).contains("Plan:"));
+    assert_eq!(tick_text(Some("   ")), tick_text(None));
+    for cli in AgentCli::ALL {
+        let command = cli
+            .command(&AgentRun {
+                exe: std::path::Path::new("/opt/argos/argos-gpui"),
+                bridge: &bridge,
+                profile: McpProfile::Advise,
+                dir: &dir,
+                task: Some(task),
+            })
+            .unwrap();
+        let prompt = args(&command)
+            .into_iter()
+            .find(|arg| arg.contains("recommendation engine"))
+            .unwrap_or_else(|| panic!("{} has no prompt", cli.label()));
+        assert!(prompt.contains(task), "{} misses the task", cli.label());
+        assert!(prompt.contains("Plan:"));
+        assert!(prompt.contains("cards"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn engines_start_from_a_cleared_environment() {
     // SAFETY: tests in this binary that read the environment do not race this one.
     unsafe {
@@ -277,6 +306,7 @@ fn engines_start_from_a_cleared_environment() {
                 bridge: &bridge,
                 profile: McpProfile::Advise,
                 dir: &dir,
+                task: None,
             })
             .unwrap();
         let envs: Vec<(String, Option<String>)> = command

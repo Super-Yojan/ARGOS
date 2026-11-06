@@ -58,4 +58,8 @@ A found object's `x`/`y` are in the frame of the rover that found it.
   matter, and list the state fields you used as `evidence`.
 - Read `recommendations.recent`. Do not repeat an idea the operator rejected;
   ARGOS refuses the same kind for the same rover for 3 minutes anyway.
+- When `operator_task` is set, it comes first: plan how the fleet does it
+  (which rover, which level or goal, in what order), say the plan in one line,
+  and propose the first steps. The operator still accepts each card. Fill gaps
+  from the field; if the task is impossible, say why instead.
 - Proposing nothing is a valid answer when the fleet is doing fine.

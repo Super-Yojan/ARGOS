@@ -29,7 +29,9 @@ pub fn tick_prompt(state: &Value) -> String {
     format!(
         "Here is the field as ARGOS sees it now (JSON). Decide what, if anything, the operator \
          should do next. Call propose once with up to 3 recommendations, most urgent first. If the \
-         fleet needs nothing, do not call propose; say \"no recommendation\" and why in one line.\n\n{state}"
+         fleet needs nothing, do not call propose; say \"no recommendation\" and why in one line. \
+         If `operator_task` is set, the operator asked for it in their own words: plan for it \
+         first, give the plan in one line, and propose its first steps.\n\n{state}"
     )
 }
 
