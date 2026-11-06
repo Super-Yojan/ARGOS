@@ -18,8 +18,6 @@ ARGOS writes what the operator attends to into the session log (`Documents/ARGOS
 
 A rover waits from the moment it needs help until you select it; from then until it runs again is interaction. A rover at L0/L1 that nobody is driving counts as waiting.
 
-![Timeline panel](../../screenshots/timeline/timeline-panel.png)
-
 ## What is logged
 
 | Record | When | Key fields |
