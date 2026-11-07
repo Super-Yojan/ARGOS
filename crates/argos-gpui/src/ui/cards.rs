@@ -1,8 +1,10 @@
 //! Rover callout cards on the map and tabs for rovers off screen or with
 //! no position.
 
+use super::palette;
 use super::widgets::Picked;
 use crate::Dashboard;
+use std::collections::BTreeMap;
 
 use argos_gpui::console::{self, CalloutTag};
 use gpui_kit::base::{h_flex, v_flex};
@@ -15,6 +17,7 @@ pub(super) fn callout_tag(tag: CalloutTag) -> Tag {
         CalloutTag::BackingUp => Tag::warning(),
         CalloutTag::Driving => Tag::info(),
         CalloutTag::Attention => Tag::warning(),
+        CalloutTag::Arrived => Tag::success(),
         CalloutTag::Goal => Tag::secondary(),
     }
     .small()
@@ -35,6 +38,7 @@ pub(super) fn card_group(
     group: console::CardGroup,
     field: &[(u64, Option<Point<Pixels>>, console::Callout)],
     selected: Option<u64>,
+    unseen: &BTreeMap<u64, bool>,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     let cards: Vec<_> = group
@@ -42,7 +46,14 @@ pub(super) fn card_group(
         .iter()
         .filter_map(|id| field.iter().find(|(row, _, _)| row == id))
         .map(|(id, _, callout)| {
-            rover_card(*id, callout.clone(), selected == Some(*id), cx).into_any_element()
+            rover_card(
+                *id,
+                callout.clone(),
+                selected == Some(*id),
+                unseen.get(id).copied(),
+                cx,
+            )
+            .into_any_element()
         })
         .collect();
     div()
@@ -78,6 +89,8 @@ fn rover_card(
     id: u64,
     callout: console::Callout,
     selected: bool,
+    // An arrival the operator has not turned to yet: whether the flash is lit.
+    unseen: Option<bool>,
     cx: &mut Context<Dashboard>,
 ) -> impl IntoElement {
     Button::new(("callout", id))
@@ -86,7 +99,14 @@ fn rover_card(
         .h_auto()
         .py_1()
         .max_w(rems(CARD_WIDTH_REM))
-        .bg(cx.theme().popover)
+        .bg(if unseen == Some(true) {
+            rgb(palette::ARRIVAL_FLASH).into()
+        } else {
+            cx.theme().popover
+        })
+        .when(unseen.is_some(), |card| {
+            card.border_2().border_color(rgb(palette::SUCCESS))
+        })
         .picked(selected)
         .child(
             v_flex()
@@ -184,6 +204,84 @@ pub(super) fn offscreen_tabs(
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.focus.focus(window, cx);
                     this.note = format!("Rover {id} · {detail}");
+                    cx.notify();
+                }))
+        }))
+}
+
+/// One row of the "Needs next goal" queue.
+pub(super) struct Waiting {
+    pub id: u64,
+    pub level: &'static str,
+    pub waiting_s: f64,
+    /// The operator has not selected it since it arrived.
+    pub unseen: bool,
+    /// In the bright half of the flash.
+    pub flash: bool,
+}
+
+/// Rovers that reached their L2/L3 goal and wait for the next one, longest
+/// wait first, in the map's top right corner. Choosing one centers the map
+/// on it and selects it.
+pub(super) fn arrival_queue(
+    rows: Vec<Waiting>,
+    selected: Option<u64>,
+    cx: &mut Context<Dashboard>,
+) -> impl IntoElement {
+    v_flex()
+        .absolute()
+        .top_3()
+        .right_3()
+        .items_end()
+        .gap_1()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(!rows.is_empty(), |queue| {
+            queue.child(
+                div()
+                    .px_2()
+                    .rounded_sm()
+                    .bg(cx.theme().popover)
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(rgb(palette::SUCCESS))
+                    .child("Needs next goal"),
+            )
+        })
+        .children(rows.into_iter().map(|row| {
+            let id = row.id;
+            Button::new(("arrival", id))
+                .outline()
+                .small()
+                .bg(if row.flash {
+                    rgb(palette::ARRIVAL_FLASH).into()
+                } else {
+                    cx.theme().popover
+                })
+                .when(row.unseen, |button| {
+                    button.border_2().border_color(rgb(palette::SUCCESS))
+                })
+                .picked(selected == Some(id))
+                .tooltip("Arrived and idle. Selects this rover so you can give it a next goal.")
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().font_semibold().child(format!("Rover {id}")))
+                        .child(Tag::success().small().child(row.level))
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("waiting {:.0} s", row.waiting_s.max(0.))),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.focus.focus(window, cx);
+                    this.arrivals.picked_from_queue(id);
+                    if let Some(mark) = this.marks.iter().find(|mark| mark.id == id)
+                        && let Err(error) = this.map.show_lat_lon(mark.latitude, mark.longitude)
+                    {
+                        this.note = error.to_string();
+                    }
+                    this.select(id);
                     cx.notify();
                 }))
         }))

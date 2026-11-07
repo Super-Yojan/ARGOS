@@ -25,6 +25,8 @@ pub use launch::{LAUNCH_HELP, LaunchMode};
 mod occupancy;
 pub use occupancy::occupancy_runs;
 
+pub mod arrival;
+
 pub mod console;
 
 pub mod gaze;

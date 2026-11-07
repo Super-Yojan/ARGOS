@@ -610,6 +610,11 @@ impl Client {
     pub fn open_help(&self, id: u64) -> Option<String> {
         self.help.lock().unwrap().open(id)
     }
+    /// The open help episode with its class (`done`, `blocked`, `stopped`)
+    /// and level, if the rover is waiting for the operator.
+    pub fn help_episode(&self, id: u64) -> Option<attention::OpenHelp> {
+        self.help.lock().unwrap().episode(id)
+    }
     /// Mark the commands sent until the next call as coming from `source`
     /// (`agent`, `recommendation`), or `None` for the operator's own.
     pub fn set_command_source(&self, source: Option<&'static str>) {

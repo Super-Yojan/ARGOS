@@ -75,3 +75,16 @@ fn takeover_clears_as_manual() {
     let cleared = help.observe(1, &status("teleop", "idle", "none"), 2.6);
     assert_eq!(cleared[0]["outcome"], "to_manual");
 }
+
+#[test]
+fn open_episode_carries_class_and_level() {
+    let mut help = HelpTracker::default();
+    help.observe(4, &status("waypoint", "active", "waypoint"), 0.0);
+    help.observe(4, &status("waypoint", "idle", "none"), 1.0);
+    help.observe(4, &status("waypoint", "idle", "none"), 3.0);
+    let open = help.episode(4).unwrap();
+    assert_eq!(open.class, "done");
+    assert_eq!(open.level.as_deref(), Some("waypoint"));
+    assert_eq!(open.raised, 1.0);
+    assert_eq!(help.open(4), Some(open.help_id));
+}

@@ -82,13 +82,25 @@ pub fn classify(status: &Value) -> (Phase, Option<&'static str>) {
     (Phase::Help, Some("blocked"))
 }
 
+/// A help episode that is still open.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenHelp {
+    pub help_id: String,
+    /// `done`, `blocked` or `stopped` (see [`classify`]).
+    pub class: &'static str,
+    /// The level the rover was at when it raised the episode.
+    pub level: Option<String>,
+    /// Session seconds when it was raised.
+    pub raised: f64,
+}
+
 #[derive(Default)]
 struct Rover {
     phase: Option<Phase>,
     /// A different phase seen since this time, not yet confirmed.
     pending: Option<(Phase, f64)>,
-    /// The open episode: id, when it was raised.
-    open: Option<(String, f64)>,
+    /// The open episode.
+    open: Option<OpenHelp>,
     count: u64,
 }
 
@@ -124,21 +136,29 @@ impl HelpTracker {
         let since = rover.pending.take().map_or(now, |(_, since)| since);
         rover.phase = Some(phase);
         let mut records = Vec::new();
-        if let Some((help_id, raised)) = rover.open.take() {
+        if let Some(open) = rover.open.take() {
             records.push(json!({
                 "kind": "help",
                 "event": "cleared",
-                "help_id": help_id,
+                "help_id": open.help_id,
                 "rover_id": id,
                 "outcome": if phase == Phase::Manual { "to_manual" } else { "resumed" },
                 "at": since,
-                "duration_s": since - raised,
+                "duration_s": since - open.raised,
             }));
         }
         if phase == Phase::Help {
             rover.count += 1;
             let help_id = format!("h-{id}-{}", rover.count);
-            rover.open = Some((help_id.clone(), since));
+            let level = status["requested_level"]
+                .as_str()
+                .or_else(|| status["effective_level"].as_str());
+            rover.open = Some(OpenHelp {
+                help_id: help_id.clone(),
+                class: class.unwrap_or("blocked"),
+                level: level.map(str::to_owned),
+                raised: since,
+            });
             records.push(json!({
                 "kind": "help",
                 "event": "raised",
@@ -156,10 +176,12 @@ impl HelpTracker {
 
     /// The help episode open for this rover, if any.
     pub fn open(&self, id: u64) -> Option<String> {
-        self.rovers
-            .get(&id)
-            .and_then(|rover| rover.open.as_ref())
-            .map(|(help_id, _)| help_id.clone())
+        self.episode(id).map(|open| open.help_id)
+    }
+
+    /// The open help episode with its class and level, if any.
+    pub fn episode(&self, id: u64) -> Option<OpenHelp> {
+        self.rovers.get(&id).and_then(|rover| rover.open.clone())
     }
 }
 

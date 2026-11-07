@@ -50,6 +50,8 @@ pub enum CalloutTag {
     BackingUp,
     Driving,
     Attention,
+    /// Reached its goal at L2/L3 and waits for the next one.
+    Arrived,
     Goal,
 }
 impl CalloutTag {
@@ -59,6 +61,7 @@ impl CalloutTag {
             Self::BackingUp => "Backing up",
             Self::Driving => "Driving",
             Self::Attention => "Attention",
+            Self::Arrived => "Next goal",
             Self::Goal => "Goal",
         }
     }

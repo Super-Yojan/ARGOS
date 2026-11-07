@@ -7,6 +7,7 @@ use super::cards::CARD_HEIGHT_REM;
 use super::cards::CARD_WIDTH_REM;
 use super::cards::card_group;
 use super::cards::offscreen_tabs;
+use super::cards::{Waiting, arrival_queue};
 use super::commands;
 use super::console_bar::console_bar;
 use super::drive::drive_key;
@@ -25,6 +26,7 @@ use argos_gpui::console;
 use gpui_kit::base::v_flex;
 use gpui_kit::component::{ActiveTheme, StyledExt, ThemeStyled, scroll::ScrollableElement};
 use gpui_kit::{prelude::*, *};
+use std::collections::BTreeMap;
 
 impl Render for Dashboard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -256,14 +258,45 @@ impl Dashboard {
                 .iter()
                 .map(|mark| {
                     let driving_here = driving && selected == Some(mark.id);
-                    (
-                        mark.id,
-                        map.project_local(mark.latitude, mark.longitude),
-                        console::callout(mark, self.stop_cause(mark).as_ref(), driving_here),
-                    )
+                    (mark.id, map.project_local(mark.latitude, mark.longitude), {
+                        let mut callout =
+                            console::callout(mark, self.stop_cause(mark).as_ref(), driving_here);
+                        // An idle L2/L3 rover that just arrived: say so, not "idle".
+                        if matches!(callout.tag, None | Some(console::CalloutTag::Goal))
+                            && self.arrivals.alert(mark.id).is_some()
+                        {
+                            callout.tag = Some(console::CalloutTag::Arrived);
+                            callout.state = "Arrived · needs next goal".into();
+                        }
+                        callout
+                    })
                 })
                 .collect()
         };
+        let now = self.started.elapsed().as_secs_f64();
+        let unseen: BTreeMap<u64, bool> = self
+            .arrivals
+            .queue()
+            .into_iter()
+            .filter(|(_, alert)| alert.unseen())
+            .map(|(id, alert)| (id, alert.flash_on(now)))
+            .collect();
+        let waiting: Vec<Waiting> = self
+            .arrivals
+            .queue()
+            .into_iter()
+            .map(|(id, alert)| Waiting {
+                id,
+                level: if alert.level == "waypoint_direct" {
+                    "L2"
+                } else {
+                    "L3"
+                },
+                waiting_s: now - alert.since,
+                unseen: alert.unseen(),
+                flash: alert.flash_on(now),
+            })
+            .collect();
         // Measured last frame; until then the field has no known edge.
         let rem = f32::from(window.rem_size());
         if self.selected_mark().is_none() {
@@ -425,9 +458,9 @@ impl Dashboard {
                 .size_full()
             })
             .children(
-                groups
-                    .into_iter()
-                    .map(|group| card_group(group, &field, selected, cx).into_any_element()),
+                groups.into_iter().map(|group| {
+                    card_group(group, &field, selected, &unseen, cx).into_any_element()
+                }),
             )
             .when(!notices.is_empty(), |field| {
                 field.child(
@@ -446,6 +479,7 @@ impl Dashboard {
                 )
             })
             .child(offscreen_tabs(&field, &unlocated, selected, cx))
+            .child(arrival_queue(waiting, selected, cx))
             .children(confirm)
             .child(dump_popups(&self.marks, cx))
             .into_any_element()
