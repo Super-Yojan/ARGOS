@@ -10,6 +10,6 @@ fn published_is_not_acknowledged_and_old_receipts_are_ignored() {
             .is_none()
     );
     let (_,message)=vehicle_request_receipt(&json!({"run_id":"run","revision":3,"token":"gpui-0-3000","result":"rejected","request_reason":"pose_degraded"}),2000).unwrap();
-    assert!(message.contains("rejected"));
-    assert!(message.contains("pose_degraded"));
+    assert!(message.contains("refused"));
+    assert!(message.contains("pose degraded"));
 }

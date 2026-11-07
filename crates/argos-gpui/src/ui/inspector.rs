@@ -204,6 +204,7 @@ pub(super) fn goal_line(
         link_healthy: link == "healthy",
         pose_fresh: mark.status == "online",
         degraded: mark.degraded,
+        stopped: mark.safety == "emergency_stop",
         level: level.as_deref(),
         geographic: false,
         outdoor: false,

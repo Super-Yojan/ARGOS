@@ -64,6 +64,8 @@ pub struct RoverMark {
     /// Terra's reason for the current decision; explains a hold when no level is in effect.
     pub autonomy_reason: Option<String>,
     pub sensor_hold: Option<argos_core::SensorHold>,
+    /// Tilt stop latched and the rover not upright yet: Reset stop is refused.
+    pub still_tilted: bool,
     pub command_origin: CommandOrigin,
     /// Metres. Frozen from the reviewed outdoor report, otherwise the 10 m default.
     pub arrival_radius: f64,
@@ -475,6 +477,7 @@ pub fn placed_fleet_marks(
                 sensor_hold: report
                     .as_ref()
                     .and_then(|report| report.sensor_hold.clone()),
+                still_tilted: report.as_ref().is_some_and(|report| report.still_tilted),
                 command_origin: report
                     .as_ref()
                     .map(|report| report.origin)

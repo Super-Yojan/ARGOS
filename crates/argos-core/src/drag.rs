@@ -34,6 +34,8 @@ pub struct DragGate<'a> {
     pub link_healthy: bool,
     pub pose_fresh: bool,
     pub degraded: bool,
+    /// The rover holds a safety stop; Terra refuses goals until it is reset.
+    pub stopped: bool,
     pub level: Option<&'a str>,
     pub geographic: bool,
     pub outdoor: bool,
@@ -42,6 +44,9 @@ pub struct DragGate<'a> {
     pub admission: Option<OutdoorAdmission<'a>>,
 }
 
+/// Shown instead of sending a goal to a rover that holds a safety stop.
+pub const GOAL_WHILE_STOPPED: &str = "Rover is stopped. Press Reset stop first";
+
 /// Why a drag cannot start. `None` means the press may begin a drag.
 pub fn drag_disabled_reason(gate: DragGate<'_>) -> Option<&'static str> {
     if !gate.selected {
@@ -49,6 +54,9 @@ pub fn drag_disabled_reason(gate: DragGate<'_>) -> Option<&'static str> {
     }
     if !gate.link_healthy {
         return Some("Link is down");
+    }
+    if gate.stopped {
+        return Some(GOAL_WHILE_STOPPED);
     }
     if !gate.pose_fresh {
         return Some("Pose is stale");

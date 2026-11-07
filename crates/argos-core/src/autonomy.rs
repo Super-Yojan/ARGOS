@@ -258,6 +258,9 @@ pub struct AutonomyReport {
     pub dock: Option<crate::DockReport>,
     /// What the wheels are doing, from Terra builds that send `drive`.
     pub drive: Option<DriveReport>,
+    /// A tilt stop is latched and the rover is not upright yet, so Terra
+    /// refuses Reset stop (`runtime.tilt`).
+    pub still_tilted: bool,
 }
 
 /// Seconds the wheels must push without the rover moving before ARGOS calls it stalled.
@@ -456,7 +459,27 @@ pub fn decode_autonomy_value(value: &Value) -> Result<AutonomyReport> {
         sensor_hold: sensor_hold(value),
         dock: crate::decode_dock(value),
         drive: drive_report(value),
+        still_tilted: still_tilted(value),
     })
+}
+
+/// Whether Terra's tilt stop is latched with the rover still past the limit.
+/// Builds before `runtime.tilt.still_tilted` are judged from the reported lean.
+fn still_tilted(value: &Value) -> bool {
+    let tilt = &value["runtime"]["tilt"];
+    if tilt["latched"] != true {
+        return false;
+    }
+    if let Some(still) = tilt["still_tilted"].as_bool() {
+        return still;
+    }
+    let past = |angle: &str, limit: &str| {
+        tilt[angle]
+            .as_f64()
+            .zip(tilt[limit].as_f64())
+            .is_some_and(|(angle, limit)| angle > limit)
+    };
+    past("tilt_deg", "limit_deg") || past("absolute_tilt_deg", "flipped_deg")
 }
 
 fn route_sample(point: &Value) -> Option<RouteSample> {
@@ -742,5 +765,38 @@ mod drive_tests {
         assert_eq!(drive.backing_label(), None);
         assert_eq!(drive.summary(), "Forward · asked 0.30 m/s");
         assert!(status(serde_json::json!(null)).drive.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tilt_tests {
+    use super::*;
+
+    fn report(tilt: Value) -> AutonomyReport {
+        decode_autonomy_value(&serde_json::json!({
+            "requested_level": "teleop",
+            "runtime": {"tilt": tilt},
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn still_tilted_comes_from_runtime_tilt() {
+        assert!(report(serde_json::json!({"latched": true, "still_tilted": true})).still_tilted);
+        assert!(!report(serde_json::json!({"latched": true, "still_tilted": false})).still_tilted);
+        assert!(!report(serde_json::json!({"latched": false, "still_tilted": true})).still_tilted);
+        assert!(!report(Value::Null).still_tilted);
+    }
+
+    #[test]
+    fn older_builds_are_judged_from_the_lean() {
+        let tilt = |deg: f64| {
+            serde_json::json!({
+                "latched": true, "tilt_deg": deg, "limit_deg": 30.0,
+                "absolute_tilt_deg": deg, "flipped_deg": 120.0,
+            })
+        };
+        assert!(report(tilt(51.)).still_tilted);
+        assert!(!report(tilt(3.)).still_tilted);
     }
 }

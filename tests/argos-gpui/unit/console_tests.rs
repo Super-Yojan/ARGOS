@@ -35,6 +35,7 @@ fn mark(id: u64) -> RoverMark {
         hold: None,
         autonomy_reason: None,
         sensor_hold: None,
+        still_tilted: false,
         command_origin: CommandOrigin::Unknown,
         arrival_radius: 10.,
         outdoor_gps: false,
@@ -917,4 +918,20 @@ fn a_held_rover_with_a_goal_says_why_instead_of_going_to_goal() {
     rover.safety = "clear".into();
     rover.effective_level = Some("waypoint".into());
     assert_eq!(callout(&rover, None, false).state, "Going to goal");
+}
+
+#[test]
+fn a_tilt_stop_says_to_right_the_rover_until_it_is_upright() {
+    let mut rover = mark(5);
+    rover.safety = "emergency_stop".into();
+    rover.autonomy_reason = Some("tilt_stop".into());
+    rover.still_tilted = true;
+    let cause = stop_cause(&rover, None, 5.).unwrap();
+    let line = callout(&rover, Some(&cause), false);
+    assert_eq!(line.state, "Stopped by rover: tilt stop");
+    assert_eq!(line.recovery, Some(TILT_RECOVERY));
+    // Upright again: Reset stop now works, so say that.
+    rover.still_tilted = false;
+    let line = callout(&rover, Some(&cause), false);
+    assert_eq!(line.recovery, Some(STOP_RECOVERY));
 }

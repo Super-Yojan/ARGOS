@@ -254,6 +254,10 @@ impl FleetFeed {
                         .iter()
                         .find(|mark| mark.id == id)
                         .ok_or("Select a rover that is in the fleet")?;
+                    // Terra refuses every goal while a safety stop is held.
+                    if mark.safety == "emergency_stop" {
+                        return Err(format!("Rover {id}: {}", argos_core::GOAL_WHILE_STOPPED));
+                    }
                     if let GoalRequest::Geographic {
                         latitude,
                         longitude,

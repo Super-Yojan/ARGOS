@@ -6,6 +6,7 @@ fn open_gate(level: &'static str) -> DragGate<'static> {
         link_healthy: true,
         pose_fresh: true,
         degraded: false,
+        stopped: false,
         level: Some(level),
         geographic: false,
         outdoor: false,
@@ -240,6 +241,7 @@ fn geo_gate_report<'a>(report: Option<&'a OutdoorReport>) -> DragGate<'a> {
         link_healthy: true,
         pose_fresh: true,
         degraded: false,
+        stopped: false,
         level: Some("waypoint"),
         geographic: true,
         outdoor: report.is_some_and(|report| report.acknowledged_outdoor()),
@@ -267,4 +269,19 @@ fn degraded_pose_blocks_the_drag_and_phone_manual_hides_the_warning() {
     let shown = pose_warning_text(CommandOrigin::FleetTeleop, true, "tracking lost").unwrap();
     assert!(shown.contains("informational"));
     assert!(goal_blocked(true).is_some());
+}
+
+#[test]
+fn a_stopped_rover_takes_no_goal_until_reset() {
+    let stopped = DragGate {
+        stopped: true,
+        ..open_gate("waypoint")
+    };
+    assert_eq!(drag_disabled_reason(stopped), Some(GOAL_WHILE_STOPPED));
+    let mut drag = local_drag();
+    drag.move_to(PlanarPoint { x: 4., y: 6. });
+    assert!(matches!(
+        drag.release(stopped),
+        DragEnd::Cancelled(GOAL_WHILE_STOPPED)
+    ));
 }

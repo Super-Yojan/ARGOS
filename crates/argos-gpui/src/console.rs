@@ -108,6 +108,9 @@ pub enum StopCause {
 
 /// What the operator does to leave any safety stop.
 pub const STOP_RECOVERY: &str = "Press Reset stop to resume";
+/// Recovery while a tilt stop holds and the rover is not upright: Terra
+/// refuses Reset stop until it is.
+pub const TILT_RECOVERY: &str = "Still tilted. Right the rover, then press Reset stop";
 
 impl StopCause {
     /// One line naming who stopped the rover, for the callout.
@@ -252,7 +255,11 @@ pub fn callout(mark: &RoverMark, stop: Option<&StopCause>, driving: bool) -> Cal
         tag,
         state,
         attention: attention.filter(|_| !stopped),
-        recovery: stopped.then_some(STOP_RECOVERY),
+        recovery: stopped.then_some(if mark.still_tilted {
+            TILT_RECOVERY
+        } else {
+            STOP_RECOVERY
+        }),
     }
 }
 
