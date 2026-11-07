@@ -140,6 +140,7 @@ impl Dashboard {
             agent: agent::AgentDesk::start(),
             attention: super::attention::AttentionLog::start(),
             timeline: Default::default(),
+            arrivals: argos_gpui::arrival::ArrivalAlerts::new(argos_gpui::arrival::Cue::from_env()),
             missions: Default::default(),
             _poll: poll,
         }
@@ -218,8 +219,35 @@ impl Dashboard {
             self.framed_center = Some((latitude, longitude));
         }
         self.sync_timeline(now);
+        self.sync_arrivals(now);
         self.sync_study();
         self.seed_preview();
+    }
+    /// Open, flash and close arrival alerts from the help tracker's episodes.
+    fn sync_arrivals(&mut self, now: f64) {
+        if let Some(record) = self.arrivals.take_config_record() {
+            self.feed.record(record);
+        }
+        let mut chime = false;
+        for mark in &self.marks {
+            let episode = self.feed.help_episode(mark.id);
+            let seen = argos_gpui::arrival::Seen {
+                help_id: episode.as_ref().map(|open| open.help_id.as_str()),
+                done: episode.as_ref().is_some_and(|open| open.class == "done"),
+                level: episode.as_ref().and_then(|open| open.level.as_deref()),
+                selected: self.selected == Some(mark.id),
+            };
+            let update = self.arrivals.observe(now, mark.id, &seen);
+            chime |= update.chime;
+            for record in update.records {
+                self.feed.record(record);
+            }
+        }
+        if chime {
+            argos_gpui::arrival::play_chime();
+        }
+        let ids: BTreeSet<u64> = self.marks.iter().map(|mark| mark.id).collect();
+        self.arrivals.retain(|id| ids.contains(&id));
     }
     /// Keep every rover on this window's study condition. Terra forgets it on
     /// restart, so a rover that reports another condition is sent it again,

@@ -10,6 +10,8 @@ pub const MUTED: u32 = 0x4f6169;
 pub const WARNING: u32 = 0x8a5a00;
 pub const SUCCESS: u32 = 0x157a57;
 pub const DANGER: u32 = 0xa83a28;
+/// Bright half of an arrival card flash; `SUCCESS` text stays above 4.5:1 on it.
+pub const ARRIVAL_FLASH: u32 = 0xd3f0e2;
 /// Picked toggles and focus. White text on it is 6.7:1.
 pub const ACCENT: u32 = 0x1d4ed8;
 

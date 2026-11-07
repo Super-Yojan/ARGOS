@@ -76,6 +76,8 @@ struct Dashboard {
     preview_done: bool,
     preview_claim: bool,
     close_preview: bool,
+    /// L2/L3 arrivals waiting for a next goal: chime, card flash, queue.
+    arrivals: argos_gpui::arrival::ArrivalAlerts,
     started: Instant,
     now: f64,
     claim: ControlClaim,

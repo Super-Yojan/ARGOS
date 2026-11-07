@@ -198,6 +198,12 @@ impl FleetFeed {
             .ok()
             .and_then(|client| client.open_help(id))
     }
+    /// The open help episode with its class and level.
+    pub fn help_episode(&self, id: u64) -> Option<argos_zenoh::attention::OpenHelp> {
+        self.connected()
+            .ok()
+            .and_then(|client| client.help_episode(id))
+    }
     /// The operator telemetry the client caches for one rover, as JSON.
     pub fn rover_telemetry(&self, id: u64) -> Value {
         self.connected()
