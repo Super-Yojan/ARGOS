@@ -204,11 +204,15 @@ impl FleetCache {
             Some(request @ GoalRequest::Local { .. }) if retry => {
                 self.retries.push((id, request));
                 self.notice = Some(format!(
-                    "Rover {id} refused the goal ({reason}) · resending once"
+                    "Rover {id} refused the goal ({}) · resending once",
+                    crate::refusal_text(reason)
                 ));
             }
             _ => {
-                self.notice = Some(format!("Rover {id} refused the goal: {reason}"));
+                self.notice = Some(format!(
+                    "Rover {id} refused the goal: {}",
+                    crate::refusal_text(reason)
+                ));
             }
         }
         true
@@ -354,7 +358,7 @@ mod refusal_tests {
         assert!(cache.goal_refused(0, "goal-a", "authority_required"));
         assert!(cache.take_retries().is_empty());
         let notice = cache.snapshot(1.5).notice.unwrap();
-        assert!(notice.contains("authority_required"), "{notice}");
+        assert!(notice.contains("rover is stopped"), "{notice}");
         assert!(cache.prepare_goal(0, &local(), "goal-b", 2.).is_ok());
     }
 
