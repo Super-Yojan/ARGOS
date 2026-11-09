@@ -112,6 +112,35 @@ A failed login needs a credential check; a TLS failure needs certificate/hostnam
 and clock checks. Do not disable TLS validation. Keep 7449 bound to loopback.
 Stopping the VM does not release its disk or reserved IP, which can incur charges.
 
+## FPV relay (TURN)
+
+FPV video is WebRTC straight from the phone to the Mac; only the call setup
+goes through the router. When the two cannot reach each other directly
+(campus or cellular networks, strict NAT, or TerraPhone without iOS Local
+Network permission) the phone reports the call failed after about 15 s. A
+coturn relay on this VM carries the video in that case.
+
+From your Mac, signed in to gcloud:
+
+```sh
+bash packaging/gcp/deploy-turn.sh
+```
+
+It creates the `argos-turn` firewall rule (UDP/TCP 3478, TCP 5349, UDP
+49160-49200) on VMs tagged `argos-turn`, tags `argos-host`, copies
+`install-turn.sh` and runs it. The installer is safe to rerun; it keeps the
+password in root-only `/etc/argos/turn.password` and only relays to public
+addresses. `refresh-router-tls.sh` restarts coturn when the certificate changes.
+
+Then set the same relay in both apps:
+
+- ARGOS `.env`: `ARGOS_FPV_TURN_URL=turn:argos.34.135.204.210.sslip.io:3478`,
+  `ARGOS_FPV_TURN_USERNAME=argos-fpv`, `ARGOS_FPV_TURN_CREDENTIAL=<turn.password>`.
+- TerraPhone: Connection -> FPV ICE settings, same TURN URL, user and password.
+
+Check it with `sudo systemctl status coturn` and `sudo journalctl -u coturn`
+on the VM. A working relayed call logs an allocation for user `argos-fpv`.
+
 ## Operational logging
 
 The independent collector uses HTTPS `/observability/` and loopback port7450;

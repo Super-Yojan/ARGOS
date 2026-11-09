@@ -10,5 +10,7 @@ if ! cmp -s "$cert" /var/lib/argos/tls/server.crt || ! cmp -s "$key" /var/lib/ar
     install -o root -g argos -m 640 "$cert" /var/lib/argos/tls/server.crt
     install -o root -g argos -m 640 "$key" /var/lib/argos/tls/server.key
     systemctl restart argos-router.service
+    # The FPV relay (install-turn.sh) reads the same certificate.
+    systemctl try-restart coturn.service 2>/dev/null || true
 fi
 systemctl start argos-router.service
