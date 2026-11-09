@@ -22,7 +22,7 @@ const MANUAL_LEVELS: [&str; 2] = ["teleop", "assisted_teleop"];
 const DONE_REASONS: [&str; 2] = ["idle", "task_idle"];
 
 /// Reasons that mean the rover is doing its job without the operator.
-const WORKING_REASONS: [&str; 18] = [
+const WORKING_REASONS: [&str; 19] = [
     "active",
     "assisted",
     "driving_waypoint",
@@ -41,6 +41,7 @@ const WORKING_REASONS: [&str; 18] = [
     "dock_dumping",
     "dock_backoff",
     "dock_reacquire",
+    "dock_open_range",
 ];
 
 /// What one status report means for the operator.
