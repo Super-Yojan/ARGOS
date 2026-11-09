@@ -78,6 +78,8 @@ struct Dashboard {
     close_preview: bool,
     /// L2/L3 arrivals waiting for a next goal: chime, card flash, queue.
     arrivals: argos_gpui::arrival::ArrivalAlerts,
+    /// FPV call history for the session log.
+    fpv_log: argos_gpui::fpv_log::FpvLog,
     started: Instant,
     now: f64,
     claim: ControlClaim,
