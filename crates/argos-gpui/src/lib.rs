@@ -27,6 +27,8 @@ pub use occupancy::occupancy_runs;
 
 pub mod arrival;
 
+pub mod fpv_log;
+
 pub mod console;
 
 pub mod gaze;

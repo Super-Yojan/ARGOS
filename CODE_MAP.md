@@ -76,6 +76,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | Attention log: help episodes, selection, gaze, blinks | `argos-zenoh/src/attention.rs`, `ui/attention.rs`, `argos-gpui/src/gaze.rs` | eye tracker: `scripts/argos_eye_tracker.py` |
 | Timeline panel (neglect / waiting / interaction per rover) | `argos-gpui/src/timeline.rs`, `ui/timeline.rs` | `Timeline::observe`, `timeline_panel` |
 | Arrival alert (L2/L3 rover idle at its goal: chime, card flash, Needs next goal queue) | `argos-gpui/src/arrival.rs`, `ui/state.rs`, `ui/cards.rs` | `ArrivalAlerts::observe`, `sync_arrivals`, `arrival_queue`; `ARGOS_ARRIVAL_ALERT=on\|silent\|off`, `ARGOS_ARRIVAL_SOUND` |
+| FPV in the session log (`kind: "fpv"`: start/stop/rotate, phase, first_frame, frozen/resumed, stats) | `argos-gpui/src/fpv_log.rs`, `ui/state.rs`, `ui/video.rs` | `FpvLog::observe`, `sync_fpv_log`, `record_fpv_action` |
 | The 3D map, camera, tiles | `terra-map/src/maps/` | `camera.rs`, `renderer.rs` |
 | Chase camera (Follow button) | `terra-map/src/maps/chase.rs`, `ui/state.rs` | `Chase::step`, `toggle_follow`, `sync_follow` |
 

@@ -141,6 +141,7 @@ impl Dashboard {
             attention: super::attention::AttentionLog::start(),
             timeline: Default::default(),
             arrivals: argos_gpui::arrival::ArrivalAlerts::new(argos_gpui::arrival::Cue::from_env()),
+            fpv_log: Default::default(),
             missions: Default::default(),
             _poll: poll,
         }
@@ -220,8 +221,27 @@ impl Dashboard {
         }
         self.sync_timeline(now);
         self.sync_arrivals(now);
+        self.sync_fpv_log(now);
         self.sync_study();
         self.seed_preview();
+    }
+    /// Log FPV call phases, first frame, freezes and stats (`kind: "fpv"`).
+    fn sync_fpv_log(&mut self, now: f64) {
+        let sample = argos_gpui::fpv_log::FpvSample::from_view(&self.fpv.view());
+        for record in self.fpv_log.observe(now, &sample) {
+            self.feed.record(record);
+        }
+    }
+    /// Log an FPV button press.
+    pub(super) fn record_fpv_action(
+        &mut self,
+        event: &str,
+        rover_id: Option<u64>,
+        turns: Option<u8>,
+    ) {
+        let now = self.started.elapsed().as_secs_f64();
+        let record = self.fpv_log.action(now, event, rover_id, turns);
+        self.feed.record(record);
     }
     /// Open, flash and close arrival alerts from the help tracker's episodes.
     fn sync_arrivals(&mut self, now: f64) {

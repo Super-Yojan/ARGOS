@@ -38,6 +38,7 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(id) = this.selected {
                                 this.fpv.start_phone(id);
+                                this.record_fpv_action("start", Some(id), None);
                                 this.note = format!("FPV requested for rover {id}");
                             } else {
                                 this.note = "Select a rover before starting FPV".into();
@@ -56,6 +57,7 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                             let target = this.fpv.view().phone_id.or(this.selected);
                             if let Some(id) = target {
                                 let turns = this.fpv.rotate(id);
+                                this.record_fpv_action("rotate", Some(id), Some(turns));
                                 this.note =
                                     format!("Rover {id} video turned {}°", u32::from(turns) * 90);
                             } else {
@@ -122,7 +124,9 @@ pub(super) fn stop_fpv_button(cx: &mut Context<Dashboard>) -> Button {
         .small()
         .label("Stop FPV")
         .on_click(cx.listener(|this, _, _, cx| {
+            let watching = this.fpv.view().phone_id;
             this.fpv.stop();
+            this.record_fpv_action("stop", watching, None);
             this.note = "FPV stopped".into();
             cx.notify();
         }))
