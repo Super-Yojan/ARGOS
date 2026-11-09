@@ -40,12 +40,14 @@ fn stale_and_removed_members_cannot_receive_commands() {
             .is_err()
     );
     assert!(c.prepare_goal(2, &r, "b", 0.1).is_err());
+    // Unlisted for longer than the grace window: removed.
+    let later = FLEET_MEMBER_GRACE_SECONDS + 0.2;
     c.fleet(
         decode_fleet(br#"{"count":1,"max_count":32,"ids":[0]}"#).unwrap(),
-        0.2,
+        later,
     );
-    assert!(c.prepare_goal(8, &r, "c", 0.3).is_err());
-    assert_eq!(c.snapshot(0.3).rovers[1].membership, "absent");
+    assert!(c.prepare_goal(8, &r, "c", later + 0.1).is_err());
+    assert_eq!(c.snapshot(later + 0.1).rovers[1].membership, "absent");
 }
 #[test]
 fn freshness_is_independent_and_cancel_requires_later_idle() {
@@ -129,10 +131,10 @@ fn retired_rovers_do_not_grow_snapshots_without_bound() {
                 max_count: 32,
                 ids: vec![id],
             },
-            id as f64,
+            id as f64 * (FLEET_MEMBER_GRACE_SECONDS + 1.),
         );
     }
-    let snapshot = c.snapshot(99.);
+    let snapshot = c.snapshot(99. * (FLEET_MEMBER_GRACE_SECONDS + 1.));
     assert!(snapshot.rovers.len() <= 33);
     assert!(
         snapshot
@@ -165,4 +167,46 @@ fn goal_receipt_identity_changes_only_when_a_status_packet_arrives() {
     assert_eq!(c.snapshot(3.).rovers[0].goal_received_at, Some(1.));
     c.status(0, status("a", "active"), 4.);
     assert_eq!(c.snapshot(5.).rovers[0].goal_received_at, Some(4.));
+}
+
+#[test]
+fn phones_each_listing_only_themselves_stay_in_the_fleet_together() {
+    let mut c = FleetCache::default();
+    let pose = |id| Pose {
+        rover_id: id,
+        sequence: 1,
+        x: id as f64,
+        y: 0.,
+        yaw: 0.,
+    };
+    let only = |id: u64| FleetState {
+        count: 1,
+        max_count: 32,
+        ids: vec![id],
+    };
+    // Two phones alternate, each naming only itself.
+    let mut now = 0.;
+    for _ in 0..20 {
+        for id in [0, 1] {
+            c.fleet(only(id), now);
+            c.pose(id, pose(id), now);
+            now += 0.05;
+        }
+    }
+    let snapshot = c.snapshot(now);
+    for rover in &snapshot.rovers {
+        assert_eq!(rover.membership, "online", "rover {}", rover.id);
+        assert!(rover.pose.is_some(), "rover {} kept its pose", rover.id);
+    }
+    assert_eq!(snapshot.rovers.len(), 2);
+    // A phone that stops publishing is dropped after the grace window.
+    let stopped = now;
+    while now - stopped <= FLEET_MEMBER_GRACE_SECONDS {
+        now += 1.;
+        c.fleet(only(0), now);
+    }
+    let snapshot = c.snapshot(now);
+    let rover = |id| snapshot.rovers.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(rover(0).membership, "online");
+    assert_eq!(rover(1).membership, "absent");
 }

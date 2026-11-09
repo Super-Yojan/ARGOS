@@ -22,7 +22,7 @@ pub const MAPS_API_KEY_ENV: &str = "GOOGLE_MAPS_API_KEY";
 
 pub const MAPS_KEY_NOTICE: &str = "Set GOOGLE_MAPS_API_KEY in .env";
 
-const SETTING_KEYS: [&str; 22] = [
+const SETTING_KEYS: [&str; 23] = [
     "ARGOS_ZENOH_ENDPOINT",
     "ARGOS_ZENOH_PREFIX",
     "ARGOS_ZENOH_USER",
@@ -32,6 +32,7 @@ const SETTING_KEYS: [&str; 22] = [
     "ARGOS_MAP_ORIGIN_LAT",
     "ARGOS_MAP_ORIGIN_LON",
     "ARGOS_MAP_ALIGN",
+    "ARGOS_MAP_GPS",
     "ARGOS_DRIVE_LINEAR",
     "ARGOS_DRIVE_YAW_RATE",
     "ARGOS_DRIVE_YAW_ACCEL",
@@ -62,6 +63,11 @@ pub struct DashboardConfig {
     /// slowly (default). `ARGOS_MAP_ALIGN=pinned` restores re-pinning the
     /// map to every raw GPS fix, for comparison.
     pub steady_map: bool,
+    /// Place rovers from GPS fixes and Terra's geographic alignment (default).
+    /// `ARGOS_MAP_GPS=off` draws every rover from its local x/y around
+    /// `origin` instead, for places with no usable GPS. The Map menu can
+    /// change this while the window is open.
+    pub use_gps: bool,
     /// Defense in depth; Terra enforces the real limits.
     pub teleop: TeleopLimits,
     pub degrade: DegradeLimits,
@@ -138,6 +144,12 @@ impl DashboardConfig {
         config.steady_map = settings
             .get("ARGOS_MAP_ALIGN")
             .is_none_or(|value| value.trim() != "pinned");
+        config.use_gps = settings.get("ARGOS_MAP_GPS").is_none_or(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "off" | "0" | "false" | "no" | "local"
+            )
+        });
         let maps_api_key = maps_api_key(&process, &file);
         let maps_demo = std::env::var("MAPS_DEMO").ok().as_deref() == Some("1");
         config.maps_notice = if maps_api_key.is_none() && !maps_demo {
@@ -217,6 +229,7 @@ impl DashboardConfig {
             start_longitude,
             origin,
             steady_map: true,
+            use_gps: true,
             teleop: TeleopLimits::default(),
             degrade: DegradeLimits::default(),
             maps_api_key: None,

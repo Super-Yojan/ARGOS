@@ -357,10 +357,16 @@ pub fn fleet_marks(
         alignment,
         &mut OverlayFrames::default(),
         0.,
+        true,
     )
 }
 
 /// [`fleet_marks`] with GPS-pinned overlay frames held steady across calls.
+///
+/// With `use_gps` false, GPS fixes and geographic alignments are ignored and
+/// every rover is drawn from its local x/y in `origin`, so a rover in a place
+/// with no fix still shows up and can be driven.
+#[allow(clippy::too_many_arguments)]
 pub fn placed_fleet_marks(
     snapshot: &Snapshot,
     localizations: &Value,
@@ -370,6 +376,7 @@ pub fn placed_fleet_marks(
     alignment: impl Fn(u64) -> Option<LocalFrame>,
     overlays: &mut OverlayFrames,
     now: f64,
+    use_gps: bool,
 ) -> Vec<RoverMark> {
     snapshot
         .rovers
@@ -379,8 +386,12 @@ pub fn placed_fleet_marks(
             let pose = rover.pose.as_ref()?;
             let key = rover.id.to_string();
             let localization = localizations.get(&key);
-            let raw_gps = decode_raw_gps(localization.unwrap_or(&Value::Null));
-            let map_frame = localization.map_or(Some(origin), LocalFrame::from_localization);
+            let raw_gps = decode_raw_gps(localization.unwrap_or(&Value::Null)).filter(|_| use_gps);
+            let map_frame = if use_gps {
+                localization.map_or(Some(origin), LocalFrame::from_localization)
+            } else {
+                Some(origin)
+            };
             // Without an alignment from Terra, the dashboard's own steady fit
             // of GPS fixes to the local pose, so the local map does not jump
             // with each fix.

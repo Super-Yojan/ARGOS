@@ -26,6 +26,8 @@ pub struct FleetFeed {
     pub(super) stopped: Arc<AtomicBool>,
     /// Who the next command is for, carried in its token. See [`FleetFeed::as_source`].
     pub(super) source: Arc<Mutex<argos_core::CommandSource>>,
+    /// False draws rovers from local coordinates only. See [`FleetFeed::set_gps`].
+    pub(super) gps: Arc<AtomicBool>,
 }
 
 /// Inspector line for a live stream: frame age and rate, or why it ended.
@@ -128,6 +130,7 @@ impl FleetFeed {
                 focus: Arc::new(Mutex::new(None)),
                 stopped: Arc::new(AtomicBool::new(false)),
                 source: Arc::new(Mutex::new(argos_core::CommandSource::Operator)),
+                gps: Arc::new(AtomicBool::new(config.use_gps)),
             };
         }
         let origin = config.origin;
@@ -146,9 +149,11 @@ impl FleetFeed {
         let wanted = focus.clone();
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
+        let gps = Arc::new(AtomicBool::new(config.use_gps));
+        let use_gps = gps.clone();
         std::thread::Builder::new()
             .name("argos-fleet".into())
-            .spawn(move || run(config, shared, slot, wanted, stop))
+            .spawn(move || run(config, shared, slot, wanted, stop, use_gps))
             .expect("argos-fleet thread");
         Self {
             picture,
@@ -158,7 +163,18 @@ impl FleetFeed {
             focus,
             stopped,
             source: Arc::new(Mutex::new(argos_core::CommandSource::Operator)),
+            gps,
         }
+    }
+    /// Whether rovers are placed on the globe from GPS.
+    pub fn gps_enabled(&self) -> bool {
+        self.gps.load(Ordering::Relaxed)
+    }
+    /// Turn GPS placement on or off. Off, every rover is drawn from its local
+    /// x/y around the configured map origin, so a rover with no fix still
+    /// appears and can be driven. Takes effect on the next poll (100 ms).
+    pub fn set_gps(&self, on: bool) {
+        self.gps.store(on, Ordering::Relaxed);
     }
     /// Run `send` with its commands' tokens marked as coming from `source`,
     /// so the session log and receipts tell an agent's or an accepted

@@ -140,6 +140,7 @@ pub(super) struct Snapshot {
     pub navigation: Option<(u64, GeoPosition)>,
     pub mode: Option<(u64, MapMode)>,
     pub survey: Option<(u64, bool)>,
+    pub tiles: Option<(u64, bool)>,
     pub follow: Option<Follow>,
 }
 struct State {
@@ -153,6 +154,7 @@ struct State {
     navigation: Option<(u64, GeoPosition)>,
     mode: Option<(u64, MapMode)>,
     survey: Option<(u64, bool)>,
+    tiles: Option<(u64, bool)>,
     follow: Option<Follow>,
     events: VecDeque<MapEvent>,
 }
@@ -203,6 +205,7 @@ impl Map {
                 navigation: None,
                 mode: None,
                 survey: None,
+                tiles: None,
                 follow: None,
                 events: VecDeque::new(),
             })),
@@ -249,6 +252,14 @@ impl Map {
         let mut s = self.state.lock().unwrap();
         s.revision += 1;
         s.survey = Some((s.revision, survey));
+    }
+    /// Show or hide the Google tiles. Hidden, the map is a plain background
+    /// with only the caller's objects, no tiles are requested, and
+    /// [`Self::surface_altitude`] has no ground to report.
+    pub fn set_tiles(&self, tiles: bool) {
+        let mut s = self.state.lock().unwrap();
+        s.revision += 1;
+        s.tiles = Some((s.revision, tiles));
     }
     /// Ride a chase camera behind this object, or `None` to go back to the
     /// orbit camera. Call again with each new position; the view eases
@@ -394,6 +405,7 @@ impl Map {
             navigation: s.navigation,
             mode: s.mode,
             survey: s.survey,
+            tiles: s.tiles,
             follow: s.follow,
         }
     }

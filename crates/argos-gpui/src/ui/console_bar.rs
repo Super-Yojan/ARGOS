@@ -110,15 +110,15 @@ pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                         .outline()
                         .small()
                         .label("Map ▾")
-                        .tooltip("Map imagery and the occupancy grid")
+                        .tooltip("Map imagery, the occupancy grid, and GPS placement")
                         .dropdown_menu(move |menu, _, cx| {
-                            let (muted, grid) = weak
+                            let (muted, grid, gps) = weak
                                 .upgrade()
                                 .map(|this| {
                                     let this = this.read(cx);
-                                    (this.muted_map, this.show_occupancy)
+                                    (this.muted_map, this.show_occupancy, this.feed.gps_enabled())
                                 })
-                                .unwrap_or((false, true));
+                                .unwrap_or((false, true, true));
                             let set_muted = |muted: bool| {
                                 let weak = weak.clone();
                                 move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -134,6 +134,15 @@ pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                                 move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
                                     let _ = weak.update(cx, |this, cx| {
                                         this.show_occupancy = !this.show_occupancy;
+                                        cx.notify();
+                                    });
+                                }
+                            };
+                            let toggle_gps = {
+                                let weak = weak.clone();
+                                move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                    let _ = weak.update(cx, |this, cx| {
+                                        this.set_gps(!this.feed.gps_enabled());
                                         cx.notify();
                                     });
                                 }
@@ -154,6 +163,13 @@ pub(super) fn console_bar(dashboard: &Dashboard, cx: &mut Context<Dashboard>) ->
                                     PopupMenuItem::new("Occupancy grid")
                                         .checked(grid)
                                         .on_click(toggle_grid),
+                                )
+                                .separator()
+                                .label("Placement")
+                                .item(
+                                    PopupMenuItem::new("Use GPS and map imagery")
+                                        .checked(gps)
+                                        .on_click(toggle_gps),
                                 )
                         })
                 }),

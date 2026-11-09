@@ -27,6 +27,8 @@ pub struct Update {
     pub generation: u64,
     pub epoch: u64,
     pub survey: bool,
+    /// False draws only objects and requests no tiles.
+    pub tiles: bool,
 }
 pub struct Frame {
     pub generation: u64,
@@ -301,6 +303,21 @@ fn run(
     if config.demo {
         return demo(config, update, mailbox, stop, map);
     }
+    if !update.tiles {
+        // Do not contact the map service until tiles are wanted.
+        match objects_only(
+            &config,
+            update,
+            mailbox,
+            stop,
+            map.clone(),
+            String::new(),
+            true,
+        )? {
+            Some(next) => update = next,
+            None => return Ok(()),
+        }
+    }
     let Some(key) = config
         .api_key
         .as_deref()
@@ -313,7 +330,9 @@ fn run(
             stop,
             map,
             "Set GOOGLE_MAPS_API_KEY to load Google tiles".into(),
-        );
+            false,
+        )
+        .map(drop);
     };
     status(
         mailbox,
@@ -325,7 +344,18 @@ fn run(
     let http = HttpClient::new()?;
     let mut tree = match root(&http, key) {
         Ok(tree) => tree,
-        Err(error) => return objects_only(&config, update, mailbox, stop, map, error.to_string()),
+        Err(error) => {
+            return objects_only(
+                &config,
+                update,
+                mailbox,
+                stop,
+                map,
+                error.to_string(),
+                false,
+            )
+            .map(drop);
+        }
     };
     if stop.load(Ordering::Relaxed) {
         return Ok(());
@@ -354,6 +384,36 @@ fn run(
         if let Some(latest) = mailbox.lock().unwrap().update.take() {
             update = latest;
             dirty = true;
+        }
+        if !update.tiles {
+            // Tiles hidden: objects on a plain background, and no requests.
+            if dirty {
+                let pixels = renderer.render(
+                    &update.camera.view(update.width, update.height),
+                    &[],
+                    update.width,
+                    update.height,
+                )?;
+                publish(
+                    mailbox,
+                    Frame {
+                        generation: update.generation,
+                        epoch: update.epoch,
+                        width: update.width,
+                        height: update.height,
+                        pixels: Some(pixels),
+                        credits: String::new(),
+                        status: String::new(),
+                        tiles: 0,
+                        metrics: renderer.metrics,
+                        completed_at: Instant::now(),
+                    },
+                );
+                previous_draw.clear();
+                dirty = false;
+            }
+            thread::sleep(Duration::from_millis(12));
+            continue;
         }
         if Instant::now() >= refresh {
             status(
@@ -590,6 +650,8 @@ fn run(
     Ok(())
 }
 /// Keep caller-owned objects usable even when the map service is unavailable.
+/// With `until_tiles`, this is the hidden-tiles view before the map service
+/// is first contacted, and returns the update that turns tiles on.
 fn objects_only(
     config: &MapConfig,
     mut update: Update,
@@ -597,7 +659,8 @@ fn objects_only(
     stop: &AtomicBool,
     map: Option<super::api::Map>,
     message: String,
-) -> Result<()> {
+    until_tiles: bool,
+) -> Result<Option<Update>> {
     let mut renderer = Renderer::new()?;
     if let Some(map) = &map {
         renderer.surface = map.surface.clone();
@@ -609,6 +672,9 @@ fn objects_only(
         if let Some(latest) = mailbox.lock().unwrap().update.take() {
             update = latest;
             dirty = true;
+        }
+        if until_tiles && update.tiles {
+            return Ok(Some(update));
         }
         if dirty {
             renderer.set_survey(update.survey);
@@ -627,7 +693,11 @@ fn objects_only(
                     height: update.height,
                     pixels: Some(pixels),
                     credits: String::new(),
-                    status: format!("Map tiles unavailable · {message}"),
+                    status: if update.tiles {
+                        format!("Map tiles unavailable · {message}")
+                    } else {
+                        String::new()
+                    },
                     tiles: 0,
                     metrics: renderer.metrics,
                     completed_at: Instant::now(),
@@ -637,7 +707,7 @@ fn objects_only(
         }
         thread::sleep(Duration::from_millis(12));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn evict(
@@ -697,7 +767,7 @@ fn demo(
         renderer.set_survey(update.survey);
         let pixels = renderer.render(
             &update.camera.view(update.width, update.height),
-            &[0],
+            if update.tiles { &[0] } else { &[] },
             update.width,
             update.height,
         )?;

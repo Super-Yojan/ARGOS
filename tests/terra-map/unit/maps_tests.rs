@@ -409,6 +409,7 @@ fn live_google_tiles_render() {
         generation: 1,
         epoch: 0,
         survey: true,
+        tiles: true,
     });
     let started = Instant::now();
     let mut best = None;
@@ -452,6 +453,7 @@ fn live_google_tiles_render() {
             generation,
             epoch: 0,
             survey: true,
+            tiles: true,
         });
         thread::sleep(Duration::from_millis(16));
         if let Some(frame) = worker.take_frame()
@@ -487,6 +489,7 @@ fn live_google_tiles_render() {
         generation: 122,
         epoch: 1,
         survey: true,
+        tiles: true,
     });
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut two_d = None;
@@ -522,6 +525,7 @@ fn live_google_tiles_render() {
         generation: 123,
         epoch: 2,
         survey: true,
+        tiles: true,
     });
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut restored = false;

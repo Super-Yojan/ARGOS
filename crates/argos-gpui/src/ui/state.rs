@@ -204,7 +204,7 @@ impl Dashboard {
         self.log_rover_stops();
         self.sync_markers(&seen, false, self.view.read(cx).ground_altitude());
         self.sync_markers(&seen, true, self.view.read(cx).ground_altitude());
-        self.sync_follow();
+        self.sync_follow(Some(self.view.read(cx).ground_altitude()));
         if seen.is_empty() {
             self.framed.clear();
             self.framed_center = None;
@@ -546,8 +546,10 @@ impl Dashboard {
         self.rover_stops.clear();
         self.framed.clear();
         self.framed_center = None;
+        let use_gps = self.feed.gps_enabled();
         self.feed.shutdown();
         self.feed = FleetFeed::start(config.clone());
+        self.feed.set_gps(use_gps);
         // Dropping the old controller ends its video call.
         self.fpv = FpvController::start(config);
         self.fleet_mode = mode;
@@ -560,6 +562,18 @@ impl Dashboard {
         self.command.clear();
         self.note = format!("Switched to {} · {}", mode.label(), self.detail);
         window.set_window_title(mode.title());
+    }
+    /// GPS placement on or off. Off, rovers are drawn from local coordinates
+    /// around the map origin, and the Google tiles are hidden with it: without
+    /// GPS the imagery under the rovers would not mean anything.
+    pub(super) fn set_gps(&mut self, on: bool) {
+        self.feed.set_gps(on);
+        self.map.set_tiles(on);
+        self.note = if on {
+            "GPS on: rovers placed on the map imagery".into()
+        } else {
+            "GPS off: local coordinates only, map imagery hidden".into()
+        };
     }
     /// Turn the chase camera behind the selected rover on or off.
     pub(super) fn toggle_follow(&mut self) {
@@ -575,10 +589,11 @@ impl Dashboard {
         }
         self.following = true;
         self.note = "Following the selected rover. Drag to look around".into();
-        self.sync_follow();
+        self.sync_follow(None);
     }
     /// Keep the chase camera on the selected rover, where its model is drawn.
-    fn sync_follow(&mut self) {
+    /// `ground` is the flat map plane, used when tiles are hidden.
+    fn sync_follow(&mut self, ground: Option<f64>) {
         if !self.following {
             return;
         }
@@ -602,7 +617,8 @@ impl Dashboard {
             mark.overlay_frame,
             preview,
         );
-        let Some(altitude) = self.map.surface_altitude(latitude, longitude) else {
+        let flat = ground.filter(|_| !self.feed.gps_enabled());
+        let Some(altitude) = self.map.surface_altitude(latitude, longitude).or(flat) else {
             // No ground under the rover yet: keep the last view.
             return;
         };

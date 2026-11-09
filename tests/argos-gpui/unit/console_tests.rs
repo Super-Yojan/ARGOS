@@ -238,12 +238,12 @@ fn route_holds_are_explained_in_plain_words() {
     rover.autonomy_reason = Some("route_no_path".into());
     assert!(trace(&rover, false).contains(&(
         "Autonomy",
-        "requested L3 Waypoint · held: route_no_path (no gap wide enough: seen obstacles block every way to the goal)".into()
+        "requested L3 Planned · held: route_no_path (no gap wide enough: seen obstacles block every way to the goal)".into()
     )));
     rover.autonomy_reason = Some("route_goal_blocked".into());
     assert!(trace(&rover, false).contains(&(
         "Autonomy",
-        "requested L3 Waypoint · held: route_goal_blocked (goal is on an obstacle and there's no free spot near it)".into()
+        "requested L3 Planned · held: route_goal_blocked (goal is on an obstacle and there's no free spot near it)".into()
     )));
 }
 

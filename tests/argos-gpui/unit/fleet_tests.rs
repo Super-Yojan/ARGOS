@@ -386,6 +386,49 @@ fn local_phone_gps_places_rover_without_inventing_geographic_alignment() {
 }
 
 #[test]
+fn gps_off_places_every_rover_from_local_coordinates_at_the_origin() {
+    let origin = LocalFrame::origin(38., -77.).unwrap();
+    let snapshot = Snapshot {
+        link: "healthy".into(),
+        fleet_age: Some(0.1),
+        notice: None,
+        rovers: vec![
+            rover(0, "online", Some(pose(0., 0., 0.)), Some(0.1)),
+            rover(1, "online", Some(pose(2., 4., 0.)), Some(0.1)),
+        ],
+    };
+    // Rover 0 has no fix (GPS-denied); rover 1 has one.
+    let report = serde_json::json!({
+        "0":{"version":1,"mode":"local","frameID":"a"},
+        "1":{"version":1,"mode":"local","frameID":"b",
+            "gpsLatitude":38.98205,"gpsLongitude":-77.52052,"gpsAccuracy":4.6,"gpsFixAge":0.2}});
+    let place = |use_gps| {
+        placed_fleet_marks(
+            &snapshot,
+            &report,
+            &Value::Null,
+            |_| None,
+            origin,
+            |_| None,
+            &mut super::overlay::OverlayFrames::default(),
+            0.,
+            use_gps,
+        )
+    };
+    // With GPS on, the rover with no fix has nowhere to be drawn.
+    assert_eq!(place(true).iter().map(|m| m.id).collect::<Vec<_>>(), [1]);
+    let marks = place(false);
+    assert_eq!(marks.len(), 2);
+    for mark in &marks {
+        assert_eq!(mark.map_frame, Some(origin));
+        assert!(mark.raw_gps.is_none());
+        let expected = origin.geographic(mark.local_x, mark.local_y).unwrap();
+        assert_eq!((mark.latitude, mark.longitude), expected);
+    }
+    assert_eq!((marks[0].latitude, marks[0].longitude), (38., -77.));
+}
+
+#[test]
 fn gps_rover_pins_its_local_map_under_the_marker_by_fused_heading() {
     let origin = LocalFrame::origin(DEFAULT_START_LATITUDE, DEFAULT_START_LONGITUDE).unwrap();
     // Local yaw 0 (+x) is facing true east.

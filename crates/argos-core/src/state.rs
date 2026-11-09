@@ -41,9 +41,19 @@ struct Command {
 /// the vehicle's: something else (often a repeated level click) was acknowledged
 /// first. The goal itself was fine, so one resend with the new revision is safe.
 pub const STALE_AUTHORITY_REASON: &str = "current_authority_required";
+/// How long a rover stays a fleet member after the last `fleet/state` that
+/// listed it. Each Terra phone can publish a `fleet/state` naming only itself,
+/// so with two phones the messages alternate; taking each one as the whole
+/// fleet dropped the other rover every time, wiping its pose. Membership is
+/// the union of everything listed within this window instead.
+pub const FLEET_MEMBER_GRACE_SECONDS: f64 = 45.;
 #[derive(Default)]
 pub struct FleetCache {
+    /// The latest message, with `ids` replaced by the members still in their
+    /// grace window (see [`FLEET_MEMBER_GRACE_SECONDS`]).
     fleet: Option<(FleetState, f64)>,
+    /// When each rover was last listed in a `fleet/state`.
+    last_listed: BTreeMap<u64, f64>,
     entries: BTreeMap<u64, Entry>,
     disconnected: bool,
     notice: Option<String>,
@@ -58,6 +68,12 @@ impl FleetCache {
             .map(|(fleet, _)| fleet.ids.iter().copied().collect::<BTreeSet<_>>())
             .unwrap_or_default();
         for id in &state.ids {
+            self.last_listed.insert(*id, now);
+        }
+        self.last_listed
+            .retain(|_, listed| now - *listed <= FLEET_MEMBER_GRACE_SECONDS);
+        let current = self.last_listed.keys().copied().collect::<BTreeSet<_>>();
+        for id in &current {
             let entry = self.entries.entry(*id).or_default();
             if !previous.contains(id) {
                 *entry = Entry::default();
@@ -65,7 +81,6 @@ impl FleetCache {
         }
         // Terra retires increasing IDs. Preserve current membership plus at most
         // 32 retired rows for last-known inspection, rather than lifetime history.
-        let current = state.ids.iter().copied().collect::<BTreeSet<_>>();
         let retired = self
             .entries
             .keys()
@@ -78,7 +93,13 @@ impl FleetCache {
             .retain(|id, _| current.contains(id) || retired.contains(id));
         self.notice = (state.count != state.ids.len() as u64)
             .then(|| "Fleet count disagrees with membership".into());
-        self.fleet = Some((state, now));
+        self.fleet = Some((
+            FleetState {
+                ids: current.into_iter().collect(),
+                ..state
+            },
+            now,
+        ));
     }
     fn member(&self, id: u64) -> bool {
         self.fleet

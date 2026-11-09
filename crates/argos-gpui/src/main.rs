@@ -150,6 +150,8 @@ fn main() {
         show_controls: false,
         // True-colour imagery; the console bar can switch to muted tones.
         survey: false,
+        // No GPS means no geographic placement, so no Google tiles either.
+        tiles: config.use_gps,
         api_key: maps_api_key,
         ..MapConfig::default()
     })

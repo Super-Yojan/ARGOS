@@ -42,6 +42,9 @@ pub struct MapConfig {
     pub max_frame_pixels: u64,
     pub demo: bool,
     pub survey: bool,
+    /// Draw Google tiles. False leaves a plain background with only the
+    /// caller's objects, and requests no tiles; see [`api::Map::set_tiles`].
+    pub tiles: bool,
     /// Maximum live object instances (default 4096).
     pub max_objects: usize,
     /// Aggregate decoded model cache budget; decoding uses its remaining capacity.
@@ -68,6 +71,7 @@ impl Default for MapConfig {
             max_frame_pixels: 1_440_000,
             demo: std::env::var("MAPS_DEMO").is_ok_and(|s| s == "1"),
             survey: true,
+            tiles: true,
             max_objects: 4096,
             max_model_bytes: 128 * 1024 * 1024,
             fly_duration: Duration::from_millis(500),
@@ -95,6 +99,7 @@ pub struct MapView {
     navigation_revision: u64,
     mode_revision: u64,
     survey_revision: u64,
+    tiles_revision: u64,
     flight: Option<navigation::Flight>,
     /// Chase camera behind a followed object, while the app asks for one.
     chase: Option<chase::Chase>,
@@ -202,6 +207,7 @@ impl MapView {
             navigation_revision: 0,
             mode_revision: 0,
             survey_revision: 0,
+            tiles_revision: 0,
             flight: None,
             chase: None,
             last_tick: Instant::now(),
@@ -249,6 +255,17 @@ impl MapView {
                     self.survey(cx);
                 } else {
                     self.imagery(cx);
+                }
+            }
+            if let Some((revision, tiles)) = snapshot.tiles
+                && revision != self.tiles_revision
+            {
+                self.tiles_revision = revision;
+                if tiles != self.config.tiles {
+                    self.config.tiles = tiles;
+                    self.epoch = self.epoch.wrapping_add(1);
+                    self.send();
+                    cx.notify();
                 }
             }
             match (snapshot.follow, self.chase.as_mut()) {
@@ -309,6 +326,7 @@ impl MapView {
                 generation: self.generation,
                 epoch: self.epoch,
                 survey: self.config.survey,
+                tiles: self.config.tiles,
             });
         }
     }

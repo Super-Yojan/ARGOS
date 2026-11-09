@@ -30,6 +30,7 @@ pub(super) fn run(
     slot: Arc<Mutex<Option<Arc<Client>>>>,
     focus: Arc<Mutex<Option<u64>>>,
     stopped: Arc<AtomicBool>,
+    gps: Arc<AtomicBool>,
 ) {
     let mut history = LocalizationHistory::default();
     let started = std::time::Instant::now();
@@ -59,6 +60,7 @@ pub(super) fn run(
                     &mut history,
                     started,
                     &stopped,
+                    &gps,
                 );
                 if stopped.load(Ordering::Acquire) {
                     *slot.lock().unwrap() = None;
@@ -101,6 +103,7 @@ pub(super) fn mark_disconnected(picture: &Mutex<FleetPicture>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn poll(
     client: &Client,
     config: &DashboardConfig,
@@ -109,6 +112,7 @@ pub(super) fn poll(
     history: &mut LocalizationHistory,
     started: std::time::Instant,
     stopped: &AtomicBool,
+    gps: &AtomicBool,
 ) {
     let mut watches: BTreeMap<u64, PoseWatch> = BTreeMap::new();
     let mut reporting_holds: BTreeMap<u64, argos_core::ReportingHold> = BTreeMap::new();
@@ -177,7 +181,12 @@ pub(super) fn poll(
         }
         let localizations = history.update(&localizations, started.elapsed().as_secs_f64());
         history.retain(&ids);
-        if config.steady_map {
+        let use_gps = gps.load(Ordering::Relaxed);
+        if !use_gps {
+            // Start the GPS fit over when GPS is turned back on.
+            aligners.clear();
+            overlays.retain(&Default::default());
+        } else if config.steady_map {
             align(
                 &mut aligners,
                 &snapshot,
@@ -197,14 +206,17 @@ pub(super) fn poll(
             |id| aligners.get(&id).and_then(FrameAligner::frame),
             &mut overlays,
             started.elapsed().as_secs_f64(),
+            use_gps,
         );
         snapshot.link = display_link(&snapshot, &localizations, &operator);
-        retain_geographic_markers(
-            &snapshot,
-            &localizations,
-            &picture.lock().unwrap(),
-            &mut marks,
-        );
+        if use_gps {
+            retain_geographic_markers(
+                &snapshot,
+                &localizations,
+                &picture.lock().unwrap(),
+                &mut marks,
+            );
+        }
         let now = started.elapsed().as_secs_f64();
         // Short telemetry gaps must not flicker the rover and its notices.
         reporting_holds.retain(|id, _| ids.contains(id));

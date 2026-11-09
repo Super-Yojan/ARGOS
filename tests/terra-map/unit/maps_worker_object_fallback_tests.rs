@@ -17,6 +17,7 @@ fn gpu_objects_load_and_update_without_google_credentials() {
         generation: 1,
         epoch: 0,
         survey: true,
+        tiles: true,
     });
     // Add after the worker has entered its missing-key fallback.
     thread::sleep(Duration::from_millis(50));

@@ -20,9 +20,10 @@ fn snapshots_preserve_large_grids_membership_and_freshness() {
             decode_fleet(br#"{"count":2,"max_count":32,"ids":[8,9]}"#).unwrap(),
             0.,
         );
+        // Rover 9 unlisted past the grace window.
         cache.fleet(
             decode_fleet(br#"{"count":1,"max_count":32,"ids":[8]}"#).unwrap(),
-            0.,
+            FLEET_MEMBER_GRACE_SECONDS + 1.,
         );
     }
     let grid = OccupancyGrid {
