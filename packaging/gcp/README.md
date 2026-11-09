@@ -136,7 +136,8 @@ Then set the same relay in both apps:
 
 - ARGOS `.env`: `ARGOS_FPV_TURN_URL=turn:argos.34.135.204.210.sslip.io:3478`,
   `ARGOS_FPV_TURN_USERNAME=argos-fpv`, `ARGOS_FPV_TURN_CREDENTIAL=<turn.password>`.
-- TerraPhone: Connection -> FPV ICE settings, same TURN URL, user and password.
+- TerraPhone: fleet connection settings, "FPV video" section: same TURN URL,
+  username and credential, then Save.
 
 Check it with `sudo systemctl status coturn` and `sudo journalctl -u coturn`
 on the VM. A working relayed call logs an allocation for user `argos-fpv`.
