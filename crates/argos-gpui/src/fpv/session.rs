@@ -542,17 +542,15 @@ async fn accept_offer(
             };
             decoder.set_mime(&mime);
             view.lock().unwrap().codec = decoder.codec_name().to_string();
-            let ssrc = track.ssrc();
-            request_keyframe(&peer_pli, ssrc).await;
             let mut rates = Rates::default();
             if let Err(error) = read_track(
                 &track,
+                &peer_pli,
                 &mut decoder,
                 &view,
                 &mut rates,
                 &cancel,
                 &reader_stop,
-                &peer_pli,
             )
             .await
             {
@@ -667,8 +665,13 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+/// How long a sequence gap may wait for a NACK retransmission.
+const REORDER_WAIT: Duration = Duration::from_millis(120);
+/// At most this many packets wait behind a gap.
+const REORDER_CAPACITY: usize = 256;
+
 /// Ask the phone for a keyframe (RTCP picture loss indication).
-async fn request_keyframe(peer: &RTCPeerConnection, ssrc: u32) {
+async fn send_pli(peer: &RTCPeerConnection, ssrc: u32) {
     let _ = peer
         .write_rtcp(&[Box::new(
             webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
@@ -724,66 +727,73 @@ impl KeyframeAsk {
 
 async fn read_track(
     track: &webrtc::track::track_remote::TrackRemote,
+    peer: &RTCPeerConnection,
     decoder: &mut VideoDecoder,
     view: &Mutex<FpvView>,
     rates: &mut Rates,
     cancel: &AtomicBool,
     reader_stop: &AtomicBool,
-    peer: &RTCPeerConnection,
 ) -> Result<(), String> {
+    use super::depacketize::{Ordered, ReorderBuffer};
+    let ssrc = track.ssrc();
     let mut buffer = vec![0u8; 1500];
+    let mut order = ReorderBuffer::new(REORDER_WAIT, REORDER_CAPACITY);
+    send_pli(peer, ssrc).await;
     let mut ask = KeyframeAsk::new(Instant::now());
     let mut recovering = false;
     loop {
         if cancel.load(Ordering::Relaxed) || reader_stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let packet = tokio::select! {
-            _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                if cancel.load(Ordering::Relaxed) || reader_stop.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                continue;
-            }
-            incoming = track.read(&mut buffer) => incoming,
+        let incoming = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(50)) => None,
+            incoming = track.read(&mut buffer) => Some(incoming),
         };
-        let (packet, _) = match packet {
-            Ok(packet) => packet,
-            Err(_) => return Ok(()),
+        let now = Instant::now();
+        let released = match incoming {
+            None => order.flush(now),
+            Some(Ok((packet, _))) => {
+                rates.add_bytes(packet.payload.len() as u64);
+                order.push(packet.header.sequence_number, packet, now)
+            }
+            Some(Err(_)) => return Ok(()),
         };
-        let size = packet.payload.len();
-        rates.add_bytes(size as u64);
-        match decoder.push(
-            packet.header.timestamp,
-            packet.header.marker,
-            &packet.payload,
-        ) {
-            Ok(Some(frame)) => {
-                ask.frame(Instant::now());
-                rates.add_frame();
-                store_frame(view, frame, rates);
-                if std::mem::take(&mut recovering) {
-                    view.lock().unwrap().detail = "Receiving video".into();
+        for item in released {
+            let packet = match item {
+                Ordered::Packet(packet) => packet,
+                Ordered::Lost => {
+                    decoder.lost();
+                    continue;
+                }
+            };
+            match decoder.push(
+                packet.header.timestamp,
+                packet.header.marker,
+                &packet.payload,
+            ) {
+                Ok(Some(frame)) => {
+                    ask.frame(now);
+                    rates.add_frame();
+                    store_frame(view, frame, rates);
+                    if std::mem::take(&mut recovering) {
+                        view.lock().unwrap().detail = "Receiving video".into();
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    // The decoder already started over and waits for a key frame.
+                    if !recovering {
+                        recovering = true;
+                        view.lock().unwrap().detail =
+                            format!("Picture lost, asking the phone for a new one ({error})");
+                    }
                 }
             }
-            Ok(None) => {
-                if ask.should_ask(Instant::now(), false) {
-                    request_keyframe(peer, track.ssrc()).await;
-                }
-            }
-            Err(error) => {
-                // Broken references: start the decoder over and ask for a
-                // keyframe instead of failing every later picture.
-                decoder.reset_h264()?;
-                if !recovering {
-                    recovering = true;
-                    view.lock().unwrap().detail =
-                        format!("Picture lost, asking the phone for a new one ({error})");
-                }
-                if ask.should_ask(Instant::now(), true) {
-                    request_keyframe(peer, track.ssrc()).await;
-                }
-            }
+        }
+        // A decode error or a loss leaves the decoder waiting for a key frame;
+        // packets with no picture for a while also ask. KeyframeAsk spaces them.
+        if ask.should_ask(now, decoder.wants_keyframe()) {
+            send_pli(peer, ssrc).await;
         }
     }
 }

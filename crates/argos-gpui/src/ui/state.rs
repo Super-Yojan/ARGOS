@@ -79,6 +79,9 @@ impl Dashboard {
                             this.close_preview = false;
                             this.view.update(cx, |map, _| map.frame_near());
                         }
+                        // Dropped frames above must not be painted again: the
+                        // panels redraw this frame with the current picture.
+                        this.docks.notify_all(cx);
                         cx.notify();
                     })
                     .is_err()

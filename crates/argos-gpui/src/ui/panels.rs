@@ -199,6 +199,16 @@ impl Docks {
             .expect("every panel kind is built in Docks::new")
     }
 
+    /// Redraw every panel. The dock caches each panel view, and a panel body
+    /// reads Dashboard state, so `cx.notify()` on the Dashboard alone does not
+    /// repaint it. A cached Video panel kept painting a frame whose atlas
+    /// texture was already dropped, so the picture blanked between redraws.
+    pub(crate) fn notify_all(&self, cx: &mut App) {
+        for (_, entity) in &self.panels {
+            entity.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     pub(crate) fn is_open(&self, kind: PanelKind, cx: &App) -> bool {
         let id = PanelId::from(self.entity(kind).entity_id());
         self.area.read(cx).panel(id).is_some()

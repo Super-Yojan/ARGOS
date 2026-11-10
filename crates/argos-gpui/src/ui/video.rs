@@ -9,8 +9,7 @@ use gpui_kit::component::{ActiveTheme, Sizable, button::Button};
 use gpui_kit::{prelude::*, *};
 
 /// Video stays with the selection: Start FPV asks the selected rover's phone.
-/// Controls sit on top and the picture takes the rest of the panel, so a
-/// short dock panel never hides Start FPV below the fold.
+/// Controls sit on top and the picture spans the panel width below them.
 pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> impl IntoElement {
     let picture = dashboard.fpv.view();
     let phase = picture.phase;
@@ -22,7 +21,9 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
         .unwrap_or(0);
     let empty = empty_picture_text(dashboard.selected, &picture);
     v_flex()
+        .id("video-tab")
         .size_full()
+        .overflow_y_scroll()
         .p_4()
         .gap_2()
         .bg(cx.theme().background)
@@ -75,11 +76,16 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
         )
         .child(hint(fpv_subject(dashboard.selected, picture.phone_id), cx))
         .child(
+            // The picture fills the panel width; its height follows the video's
+            // shape. A tall picture scrolls rather than being cropped.
             div()
-                .w_full()
-                .flex_1()
-                .min_h(px(120.))
                 .relative()
+                .w_full()
+                .flex_none()
+                .min_h(px(120.))
+                .when_some(picture_aspect(&picture, turns), |frame, aspect| {
+                    frame.aspect_ratio(aspect)
+                })
                 .bg(cx.theme().secondary)
                 .rounded(cx.theme().radius)
                 .overflow_hidden()
@@ -100,6 +106,9 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                 .when(picture.image.is_none(), |frame| {
                     frame.child(
                         div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
                             .size_full()
                             .flex()
                             .items_center()
@@ -112,6 +121,20 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                 }),
         )
         .child(hint(fpv_stats(&picture), cx))
+}
+
+/// Width over height of the picture as shown, after the operator's rotation.
+/// `None` before the first frame, so the empty box keeps its minimum height.
+fn picture_aspect(picture: &argos_gpui::FpvView, turns: u8) -> Option<f32> {
+    if picture.image.is_none() || picture.width == 0 || picture.height == 0 {
+        return None;
+    }
+    let (w, h) = if turns % 2 == 1 {
+        (picture.height, picture.width)
+    } else {
+        (picture.width, picture.height)
+    };
+    Some(w as f32 / h as f32)
 }
 
 /// What the empty picture says: the next step, not a stale default.

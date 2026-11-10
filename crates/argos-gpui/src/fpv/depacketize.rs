@@ -159,3 +159,76 @@ pub fn vp8_payload(packet: &[u8]) -> Option<(bool, &[u8])> {
     }
     Some((start, &packet[index..]))
 }
+
+/// What the reorder buffer hands on: a packet in sequence order, or a gap it
+/// stopped waiting for.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Ordered<T> {
+    Packet(T),
+    Lost,
+}
+
+/// Puts RTP packets back in sequence order. NACK retransmissions arrive late
+/// and out of order; a short wait lets them fill a gap instead of breaking
+/// the picture. A gap that outlasts `wait` or `capacity` is reported as lost.
+pub struct ReorderBuffer<T> {
+    next: Option<u16>,
+    held: std::collections::BTreeMap<u16, (std::time::Instant, T)>,
+    wait: std::time::Duration,
+    capacity: usize,
+}
+
+impl<T> ReorderBuffer<T> {
+    pub fn new(wait: std::time::Duration, capacity: usize) -> Self {
+        Self {
+            next: None,
+            held: std::collections::BTreeMap::new(),
+            wait,
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub fn push(&mut self, seq: u16, packet: T, now: std::time::Instant) -> Vec<Ordered<T>> {
+        let next = *self.next.get_or_insert(seq);
+        // Older than what was already handed on: a duplicate or too late.
+        if (seq.wrapping_sub(next) as i16) < 0 {
+            return self.flush(now);
+        }
+        self.held.entry(seq).or_insert((now, packet));
+        self.flush(now)
+    }
+
+    /// Releases what is in order, and gives up on a gap that waited too long.
+    pub fn flush(&mut self, now: std::time::Instant) -> Vec<Ordered<T>> {
+        let mut out = Vec::new();
+        let Some(mut next) = self.next else {
+            return out;
+        };
+        loop {
+            while let Some((_, packet)) = self.held.remove(&next) {
+                out.push(Ordered::Packet(packet));
+                next = next.wrapping_add(1);
+            }
+            let Some(oldest) = self.held.values().map(|(at, _)| *at).min() else {
+                break;
+            };
+            let stale = now.saturating_duration_since(oldest) >= self.wait;
+            if !stale && self.held.len() < self.capacity {
+                break;
+            }
+            // Skip to the held packet closest after the gap.
+            let Some(resume) = self
+                .held
+                .keys()
+                .copied()
+                .min_by_key(|seq| seq.wrapping_sub(next))
+            else {
+                break;
+            };
+            out.push(Ordered::Lost);
+            next = resume;
+        }
+        self.next = Some(next);
+        out
+    }
+}

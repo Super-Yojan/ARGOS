@@ -22,6 +22,9 @@ pub struct VideoDecoder {
     pending_ts: Option<u32>,
     nals: Vec<Vec<u8>>,
     last_emitted: Option<u32>,
+    /// After a loss or a decode error every later frame depends on missing
+    /// data. Skip until a key frame (H.264 IDR or VP8 key frame) arrives.
+    need_keyframe: bool,
 }
 
 impl VideoDecoder {
@@ -37,6 +40,7 @@ impl VideoDecoder {
             pending_ts: None,
             nals: Vec::new(),
             last_emitted: None,
+            need_keyframe: true,
         })
     }
 
@@ -65,6 +69,7 @@ impl VideoDecoder {
         self.h264_packets.reset();
         self.nals.clear();
         self.pending_ts = None;
+        self.need_keyframe = true;
         Ok(())
     }
 
@@ -74,6 +79,21 @@ impl VideoDecoder {
             Codec::Vp8 => "VP8",
             Codec::Unknown => "video",
         }
+    }
+
+    /// True while the decoder waits for a key frame; the caller asks the
+    /// sender for one (RTCP PLI).
+    pub fn wants_keyframe(&self) -> bool {
+        self.need_keyframe
+    }
+
+    /// A packet never arrived. Drop the frame in progress and wait for a key frame.
+    pub fn lost(&mut self) {
+        self.h264_packets.reset();
+        self.vp8_packets.reset();
+        self.nals.clear();
+        self.pending_ts = None;
+        self.need_keyframe = true;
     }
 
     /// `None` when the packet is incomplete, late, or not yet a picture.
@@ -128,11 +148,37 @@ impl VideoDecoder {
             annex_b.extend_from_slice(&[0, 0, 0, 1]);
             annex_b.extend_from_slice(nal);
         }
-        self.nals.clear();
-        let decoded = self
-            .h264
-            .decode(&annex_b)
-            .map_err(|error| error.to_string())?;
+        let has_idr = self
+            .nals
+            .iter()
+            .any(|nal| nal.first().is_some_and(|b| b & 0x1f == 5));
+        let nals = std::mem::take(&mut self.nals);
+        if self.need_keyframe && !has_idr {
+            // Keep parameter sets (SPS 7, PPS 8): a sender may send them apart from the IDR.
+            let mut params = Vec::new();
+            for nal in nals
+                .iter()
+                .filter(|nal| nal.first().is_some_and(|b| matches!(b & 0x1f, 7 | 8)))
+            {
+                params.extend_from_slice(&[0, 0, 0, 1]);
+                params.extend_from_slice(nal);
+            }
+            if !params.is_empty() {
+                let _ = self.h264.decode(&params);
+            }
+            return Ok(None);
+        }
+        let decoded = match self.h264.decode(&annex_b) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                // A damaged reference poisons later frames; start clean at the next IDR.
+                self.reset_h264()?;
+                return Err(format!("{error} (waiting for a key frame)"));
+            }
+        };
+        if has_idr {
+            self.need_keyframe = false;
+        }
         let Some(picture) = decoded else {
             return Ok(None);
         };
@@ -158,8 +204,23 @@ impl VideoDecoder {
         let Some(decoder) = self.vp8.as_mut() else {
             return Err("VP8 was negotiated but libvpx is unavailable".into());
         };
+        // RFC 6386: bit 0 of the first byte is 0 on a key frame.
+        let key = frame.first().is_some_and(|byte| byte & 0x01 == 0);
+        if self.need_keyframe && !key {
+            return Ok(None);
+        }
         let decoded = {
-            let Some(picture) = decoder.decode(frame)? else {
+            let picture = match decoder.decode(frame) {
+                Ok(picture) => picture,
+                Err(error) => {
+                    self.need_keyframe = true;
+                    return Err(format!("{error} (waiting for a key frame)"));
+                }
+            };
+            if key {
+                self.need_keyframe = false;
+            }
+            let Some(picture) = picture else {
                 return Ok(None);
             };
             let width = picture.d_w as usize;

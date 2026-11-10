@@ -1,6 +1,8 @@
 use super::config::FpvConfig;
 use super::decode::VideoDecoder;
-use super::depacketize::{H264Depacketizer, Vp8Depacketizer, timestamp_is_late};
+use super::depacketize::{
+    H264Depacketizer, Ordered, ReorderBuffer, Vp8Depacketizer, timestamp_is_late,
+};
 use super::pattern::{TEST_PATTERN_HEIGHT, TEST_PATTERN_WIDTH, test_pattern_yuv};
 use fpv_signaling::{Effect, OFFER_TIMEOUT, SignalingSession, Topic};
 use openh264::formats::YUVSource;
@@ -143,6 +145,96 @@ fn generated_pattern_decodes_as_h264() {
         picture.bgra.len(),
         picture.width as usize * picture.height as usize * 4
     );
+}
+
+#[test]
+fn reorder_buffer_waits_for_a_retransmission_then_gives_up_on_a_gap() {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut order = ReorderBuffer::new(Duration::from_millis(100), 64);
+    assert_eq!(order.push(65_534, 'a', start), vec![Ordered::Packet('a')]);
+    // 65_535 is missing; the next two wait behind it.
+    assert!(order.push(0, 'c', start).is_empty());
+    assert!(order.push(1, 'd', start).is_empty());
+    // The retransmission fills the gap across the wrap.
+    assert_eq!(
+        order.push(65_535, 'b', start),
+        vec![
+            Ordered::Packet('b'),
+            Ordered::Packet('c'),
+            Ordered::Packet('d')
+        ]
+    );
+    // A duplicate or late packet is dropped.
+    assert!(order.push(0, 'x', start).is_empty());
+    // 2 never comes: after the wait the gap is reported and 3 goes on.
+    assert!(order.push(3, 'f', start).is_empty());
+    assert!(order.flush(start + Duration::from_millis(50)).is_empty());
+    assert_eq!(
+        order.flush(start + Duration::from_millis(100)),
+        vec![Ordered::Lost, Ordered::Packet('f')]
+    );
+}
+
+#[test]
+fn reorder_buffer_gives_up_when_full() {
+    use std::time::{Duration, Instant};
+    let now = Instant::now();
+    let mut order = ReorderBuffer::new(Duration::from_secs(10), 2);
+    assert_eq!(order.push(10, 1, now), vec![Ordered::Packet(1)]);
+    assert!(order.push(12, 3, now).is_empty());
+    assert_eq!(
+        order.push(13, 4, now),
+        vec![Ordered::Lost, Ordered::Packet(3), Ordered::Packet(4)]
+    );
+}
+
+#[test]
+fn decoder_skips_frames_after_a_loss_until_a_key_frame() {
+    let config = openh264::encoder::EncoderConfig::new()
+        .bitrate(openh264::encoder::BitRate::from_bps(800_000))
+        .max_frame_rate(openh264::encoder::FrameRate::from_hz(15.0))
+        .intra_frame_period(openh264::encoder::IntraFramePeriod::from_num_frames(1000))
+        .profile(openh264::encoder::Profile::Baseline);
+    let mut encoder =
+        openh264::encoder::Encoder::with_api_config(openh264::OpenH264API::from_source(), config)
+            .unwrap();
+    let mut decoder = VideoDecoder::new().unwrap();
+    decoder.set_mime("video/H264");
+    assert!(decoder.wants_keyframe());
+    let mut feed = |decoder: &mut VideoDecoder, frame: u32, key: bool| {
+        if key {
+            encoder.force_intra_frame();
+        }
+        let encoded = encoder.encode(&test_pattern_yuv(frame)).unwrap();
+        let mut units = Vec::new();
+        for layer in 0..encoded.num_layers() {
+            let layer = encoded.layer(layer).unwrap();
+            for index in 0..layer.nal_count() {
+                let unit = strip_start_code(layer.nal_unit(index).unwrap());
+                if !unit.is_empty() {
+                    units.push(unit.to_vec());
+                }
+            }
+        }
+        let timestamp = (frame + 1) * 6_000;
+        let last = units.len().saturating_sub(1);
+        let mut picture = None;
+        for (index, unit) in units.iter().enumerate() {
+            if let Ok(Some(decoded)) = decoder.push(timestamp, index == last, unit) {
+                picture = Some(decoded);
+            }
+        }
+        picture
+    };
+    assert!(feed(&mut decoder, 0, true).is_some());
+    assert!(!decoder.wants_keyframe());
+    assert!(feed(&mut decoder, 1, false).is_some());
+    decoder.lost();
+    assert!(decoder.wants_keyframe());
+    assert!(feed(&mut decoder, 2, false).is_none());
+    assert!(feed(&mut decoder, 3, true).is_some());
+    assert!(!decoder.wants_keyframe());
 }
 
 fn strip_start_code(nal: &[u8]) -> &[u8] {
