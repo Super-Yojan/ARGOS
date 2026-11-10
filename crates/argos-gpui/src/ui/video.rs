@@ -20,6 +20,12 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
         .and_then(|id| picture.rotations.get(&id).copied())
         .unwrap_or(0);
     let empty = empty_picture_text(dashboard.selected, &picture);
+    // Only the selected rover's picture: while video switches to a newly
+    // selected rover, the old rover's last frame is not shown.
+    let image = picture
+        .image
+        .clone()
+        .filter(|_| dashboard.selected.is_none() || dashboard.selected == picture.phone_id);
     v_flex()
         .id("video-tab")
         .size_full()
@@ -89,7 +95,7 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                 .bg(cx.theme().secondary)
                 .rounded(cx.theme().radius)
                 .overflow_hidden()
-                .when_some(picture.image.clone(), |frame, image| {
+                .when_some(image.clone(), |frame, image| {
                     // Pinned to all four edges so the box is the panel, not
                     // the image: an in-flow `img` takes the frame's aspect
                     // ratio, so a portrait 270×480 frame grew taller than the
@@ -103,7 +109,7 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                             .object_fit(ObjectFit::Contain),
                     )
                 })
-                .when(picture.image.is_none(), |frame| {
+                .when(image.is_none(), |frame| {
                     frame.child(
                         div()
                             .absolute()

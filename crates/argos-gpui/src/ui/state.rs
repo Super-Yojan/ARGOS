@@ -146,6 +146,7 @@ impl Dashboard {
             arrivals: argos_gpui::arrival::ArrivalAlerts::new(argos_gpui::arrival::Cue::from_env()),
             fpv_log: Default::default(),
             missions: Default::default(),
+            bucket_pick: None,
             _poll: poll,
         }
     }
@@ -230,7 +231,16 @@ impl Dashboard {
     }
     /// Log FPV call phases, first frame, freezes and stats (`kind: "fpv"`).
     fn sync_fpv_log(&mut self, now: f64) {
-        let sample = argos_gpui::fpv_log::FpvSample::from_view(&self.fpv.view());
+        let view = self.fpv.view();
+        // The panel shows the selected rover's camera, never another one's.
+        if let Some(id) = self
+            .fpv_log
+            .follow(view.phase.label(), view.phone_id, self.selected)
+        {
+            self.fpv.start_phone(id);
+            self.record_fpv_action("follow", Some(id), None);
+        }
+        let sample = argos_gpui::fpv_log::FpvSample::from_view(&view);
         for record in self.fpv_log.observe(now, &sample) {
             self.feed.record(record);
         }

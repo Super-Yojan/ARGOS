@@ -66,11 +66,20 @@ The **Mission** tab plans a longer job for one rover as a list of steps, and ARG
 | Waypoint | Sends a goal there and waits for `arrived` |
 | Collect | The same, marked as a ball pickup point |
 | Home | Drives to the home goal, then waits for the human refill: **Loaded · continue** goes on, **Out of balls** goes back to the first Collect step |
-| Score at a bucket | Drives to 1.5 m short of a found bucket, facing it, then starts the dock. You still approve the dump at L0–L3 |
+| Score at a bucket | Drives toward a found bucket, facing it, and starts the dock as soon as the rover is within 1.35 m and facing it within 20° (or when the goal arrives, whichever comes first). You still approve the dump at L0–L3 |
 
-To plan, pick **Waypoint**, **Collect** or **Home** and click the map once per step; click the kind again to stop placing. **+ Score at …** adds a found bucket. The arrows reorder steps and **✕** removes one. **Repeat** starts again from step 1 after the last step. The map draws the plan in order, numbered for the selected rover, and rings the step in progress.
+To plan, pick **Waypoint**, **Collect** or **Home** and click the map once per step; click the kind again to stop placing. **+ Score at …** adds a found bucket, and so does clicking a bucket square on the map while placing. The arrows reorder steps and **✕** removes one. **Repeat** starts again from step 1 after the last step. The map draws the plan in order, numbered for the selected rover, and rings the step in progress.
 
 **Start mission** needs control of the window and the rover on L2 Direct or L3 Planned. The mission pauses, and says why, when the rover stops, leaves L2/L3, loses its pose, drops the goal, or a dock fails; **Resume** repeats the step. **Skip step** sends the next step's goal straight away. **Pause** and **End mission** stop the rover where it is with a goal at its own position, so it stays on L2/L3 and **Resume** works (a plain goal cancel drops Terra to L0). A dock in flight is cancelled. Each rover runs its own mission, so several rovers can work at once. Every step change is logged as a `mission` event in the session log, and the plan as `mission_plan` at start. Plans live in this window only; edits apply the next time you start.
+
+### Dock at a bucket from the map
+
+Click a bucket's square on the map to open its popup, then **Dock here**. ARGOS sends the selected rover toward the bucket and starts the dock once the rover is within 1.35 m and facing it. It is a one-step Score mission, so the Mission tab shows it and **Pause**, **Skip step** and **End mission** work on it; your planned mission is kept. You still approve the dump at L0–L3.
+
+- The drive needs L2 Direct or L3 Planned. At any other level, **Dock here** only works when the rover is already within 1.35 m and facing the bucket; then it docks straight away, like the **Dock** button in the rover panel.
+- The rover must have seen the bucket itself. A square another rover found counts when the selected rover has a same-colour bucket within 1 m of it on the map.
+- Why 1.35 m: closer than about 1.1 m Terra's camera cannot see the bucket and the dock first reverses out, and in field run b1999e3e the camera got no fix at 1.7 m. The goal itself sits 0.5 m short of the bucket because Terra counts an L2/L3 goal as arrived 0.75 m out.
+- The session log records `bucket_dock` (`mode` `drive_then_dock` or `dock_now`) and the usual `mission` events, including `in_dock_range` when the dock starts before the goal arrives.
 
 ## Autonomy levels
 

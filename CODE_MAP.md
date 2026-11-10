@@ -67,6 +67,7 @@ The window never talks to Zenoh directly. It reads a shared `FleetPicture` every
 | A `.env` setting | `fleet/config.rs` | `SETTING_KEYS`, `DashboardConfig::parse` |
 | Grid, route, goal drawing on the map | `ui/map_overlay.rs`, `ui/local_map.rs` | `map_paint` |
 | Click-to-goal | `ui/interaction.rs`, `ui/popups.rs` | `click_map`, `goal_popup` |
+| Click a bucket square → Dock here (drive up, then dock) | `ui/bucket_dock.rs`, `argos-core/src/mission.rs` | `click_bucket`, `bucket_dock_plan`, `bucket_popup`; `DOCK_START_M`, `SCORE_GOAL_M`, `dock_window` |
 | Colors | `ui/palette.rs` | |
 | FPV video | `argos-gpui/src/fpv/` and `ui/video.rs` | `session.rs`, `present.rs` |
 | Planned missions (steps, runner, Mission tab) | `argos-core/src/mission.rs`, `ui/mission.rs` | `MissionRun::tick`, `sync_missions`, `mission_tab`; tests in `tests/argos-core/mission.rs` |

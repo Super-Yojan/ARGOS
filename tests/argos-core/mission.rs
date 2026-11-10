@@ -1,6 +1,6 @@
 use argos_core::{
-    DockReport, MissionCommand, MissionPlan, MissionRun, MissionStep, MissionView, Phase,
-    SCORE_STANDOFF_M, StepKind, TAKE_TIMEOUT_S, Wait,
+    DOCK_START_M, DockReport, MissionCommand, MissionPlan, MissionRun, MissionStep, MissionView,
+    Phase, SCORE_GOAL_M, StepKind, TAKE_TIMEOUT_S, Wait, in_dock_window,
 };
 
 fn view<'a>(
@@ -11,6 +11,7 @@ fn view<'a>(
     MissionView {
         x: 0.,
         y: 0.,
+        yaw: 0.,
         level: Some(level),
         goal,
         dock,
@@ -162,12 +163,13 @@ fn score_stops_short_facing_the_bucket_then_docks_until_done() {
     // The live bucket position wins over the planned one.
     match tick.commands.as_slice() {
         [MissionCommand::Goal { x, y, yaw }] => {
-            assert!((x - (6. - SCORE_STANDOFF_M)).abs() < 1e-9 && y.abs() < 1e-9);
+            assert!((x - (6. - SCORE_GOAL_M)).abs() < 1e-9 && y.abs() < 1e-9);
             assert!(yaw.unwrap().abs() < 1e-9);
         }
         other => panic!("{other:?}"),
     }
-    v.goal = Some((4.5, 0., "arrived"));
+    // Arrived short of the dock range (approach at an angle): dock anyway.
+    v.goal = Some((5.5, 0., "arrived"));
     let tick = run.tick(&v, 1.);
     assert_eq!(tick.commands, vec![MissionCommand::Dock { bucket: 4 }]);
     let report = dock(7, "aligned", 4);
@@ -202,7 +204,7 @@ fn a_failed_dock_pauses_and_resume_docks_again() {
     );
     let mut v = view("waypoint", None, None);
     let (mut run, _) = MissionRun::start(p, &v, 0.).unwrap();
-    v.goal = Some((0.5, 0., "arrived"));
+    v.goal = Some((1.5, 0., "arrived"));
     run.tick(&v, 1.);
     let report = dock(3, "creep", 4);
     v.dock = Some(&report);
@@ -282,7 +284,7 @@ fn skip_during_a_dock_cancels_the_dock_then_drives_on() {
     );
     let mut v = view("waypoint", None, None);
     let (mut run, _) = MissionRun::start(p, &v, 0.).unwrap();
-    v.goal = Some((0.5, 0., "arrived"));
+    v.goal = Some((1.5, 0., "arrived"));
     run.tick(&v, 1.);
     let tick = run.skip(&v, 2.);
     assert_eq!(
@@ -317,4 +319,74 @@ fn plan_edits_keep_order_and_limits() {
     );
     let json = serde_json::to_string(&p).unwrap();
     assert_eq!(serde_json::from_str::<MissionPlan>(&json).unwrap(), p);
+}
+
+#[test]
+fn score_docks_as_soon_as_the_rover_is_in_range_and_facing_the_bucket() {
+    // Field run b1999e3e: the old 1.5 m standoff plus Terra's 0.75 m arrival
+    // radius left the rover 1.7 m out, where the camera never fixed the bucket.
+    let p = plan(
+        vec![MissionStep::score(4, "Orange bucket 4".into(), 5., 0.)],
+        false,
+    );
+    let buckets = [(4, 5., 0.)];
+    let mut v = view("waypoint", None, None);
+    v.buckets = &buckets;
+    let (mut run, tick) = MissionRun::start(p, &v, 0.).unwrap();
+    assert_eq!(goal(&tick), (5. - SCORE_GOAL_M, 0.));
+    v.goal = Some((4.5, 0., "active"));
+    run.tick(&v, 1.);
+    // Still 1.6 m out: keep driving.
+    v.x = 3.4;
+    assert!(run.tick(&v, 2.).commands.is_empty());
+    // 1.3 m out, facing it: dock without waiting for the goal to arrive.
+    v.x = 3.7;
+    let tick = run.tick(&v, 3.);
+    assert_eq!(tick.commands, vec![MissionCommand::Dock { bucket: 4 }]);
+    assert!(tick.events.iter().any(|e| e.event == "in_dock_range"));
+    // The dock fails while that goal is still live: hold so it stops there.
+    let report = dock(9, "lock", 4);
+    v.dock = Some(&report);
+    run.tick(&v, 4.);
+    let report = dock(9, "failed", 4);
+    v.dock = Some(&report);
+    let tick = run.tick(&v, 5.);
+    assert_eq!(tick.commands, vec![MissionCommand::Hold { x: 3.7, y: 0. }]);
+    assert!(matches!(run.phase, Phase::Paused(_)));
+}
+
+#[test]
+fn score_starting_in_range_docks_right_away_but_not_when_facing_away() {
+    let p = plan(
+        vec![MissionStep::score(4, "Orange bucket 4".into(), 1.2, 0.)],
+        false,
+    );
+    let buckets = [(4, 1.2, 0.)];
+    let mut v = view("waypoint", None, None);
+    v.buckets = &buckets;
+    let (_, tick) = MissionRun::start(p.clone(), &v, 0.).unwrap();
+    assert_eq!(tick.commands, vec![MissionCommand::Dock { bucket: 4 }]);
+    // Bucket behind the rover: the camera cannot lock, so drive and face it first.
+    v.yaw = std::f64::consts::PI;
+    let (_, tick) = MissionRun::start(p, &v, 0.).unwrap();
+    assert!(matches!(
+        tick.commands.as_slice(),
+        [MissionCommand::Goal { yaw: Some(_), .. }]
+    ));
+}
+
+#[test]
+fn dock_window_is_range_and_bearing() {
+    assert!(in_dock_window(0., 0., 0., DOCK_START_M - 0.01, 0.));
+    assert!(!in_dock_window(0., 0., 0., DOCK_START_M + 0.01, 0.));
+    // 15° off the nose is fine, 30° is not.
+    let at = |deg: f64| (1.2 * deg.to_radians().cos(), 1.2 * deg.to_radians().sin());
+    let (x, y) = at(15.);
+    assert!(in_dock_window(0., 0., 0., x, y));
+    let (x, y) = at(30.);
+    assert!(!in_dock_window(0., 0., 0., x, y));
+    // Heading wraps: facing -179° with the bucket at +179°.
+    let (x, y) = at(179.);
+    assert!(in_dock_window(0., 0., (-179f64).to_radians(), x, y));
+    assert!(!in_dock_window(0., 0., f64::NAN, 1., 0.));
 }

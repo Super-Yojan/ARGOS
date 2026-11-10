@@ -63,6 +63,7 @@ impl Render for Dashboard {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     this.cancel_drag();
+                    this.close_bucket_pick();
                     cx.stop_propagation();
                     return;
                 }
@@ -251,6 +252,13 @@ impl Dashboard {
         let confirm = self.drag.as_ref().and_then(|active| {
             let at = self.proposal_at(active, cx)?;
             Some(goal_popup(&active.goal, at, cx).into_any_element())
+        });
+        let bucket = self.bucket_pick.as_ref().and_then(|pick| {
+            let at = self
+                .view
+                .read(cx)
+                .project_local(pick.latitude, pick.longitude)?;
+            Some(super::bucket_dock::bucket_popup(self, pick, at, cx).into_any_element())
         });
         let field: Vec<(u64, Option<Point<Pixels>>, console::Callout)> = {
             let map = self.view.read(cx);
@@ -481,6 +489,7 @@ impl Dashboard {
             .child(offscreen_tabs(&field, &unlocated, selected, cx))
             .child(arrival_queue(waiting, selected, cx))
             .children(confirm)
+            .children(bucket)
             .child(dump_popups(&self.marks, cx))
             .into_any_element()
     }

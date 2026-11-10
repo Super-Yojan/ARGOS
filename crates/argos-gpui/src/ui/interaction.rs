@@ -10,8 +10,13 @@ use gpui_kit::{prelude::*, *};
 
 impl Dashboard {
     /// A plain click on the main map proposes a destination for the selected
-    /// rover. Nothing is sent until the operator confirms in the popup.
+    /// rover. Nothing is sent until the operator confirms in the popup. A click
+    /// on a bucket square opens its Dock here popup instead.
     pub(super) fn click_map(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.bucket_pick = None;
+        if self.click_bucket(position, cx) {
+            return;
+        }
         let Some(id) = self.selected else {
             return;
         };
