@@ -57,6 +57,17 @@ impl VideoDecoder {
         }
     }
 
+    /// Start the H.264 decoder over after a decode error. Its reference
+    /// pictures are broken by then, so every later P-frame fails too; a fresh
+    /// decoder waits for the next keyframe, which the caller asks the phone for.
+    pub fn reset_h264(&mut self) -> Result<(), String> {
+        self.h264 = openh264::decoder::Decoder::new().map_err(|error| error.to_string())?;
+        self.h264_packets.reset();
+        self.nals.clear();
+        self.pending_ts = None;
+        Ok(())
+    }
+
     pub fn codec_name(&self) -> &'static str {
         match self.codec {
             Codec::H264 => "H.264",
