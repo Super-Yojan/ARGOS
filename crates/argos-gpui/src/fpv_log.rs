@@ -8,6 +8,7 @@
 //! | event | when |
 //! | --- | --- |
 //! | `start`, `stop`, `rotate` | the operator pressed the button |
+//! | `follow` | live video switched to a newly selected rover |
 //! | `phase` | call phase or its detail text changed (Starting, Connecting, Connected, Failed, Closed) |
 //! | `first_frame` | first decoded picture of a call, with seconds since Start |
 //! | `frozen` | connected but no new picture for [`FROZEN_AFTER_S`] |
@@ -69,6 +70,8 @@ pub struct FpvLog {
     last_frame_at: Option<f64>,
     frozen_since: Option<f64>,
     last_stats_at: Option<f64>,
+    /// Rover a follow switch was requested for, until video is on it.
+    follow_pending: Option<u64>,
 }
 
 impl FpvLog {
@@ -187,6 +190,34 @@ impl FpvLog {
             }
         }
         records
+    }
+}
+
+impl FpvLog {
+    /// Video follows the selection: while a call is live (starting,
+    /// connecting or connected) and the operator selects another rover,
+    /// return that rover once so the caller restarts FPV on it. The request
+    /// is not repeated while the switch is on its way. Selecting nothing
+    /// keeps the call.
+    pub fn follow(
+        &mut self,
+        phase: &str,
+        watching: Option<u64>,
+        selected: Option<u64>,
+    ) -> Option<u64> {
+        if self
+            .follow_pending
+            .is_some_and(|id| watching == Some(id) || selected != Some(id))
+        {
+            self.follow_pending = None;
+        }
+        let live = matches!(phase, "Starting" | "Connecting" | "Connected");
+        let target = selected.filter(|id| live && watching != Some(*id))?;
+        if self.follow_pending == Some(target) {
+            return None;
+        }
+        self.follow_pending = Some(target);
+        Some(target)
     }
 }
 

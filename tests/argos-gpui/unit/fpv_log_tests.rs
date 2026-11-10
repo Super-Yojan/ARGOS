@@ -127,3 +127,22 @@ fn rotate_action_carries_degrees() {
     assert_eq!(record["rotation_deg"], 270);
     assert_eq!(record["kind"], "fpv");
 }
+
+#[test]
+fn live_video_follows_the_selected_rover_once_per_switch() {
+    let mut log = FpvLog::default();
+    // Nothing live: selecting a rover does not start video.
+    assert_eq!(log.follow("Idle", None, Some(1)), None);
+    assert_eq!(log.follow("Closed", Some(1), Some(2)), None);
+    // Watching rover 1, same rover selected: nothing to do.
+    assert_eq!(log.follow("Connected", Some(1), Some(1)), None);
+    // Select rover 2: switch once, not again while the switch is pending.
+    assert_eq!(log.follow("Connected", Some(1), Some(2)), Some(2));
+    assert_eq!(log.follow("Connected", Some(1), Some(2)), None);
+    assert_eq!(log.follow("Starting", Some(2), Some(2)), None);
+    // Deselecting keeps the call.
+    assert_eq!(log.follow("Connected", Some(2), None), None);
+    // Back to rover 1, then quickly to 3: each new choice switches.
+    assert_eq!(log.follow("Connected", Some(2), Some(1)), Some(1));
+    assert_eq!(log.follow("Connected", Some(2), Some(3)), Some(3));
+}
