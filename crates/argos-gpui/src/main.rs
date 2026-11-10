@@ -118,6 +118,8 @@ struct Dashboard {
     timeline: argos_gpui::timeline::Timeline,
     /// Planned missions and the ones running, per rover.
     missions: ui::mission::MissionBoard,
+    /// The bucket square last clicked on the map, while its Dock here popup is open.
+    bucket_pick: Option<ui::bucket_dock::BucketPick>,
     _poll: Task<()>,
 }
 
