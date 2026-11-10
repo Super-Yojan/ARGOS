@@ -10,17 +10,31 @@
 //!   a waypoint; the kind marks where "Out of balls" sends the rover back to.
 //! - `Home`: drive to the home goal, then wait for the human to refill the
 //!   dumper. "Loaded" continues; "Out of balls" jumps to the first `Collect`.
-//! - `Score`: drive to a point short of a found bucket, facing it, then start
-//!   the dock. The dump itself stays the operator's approval (L0–L3), as today.
+//! - `Score`: drive toward a found bucket, facing it, and start the dock as
+//!   soon as the rover is within [`DOCK_START_M`] and facing it (or when the
+//!   goal arrives). The dump itself stays the operator's approval (L0–L3).
 
 use crate::DockReport;
 use serde::{Deserialize, Serialize};
 
 /// Levels that take a local waypoint goal.
 pub const MISSION_LEVELS: [&str; 2] = ["waypoint", "waypoint_direct"];
-/// The score step stops this far short of the bucket, inside the dock's 3 m
-/// start limit and far enough back for the camera to see the bucket.
-pub const SCORE_STANDOFF_M: f64 = 1.5;
+/// A score step starts the dock once the rover is this close to the bucket
+/// centre and facing it, without waiting for its goal to arrive. Terra's dock
+/// sees the bucket from here: past its blind range (about 0.96 m on Terra, a
+/// dock started inside it reverses out to 1.11 m first) and short of the 1.7 m
+/// where field run b1999e3e got no camera fix at all. Well inside the dock's
+/// 3 m start limit.
+pub const DOCK_START_M: f64 = 1.35;
+/// "Facing the bucket" for [`DOCK_START_M`]: bucket bearing from the rover's
+/// heading. Terra's dock backs off above 25°.
+pub const DOCK_START_BEARING_DEG: f64 = 20.;
+/// The score step's goal sits this far short of the bucket centre, facing it.
+/// Terra counts an L2/L3 goal as arrived 0.75 m out, so a straight approach
+/// stops about 1.25 m from the bucket, inside [`DOCK_START_M`]; the mission
+/// usually starts the dock a moment before that. Terra slides a goal that
+/// would put the body into the bucket back to where it fits.
+pub const SCORE_GOAL_M: f64 = 0.5;
 /// A goal or dock the rover has not taken after this long is sent again.
 pub const TAKE_TIMEOUT_S: f64 = 5.;
 /// Sends per step before the mission pauses.
@@ -156,6 +170,8 @@ impl MissionPlan {
 pub struct MissionView<'a> {
     pub x: f64,
     pub y: f64,
+    /// Heading in the local frame, radians, 0 facing +x.
+    pub yaw: f64,
     /// Effective level, else the requested one.
     pub level: Option<&'a str>,
     /// Reported goal: x, y and `active` / `arrived` / `idle`.
@@ -230,7 +246,7 @@ pub struct MissionRun {
 pub struct MissionEvent {
     pub index: usize,
     pub kind: StepKind,
-    /// `started`, `arrived`, `docking`, `scored`, `waiting_refill`, `paused`,
+    /// `started`, `arrived`, `in_dock_range`, `docking`, `scored`, `waiting_refill`, `paused`,
     /// `resumed`, `loaded`, `out_of_balls`, `skipped`, `done`, `stopped`.
     pub event: &'static str,
     pub detail: Option<String>,
@@ -350,6 +366,14 @@ impl MissionRun {
                 seen,
                 target,
             } => {
+                if step.kind == StepKind::Score && dock_window(&step, view) {
+                    // Close enough and facing the bucket: dock now. The goal
+                    // stays; it sits short of the bucket, so the rover is at
+                    // or inside its arrival radius when the dock ends.
+                    self.log(&mut tick, "in_dock_range", None);
+                    self.start_dock(view, now, &mut tick);
+                    return tick;
+                }
                 let ours = view
                     .goal
                     .filter(|(x, y, _)| (x - target.0).hypot(y - target.1) <= SAME_GOAL_M);
@@ -412,6 +436,15 @@ impl MissionRun {
                     (Some(id), Some(dock)) if dock.dock_id == id => match dock.phase.as_str() {
                         "done" => self.scored(view, now, &mut tick),
                         "failed" | "cancelled" => {
+                            // A dock started before the goal arrived leaves
+                            // that goal live; hold so the rover does not drive
+                            // on toward the bucket.
+                            if view.goal.is_some_and(|(_, _, state)| state == "active") {
+                                tick.commands.push(MissionCommand::Hold {
+                                    x: view.x,
+                                    y: view.y,
+                                });
+                            }
                             self.pause(format!("Dock {}: {}", dock.phase, dock.reason), &mut tick)
                         }
                         _ => {}
@@ -615,6 +648,11 @@ impl MissionRun {
             self.finish(tick);
             return;
         };
+        if step.kind == StepKind::Score && dock_window(&step, view) {
+            self.log(tick, "started", None);
+            self.start_dock(view, now, tick);
+            return;
+        }
         let target = goal_point(&step, view);
         tick.commands.push(MissionCommand::Goal {
             x: target.0,
@@ -652,8 +690,8 @@ impl MissionRun {
     }
 }
 
-/// Where a step's goal goes. A score step stops [`SCORE_STANDOFF_M`] short of
-/// the bucket's live position, on the line from the rover.
+/// Where a step's goal goes. A score step's goal sits [`SCORE_GOAL_M`] short
+/// of the bucket's live position, on the line from the rover.
 pub fn goal_point(step: &MissionStep, view: &MissionView) -> (f64, f64) {
     if step.kind != StepKind::Score {
         return (step.x, step.y);
@@ -661,11 +699,29 @@ pub fn goal_point(step: &MissionStep, view: &MissionView) -> (f64, f64) {
     let (bx, by) = bucket_position(step, view);
     let (dx, dy) = (bx - view.x, by - view.y);
     let distance = dx.hypot(dy);
-    if distance <= SCORE_STANDOFF_M {
+    if distance <= SCORE_GOAL_M {
         return (view.x, view.y);
     }
-    let scale = (distance - SCORE_STANDOFF_M) / distance;
+    let scale = (distance - SCORE_GOAL_M) / distance;
     (view.x + dx * scale, view.y + dy * scale)
+}
+
+/// The rover is within [`DOCK_START_M`] of the step's bucket and facing it
+/// within [`DOCK_START_BEARING_DEG`]: the dock can see the bucket from here.
+pub fn dock_window(step: &MissionStep, view: &MissionView) -> bool {
+    let (bx, by) = bucket_position(step, view);
+    in_dock_window(view.x, view.y, view.yaw, bx, by)
+}
+
+/// [`dock_window`] for a rover at `(x, y)` heading `yaw` and a bucket at `(bx, by)`.
+pub fn in_dock_window(x: f64, y: f64, yaw: f64, bx: f64, by: f64) -> bool {
+    let (dx, dy) = (bx - x, by - y);
+    if !(dx.is_finite() && dy.is_finite() && yaw.is_finite()) {
+        return false;
+    }
+    let bearing = (dy.atan2(dx) - yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    dx.hypot(dy) <= DOCK_START_M && bearing.abs() <= DOCK_START_BEARING_DEG.to_radians()
 }
 
 fn bucket_position(step: &MissionStep, view: &MissionView) -> (f64, f64) {

@@ -10,6 +10,7 @@
 //! | `console_bar.rs` | Top bar: map mode, grid, status, link, Stop all |
 //! | `cards.rs` | Rover callout cards and off-screen tabs |
 //! | `popups.rs` | Dump approval and click-to-goal confirm popups |
+//! | `bucket_dock.rs` | Click a bucket square, Dock here: drive up and dock |
 //! | `inspector.rs` | The selected rover's panel and its Overview tab |
 //! | `levels.rs` | Autonomy level buttons and the study condition |
 //! | `task.rs` | L4 Explore and L5 Task sections |
@@ -32,6 +33,7 @@
 mod actions;
 pub(crate) mod agent;
 pub(crate) mod attention;
+pub(crate) mod bucket_dock;
 mod cards;
 pub(crate) mod commands;
 mod console_bar;

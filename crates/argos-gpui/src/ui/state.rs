@@ -143,6 +143,7 @@ impl Dashboard {
             arrivals: argos_gpui::arrival::ArrivalAlerts::new(argos_gpui::arrival::Cue::from_env()),
             fpv_log: Default::default(),
             missions: Default::default(),
+            bucket_pick: None,
             _poll: poll,
         }
     }

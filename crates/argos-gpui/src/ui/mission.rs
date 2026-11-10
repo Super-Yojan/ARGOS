@@ -53,7 +53,7 @@ fn buckets(mark: &RoverMark) -> Vec<(u32, f64, f64)> {
 }
 
 /// "Orange bucket 4".
-fn bucket_label(object: &argos_core::FoundObject) -> String {
+pub(super) fn bucket_label(object: &argos_core::FoundObject) -> String {
     let label = object.label();
     let mut chars = label.chars();
     let first = chars
@@ -76,7 +76,7 @@ fn halted(mark: &RoverMark) -> Option<&'static str> {
 }
 
 /// Runs `with` on the mission view of `mark`.
-fn with_view<R>(mark: &RoverMark, with: impl FnOnce(&MissionView) -> R) -> R {
+pub(super) fn with_view<R>(mark: &RoverMark, with: impl FnOnce(&MissionView) -> R) -> R {
     let buckets = buckets(mark);
     let level = mark
         .effective_level
@@ -85,6 +85,7 @@ fn with_view<R>(mark: &RoverMark, with: impl FnOnce(&MissionView) -> R) -> R {
     let view = MissionView {
         x: mark.local_x,
         y: mark.local_y,
+        yaw: mark.yaw,
         level,
         goal: mark
             .goal
@@ -115,7 +116,7 @@ impl Dashboard {
         }
     }
 
-    fn apply_mission(&mut self, id: u64, tick: MissionTick) {
+    pub(super) fn apply_mission(&mut self, id: u64, tick: MissionTick) {
         for command in tick.commands {
             match command {
                 MissionCommand::Goal { x, y, yaw } => {
