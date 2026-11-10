@@ -266,3 +266,71 @@ fn rotate_frame_moves_a_corner_on_a_wide_frame() {
     // Top-right goes to bottom-right after a clockwise quarter turn.
     assert_eq!(turned.bgra[(2 * 2 + 1) * 4], 9);
 }
+
+#[test]
+fn keyframe_is_asked_on_decode_error_and_on_a_stall_at_most_once_a_second() {
+    use super::session::{KEYFRAME_EVERY, KEYFRAME_STALL, KeyframeAsk};
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut ask = KeyframeAsk::new(start);
+    // Pictures flowing: packets without a picture yet do not ask.
+    assert!(!ask.should_ask(start + Duration::from_millis(100), false));
+    ask.frame(start + Duration::from_millis(100));
+    // A decode error asks at once, then not again within the spacing.
+    let error_at = start + Duration::from_millis(200);
+    assert!(ask.should_ask(error_at, true));
+    assert!(!ask.should_ask(error_at + Duration::from_millis(300), true));
+    assert!(ask.should_ask(error_at + KEYFRAME_EVERY, true));
+    // A picture arrives; then packets keep coming without one: ask after the stall.
+    let frame_at = error_at + KEYFRAME_EVERY + Duration::from_millis(100);
+    ask.frame(frame_at);
+    assert!(!ask.should_ask(frame_at + KEYFRAME_STALL / 2, false));
+    assert!(ask.should_ask(frame_at + KEYFRAME_STALL, false));
+    assert!(!ask.should_ask(
+        frame_at + KEYFRAME_STALL + Duration::from_millis(500),
+        false
+    ));
+    assert!(ask.should_ask(frame_at + KEYFRAME_STALL + KEYFRAME_EVERY, false));
+}
+
+#[test]
+fn h264_decoder_decodes_again_after_a_reset() {
+    let config = openh264::encoder::EncoderConfig::new()
+        .bitrate(openh264::encoder::BitRate::from_bps(800_000))
+        .max_frame_rate(openh264::encoder::FrameRate::from_hz(15.0))
+        .profile(openh264::encoder::Profile::Baseline);
+    let mut encoder =
+        openh264::encoder::Encoder::with_api_config(openh264::OpenH264API::from_source(), config)
+            .unwrap();
+    let mut decoder = VideoDecoder::new().unwrap();
+    decoder.set_mime("video/H264");
+    let mut decode = |decoder: &mut VideoDecoder, frame: u32, keyframe: bool| {
+        if keyframe {
+            encoder.force_intra_frame();
+        }
+        let encoded = encoder.encode(&test_pattern_yuv(frame)).unwrap();
+        let mut units = Vec::new();
+        for layer in 0..encoded.num_layers() {
+            let layer = encoded.layer(layer).unwrap();
+            for index in 0..layer.nal_count() {
+                units.push(strip_start_code(layer.nal_unit(index).unwrap()).to_vec());
+            }
+        }
+        let timestamp = (frame + 1) * 6_000;
+        let last = units.len().saturating_sub(1);
+        let mut picture = None;
+        for (index, unit) in units.iter().enumerate() {
+            if !unit.is_empty()
+                && let Ok(Some(decoded)) = decoder.push(timestamp, index == last, unit)
+            {
+                picture = Some(decoded);
+            }
+        }
+        picture
+    };
+    assert!(decode(&mut decoder, 0, true).is_some());
+    decoder.reset_h264().unwrap();
+    // A P-frame cannot decode on a fresh decoder; the next keyframe does.
+    assert!(decode(&mut decoder, 1, false).is_none());
+    assert!(decode(&mut decoder, 2, true).is_some());
+}

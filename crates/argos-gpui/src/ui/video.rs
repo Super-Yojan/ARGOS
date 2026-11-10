@@ -79,14 +79,21 @@ pub(super) fn video_tab(dashboard: &Dashboard, cx: &mut Context<Dashboard>) -> i
                 .w_full()
                 .flex_1()
                 .min_h(px(120.))
+                .relative()
                 .bg(cx.theme().secondary)
                 .rounded(cx.theme().radius)
                 .overflow_hidden()
                 .when_some(picture.image.clone(), |frame, image| {
+                    // Pinned to all four edges so the box is the panel, not
+                    // the image: an in-flow `img` takes the frame's aspect
+                    // ratio, so a portrait 270×480 frame grew taller than the
+                    // panel and got cropped to a stretched strip. Contain then
+                    // letterboxes it at its own shape, whatever the panel width.
                     frame.child(
                         img(image)
                             .id("fpv-picture")
-                            .size_full()
+                            .absolute()
+                            .inset_0()
                             .object_fit(ObjectFit::Contain),
                     )
                 })

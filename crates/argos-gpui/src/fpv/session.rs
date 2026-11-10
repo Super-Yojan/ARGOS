@@ -543,17 +543,18 @@ async fn accept_offer(
             decoder.set_mime(&mime);
             view.lock().unwrap().codec = decoder.codec_name().to_string();
             let ssrc = track.ssrc();
-            let _ = peer_pli
-                .write_rtcp(&[Box::new(
-                    webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
-                        sender_ssrc: 0,
-                        media_ssrc: ssrc,
-                    },
-                )])
-                .await;
+            request_keyframe(&peer_pli, ssrc).await;
             let mut rates = Rates::default();
-            if let Err(error) =
-                read_track(&track, &mut decoder, &view, &mut rates, &cancel, &reader_stop).await
+            if let Err(error) = read_track(
+                &track,
+                &mut decoder,
+                &view,
+                &mut rates,
+                &cancel,
+                &reader_stop,
+                &peer_pli,
+            )
+            .await
             {
                 view.lock().unwrap().detail = error;
             }
@@ -666,6 +667,61 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Ask the phone for a keyframe (RTCP picture loss indication).
+async fn request_keyframe(peer: &RTCPeerConnection, ssrc: u32) {
+    let _ = peer
+        .write_rtcp(&[Box::new(
+            webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
+                sender_ssrc: 0,
+                media_ssrc: ssrc,
+            },
+        )])
+        .await;
+}
+
+/// When to ask the phone for a fresh keyframe.
+///
+/// The phone's encoder sends a keyframe only at the start, on a resolution
+/// change, or when asked. A lost packet breaks every picture after it, so
+/// without asking the video freezes until the phone happens to send one
+/// (log 8540ee3d: OpenH264 errors at 37 s, frozen until Stop at 47 s while
+/// bytes kept arriving). Ask on a decode error, and when packets arrive but
+/// no picture has come for [`KEYFRAME_STALL`]; at most every [`KEYFRAME_EVERY`].
+#[derive(Debug)]
+pub(crate) struct KeyframeAsk {
+    last_frame: Instant,
+    last_ask: Option<Instant>,
+}
+
+pub(crate) const KEYFRAME_STALL: Duration = Duration::from_millis(1000);
+pub(crate) const KEYFRAME_EVERY: Duration = Duration::from_millis(1000);
+
+impl KeyframeAsk {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self {
+            last_frame: now,
+            last_ask: None,
+        }
+    }
+
+    pub(crate) fn frame(&mut self, now: Instant) {
+        self.last_frame = now;
+    }
+
+    /// A decode error or a packet with no picture: whether to ask now.
+    pub(crate) fn should_ask(&mut self, now: Instant, decode_error: bool) -> bool {
+        let stalled = now.saturating_duration_since(self.last_frame) >= KEYFRAME_STALL;
+        let spaced = self
+            .last_ask
+            .is_none_or(|at| now.saturating_duration_since(at) >= KEYFRAME_EVERY);
+        let ask = (decode_error || stalled) && spaced;
+        if ask {
+            self.last_ask = Some(now);
+        }
+        ask
+    }
+}
+
 async fn read_track(
     track: &webrtc::track::track_remote::TrackRemote,
     decoder: &mut VideoDecoder,
@@ -673,8 +729,11 @@ async fn read_track(
     rates: &mut Rates,
     cancel: &AtomicBool,
     reader_stop: &AtomicBool,
+    peer: &RTCPeerConnection,
 ) -> Result<(), String> {
     let mut buffer = vec![0u8; 1500];
+    let mut ask = KeyframeAsk::new(Instant::now());
+    let mut recovering = false;
     loop {
         if cancel.load(Ordering::Relaxed) || reader_stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -700,12 +759,30 @@ async fn read_track(
             &packet.payload,
         ) {
             Ok(Some(frame)) => {
+                ask.frame(Instant::now());
                 rates.add_frame();
                 store_frame(view, frame, rates);
+                if std::mem::take(&mut recovering) {
+                    view.lock().unwrap().detail = "Receiving video".into();
+                }
             }
-            Ok(None) => {}
+            Ok(None) => {
+                if ask.should_ask(Instant::now(), false) {
+                    request_keyframe(peer, track.ssrc()).await;
+                }
+            }
             Err(error) => {
-                view.lock().unwrap().detail = error;
+                // Broken references: start the decoder over and ask for a
+                // keyframe instead of failing every later picture.
+                decoder.reset_h264()?;
+                if !recovering {
+                    recovering = true;
+                    view.lock().unwrap().detail =
+                        format!("Picture lost, asking the phone for a new one ({error})");
+                }
+                if ask.should_ask(Instant::now(), true) {
+                    request_keyframe(peer, track.ssrc()).await;
+                }
             }
         }
     }
