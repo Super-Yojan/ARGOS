@@ -1,37 +1,30 @@
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarToggleButton,
 };
 use gpui_kit::component::{ActiveTheme, IconName, h_flex, v_flex};
 use gpui_kit::*;
 
-struct MessageStore {
-    count: usize,
-}
+mod components;
+mod llm;
+use components::chat::AgentChat;
 
 struct HelloWorld {
-    store: Entity<MessageStore>,
+    chat: Entity<AgentChat>,
     collapsed: bool,
-    _subscription: Subscription,
 }
 
 impl HelloWorld {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let store = cx.new(|_| MessageStore { count: 0 });
-        let _subscription = cx.observe(&store, |_, _, cx| cx.notify());
-
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let chat = cx.new(|cx| AgentChat::new(window, cx));
         Self {
-            store,
+            chat,
             collapsed: false,
-            _subscription,
         }
     }
 }
 
 impl Render for HelloWorld {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let count = self.store.read(cx).count;
-
         let sidebar = Sidebar::new("sidebar")
             .collapsed(self.collapsed)
             .header(SidebarHeader::new().child("ARGOS"))
@@ -65,24 +58,7 @@ impl Render for HelloWorld {
                             })),
                     ),
             )
-            .child(
-                h_flex()
-                    .p_4()
-                    .gap_2()
-                    .items_center()
-                    .child(format!("Message: {count}"))
-                    .child(
-                        Button::new("add")
-                            .primary()
-                            .label("Add")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.store.update(cx, |store, cx| {
-                                    store.count += 1;
-                                    cx.notify();
-                                })
-                            })),
-                    ),
-            );
+            .child(div().flex_1().min_h_0().child(self.chat.clone()));
 
         // Sidebar on the left, content filling the rest of the window.
         h_flex()
@@ -97,8 +73,8 @@ fn main() {
     application().with_assets(assets::Assets).run(|cx| {
         init(cx);
 
-        open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(HelloWorld::new)
+        open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| HelloWorld::new(window, cx))
         })
         .expect("Failed to open window");
     });

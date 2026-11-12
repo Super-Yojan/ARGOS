@@ -6,6 +6,7 @@ members = [
     "crates/argos-ffi",
     "crates/terra-map",
     "crates/argos-gpui",
+    "crates/argos-experiment",
     "spikes/unity-dashboard/native/argos-unity-bridge",
 ]
 [workspace.package]
