@@ -12,7 +12,9 @@ pub fn invalid(message: &str) -> Error {
 }
 pub const MAX_STATE_BYTES: usize = 65_536;
 pub const STALE_SECONDS: f64 = 2.5; // Legacy/manual authority freshness; never extend for teleoperation.
-pub const SUPERVISION_STALE_SECONDS: f64 = terra_types::timing::REMOTE_AUTHORITY_CACHE_SECONDS;
+/// Matches the rover's remote-authority cache (`REMOTE_AUTHORITY_CACHE_SECONDS` in
+/// Terra's terra-transport, private there): supervision older than this is gone on the rover too.
+pub const SUPERVISION_STALE_SECONDS: f64 = 90.0;
 pub const GOAL_ACK_SECONDS: f64 = 150.0;
 #[derive(Clone, Debug)]
 pub struct Topics {

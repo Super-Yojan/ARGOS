@@ -282,6 +282,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "terra-runtime",
  "terra-types",
  "thiserror 2.0.21",
 ]
@@ -11580,6 +11581,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "terra-autonomy"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "terra-exploration",
+ "terra-mapping",
+ "terra-navigation",
+ "terra-types",
+ "terra-waypoint",
+]
+
+[[package]]
+name = "terra-control"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "terra-state",
+ "terra-types",
+]
+
+[[package]]
+name = "terra-exploration"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "terra-mapping",
+ "terra-navigation",
+ "terra-types",
+]
+
+[[package]]
 name = "terra-map"
 version = "0.1.0"
 dependencies = [
@@ -11601,6 +11634,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "terra-mapping"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "terra-types",
+]
+
+[[package]]
+name = "terra-navigation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "terra-mapping",
+ "terra-types",
+]
+
+[[package]]
 name = "terra-observability"
 version = "0.1.0"
 dependencies = [
@@ -11613,11 +11664,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "terra-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "terra-autonomy",
+ "terra-control",
+ "terra-mapping",
+ "terra-navigation",
+ "terra-state",
+ "terra-types",
+ "terra-waypoint",
+]
+
+[[package]]
+name = "terra-state"
+version = "0.1.0"
+dependencies = [
+ "terra-types",
+]
+
+[[package]]
 name = "terra-types"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "terra-waypoint"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "terra-types",
 ]
 
 [[package]]

@@ -52,7 +52,7 @@ pub use hardware::*;
 mod reporting;
 pub use reporting::*;
 
-pub use terra_types::connectivity_policy::{ConnectivityPolicySettings, RouterLossPolicy};
+pub use terra_runtime::connectivity::{ConnectivityPolicySettings, RouterLossPolicy};
 mod runtime;
 pub use runtime::*;
 pub mod point_capture;
