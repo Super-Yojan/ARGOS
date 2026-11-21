@@ -6,8 +6,8 @@ edition.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-terra-types = { path = "../../../Terra/crates/terra-types" }
-terra-runtime = { path = "../../../Terra/crates/terra-runtime" }
+# terra-types = { path = "../../../Terra/crates/terra-types" }
+# terra-runtime = { path = "../../../Terra/crates/terra-runtime" }
 
 [[test]]
 name = "alignment"

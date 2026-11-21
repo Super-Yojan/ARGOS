@@ -5,7 +5,7 @@ members = [
     "crates/argos-zenoh",
     "crates/argos-ffi",
     "crates/terra-map",
-    "crates/argos-gpui",
+    # "crates/argos-gpui",
     "crates/argos-experiment",
     "spikes/unity-dashboard/native/argos-unity-bridge",
 ]
@@ -27,6 +27,6 @@ image = "0.25"
 smallvec = "1"
 # `../Terra` is the observability pin (`checkout-observability.sh`) and does not
 # contain this crate. Repoint at Terra main, or the sibling path, after PR 54 merges.
-fpv-signaling = { git = "https://github.com/Super-Yojan/Terra.git", rev = "309042d518a918247b38fb0c004283a967447dcd" }
+# fpv-signaling = { git = "https://github.com/Super-Yojan/Terra.git", rev = "309042d518a918247b38fb0c004283a967447dcd" }
 [profile.dev]
 debug = 0

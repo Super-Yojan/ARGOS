@@ -7,17 +7,29 @@ use gpui_kit::*;
 mod components;
 mod llm;
 use components::chat::AgentChat;
+use components::map::RoverMap;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Map,
+    Chat,
+}
 
 struct HelloWorld {
+    map: Entity<RoverMap>,
     chat: Entity<AgentChat>,
+    page: Page,
     collapsed: bool,
 }
 
 impl HelloWorld {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let map = cx.new(|cx| RoverMap::new(cx));
         let chat = cx.new(|cx| AgentChat::new(window, cx));
         Self {
+            map,
             chat,
+            page: Page::Map,
             collapsed: false,
         }
     }
@@ -32,13 +44,30 @@ impl Render for HelloWorld {
                 SidebarGroup::new("Menu").child(
                     SidebarMenu::new()
                         .child(
-                            SidebarMenuItem::new("Home")
+                            SidebarMenuItem::new("Map")
                                 .icon(IconName::LayoutDashboard)
-                                .active(true),
+                                .active(self.page == Page::Map)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.page = Page::Map;
+                                    cx.notify();
+                                })),
                         )
-                        .child(SidebarMenuItem::new("Settings").icon(IconName::Settings)),
+                        .child(
+                            SidebarMenuItem::new("Chat")
+                                .icon(IconName::Settings)
+                                .active(self.page == Page::Chat)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.page = Page::Chat;
+                                    cx.notify();
+                                })),
+                        ),
                 ),
             );
+
+        let active_view = match self.page {
+            Page::Map => div().flex_1().min_h_0().child(self.map.clone()),
+            Page::Chat => div().flex_1().min_h_0().child(self.chat.clone()),
+        };
 
         let content = v_flex()
             .flex_1()
@@ -58,7 +87,7 @@ impl Render for HelloWorld {
                             })),
                     ),
             )
-            .child(div().flex_1().min_h_0().child(self.chat.clone()));
+            .child(active_view);
 
         // Sidebar on the left, content filling the rest of the window.
         h_flex()

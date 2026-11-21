@@ -1,4 +1,5 @@
 use argos_zenoh::router::Router;
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     zenoh::init_log_from_env_or("info");
     terra_observability::initialize_runtime("router");

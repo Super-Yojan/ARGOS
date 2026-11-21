@@ -8,4 +8,5 @@ anyhow = "1.0.104"
 cpal = "0.15"
 gpui-kit = "=0.8.0"
 rig = "0.46.0"
+terra-comms = { path = "../../../Terra/crates/terra-comms" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
