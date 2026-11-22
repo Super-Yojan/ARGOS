@@ -1,4 +1,0 @@
-[bindings.swift]
-module_name = "ArgosCore"
-ffi_module_name = "ArgosCoreFFI"
-generate_module_map = true

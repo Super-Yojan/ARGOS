@@ -8,16 +8,19 @@ mod components;
 mod llm;
 use components::chat::AgentChat;
 use components::map::RoverMap;
+use components::teleop::Teleop;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Map,
     Chat,
+    Teleop,
 }
 
 struct HelloWorld {
     map: Entity<RoverMap>,
     chat: Entity<AgentChat>,
+    teleop: Entity<Teleop>,
     page: Page,
     collapsed: bool,
 }
@@ -26,9 +29,11 @@ impl HelloWorld {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let map = cx.new(|cx| RoverMap::new(cx));
         let chat = cx.new(|cx| AgentChat::new(window, cx));
+        let teleop = cx.new(|cx| Teleop::new(cx));
         Self {
             map,
             chat,
+            teleop,
             page: Page::Map,
             collapsed: false,
         }
@@ -60,6 +65,15 @@ impl Render for HelloWorld {
                                     this.page = Page::Chat;
                                     cx.notify();
                                 })),
+                        )
+                        .child(
+                            SidebarMenuItem::new("Teleop")
+                                .icon(IconName::Bot)
+                                .active(self.page == Page::Teleop)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.page = Page::Teleop;
+                                    cx.notify();
+                                })),
                         ),
                 ),
             );
@@ -67,6 +81,7 @@ impl Render for HelloWorld {
         let active_view = match self.page {
             Page::Map => div().flex_1().min_h_0().child(self.map.clone()),
             Page::Chat => div().flex_1().min_h_0().child(self.chat.clone()),
+            Page::Teleop => div().flex_1().min_h_0().child(self.teleop.clone()),
         };
 
         let content = v_flex()
