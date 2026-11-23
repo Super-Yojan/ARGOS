@@ -7,12 +7,19 @@ edition.workspace = true
 anyhow = "1.0.104"
 bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.15"
+fpv-signaling = { path = "../../../Terra/crates/fpv-signaling" }
 gilrs = "0.11"
 gpui-kit = "=0.8.0"
 image = { workspace = true }
+openh264 = { workspace = true }
 pollster = "0.4"
 rig = "0.46.0"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 smallvec = { workspace = true }
 terra-comms = { path = "../../../Terra/crates/terra-comms" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid = { workspace = true }
+webrtc = { workspace = true }
 wgpu = "24"

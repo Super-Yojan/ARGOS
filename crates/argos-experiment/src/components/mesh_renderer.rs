@@ -8,9 +8,40 @@ use smallvec::smallvec;
 use terra_comms::MeshChunk;
 use wgpu::util::DeviceExt;
 
+/// How `MeshRenderer` colours mesh triangles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeshColorMode {
+    /// Use per-vertex RGB from `MeshChunk.colors` when available, falling back
+    /// to `ARMeshClassification` colours when `colors` is empty.
+    #[default]
+    VertexColor,
+    /// Always colour faces by `ARMeshClassification`.
+    Classification,
+}
+
+/// Convert an 8-bit sRGB channel `[0, 255]` to linear light `[0.0, 1.0]`
+/// for the `Bgra8UnormSrgb` render target.
+fn srgb_u8_to_linear(channel: u8) -> f32 {
+    let s = channel as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn srgb_rgb_to_linear(rgb: [u8; 3]) -> [f32; 3] {
+    [
+        srgb_u8_to_linear(rgb[0]),
+        srgb_u8_to_linear(rgb[1]),
+        srgb_u8_to_linear(rgb[2]),
+    ]
+}
+
 /// One vertex sent to the GPU.
 /// Each triangle is expanded into 3 vertices so every face gets its own crisp
-/// flat surface normal and `ARMeshClassification` colour.
+/// flat surface normal, plus either per-vertex camera colour (`MeshChunk.colors`)
+/// or `ARMeshClassification` colour.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct MeshVertex {
@@ -102,6 +133,37 @@ impl OrbitCamera {
     }
 }
 
+/// A rover to draw in the scene: where it is and how to colour it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoverMarker {
+    /// World frame, metres. The rover stands on the ground (z = 0).
+    pub position: [f32; 2],
+    /// Radians, counter-clockwise from +X.
+    pub yaw: f32,
+    /// Physical rover body length (forward, m) and width (left-right, m).
+    pub length: f32,
+    pub width: f32,
+    pub color: [f32; 3],
+}
+
+/// The marker starts slightly above the ground plane, metres.
+const ROVER_BOTTOM_M: f32 = 0.01;
+
+/// A planned path to draw in the 3D scene as a flat ribbon slightly above the floor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathOverlay {
+    /// Waypoints in the world frame, metres (`[x, y]`).
+    pub points: Vec<[f32; 2]>,
+    pub color: [f32; 3],
+}
+
+/// Height of the planned-path ribbon above the ground plane, metres.
+const PATH_Z_M: f32 = 0.04;
+/// Half-width of the planned-path ribbon, metres.
+const PATH_HALF_WIDTH_M: f32 = 0.035;
+/// Radius of the endpoint disc at the end of a planned path, metres.
+const PATH_END_RADIUS_M: f32 = 0.09;
+
 struct GpuChunk {
     buffer: wgpu::Buffer,
     vertex_count: u32,
@@ -127,6 +189,10 @@ pub struct MeshRenderer {
     grid_buffer: wgpu::Buffer,
     grid_vertex_count: u32,
     chunks: HashMap<(u64, String), GpuChunk>,
+    /// One buffer with every rover marker; `None` when there are none.
+    rovers: Option<GpuChunk>,
+    /// One buffer with every rover's planned path ribbon; `None` when empty.
+    paths: Option<GpuChunk>,
 }
 
 impl MeshRenderer {
@@ -254,6 +320,8 @@ impl MeshRenderer {
             grid_buffer,
             grid_vertex_count,
             chunks: HashMap::new(),
+            rovers: None,
+            paths: None,
         })
     }
 
@@ -276,11 +344,20 @@ impl MeshRenderer {
 
     /// Upload or replace one `MeshChunk` on the GPU.
     /// Empty `vertices` / `indices` removes the chunk.
-    pub fn upsert_chunk(&mut self, key: (u64, String), chunk: &MeshChunk, hide_ceiling: bool) {
+    pub fn upsert_chunk(
+        &mut self,
+        key: (u64, String),
+        chunk: &MeshChunk,
+        hide_ceiling: bool,
+        color_mode: MeshColorMode,
+    ) {
         if chunk.vertices.is_empty() || chunk.indices.is_empty() {
             self.chunks.remove(&key);
             return;
         }
+
+        let has_vertex_colors =
+            color_mode == MeshColorMode::VertexColor && chunk.colors.len() == chunk.vertices.len();
 
         let mut verts = Vec::with_capacity(chunk.indices.len() * 3);
         for (face_i, &[i0, i1, i2]) in chunk.indices.iter().enumerate() {
@@ -296,10 +373,19 @@ impl MeshRenderer {
                 continue;
             };
             let normal = normalize(cross(sub(p1, p0), sub(p2, p0)));
-            let color = class_rgb(cls);
-            verts.push(MeshVertex { position: p0, normal, color });
-            verts.push(MeshVertex { position: p1, normal, color });
-            verts.push(MeshVertex { position: p2, normal, color });
+            let (c0, c1, c2) = if has_vertex_colors {
+                (
+                    srgb_rgb_to_linear(chunk.colors[i0 as usize]),
+                    srgb_rgb_to_linear(chunk.colors[i1 as usize]),
+                    srgb_rgb_to_linear(chunk.colors[i2 as usize]),
+                )
+            } else {
+                let c = class_rgb(cls);
+                (c, c, c)
+            };
+            verts.push(MeshVertex { position: p0, normal, color: c0 });
+            verts.push(MeshVertex { position: p1, normal, color: c1 });
+            verts.push(MeshVertex { position: p2, normal, color: c2 });
         }
 
         if verts.is_empty() {
@@ -323,12 +409,60 @@ impl MeshRenderer {
         );
     }
 
+    /// Replace the rover markers drawn in the scene.
+    pub fn set_rovers(&mut self, markers: &[RoverMarker]) {
+        let verts: Vec<MeshVertex> = markers.iter().flat_map(rover_triangles).collect();
+        if verts.is_empty() {
+            self.rovers = None;
+            return;
+        }
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rover-markers"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        self.rovers = Some(GpuChunk { buffer, vertex_count: verts.len() as u32 });
+    }
+
+    /// Replace the planned-path ribbons drawn in the scene.
+    pub fn set_paths(&mut self, paths: &[PathOverlay]) {
+        let verts: Vec<MeshVertex> = paths.iter().flat_map(path_triangles).collect();
+        if verts.is_empty() {
+            self.paths = None;
+            return;
+        }
+        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("planned-paths"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        self.paths = Some(GpuChunk { buffer, vertex_count: verts.len() as u32 });
+    }
+
     pub fn clear(&mut self) {
         self.chunks.clear();
     }
 
     /// Render all uploaded chunks from `camera` into a GPUI `RenderImage` (BGRA).
     pub fn render(&self, camera: &OrbitCamera) -> Arc<RenderImage> {
+        let pixels = self.render_bgra_pixels(camera);
+        let img = RgbaImage::from_raw(self.width, self.height, pixels)
+            .expect("dimensions match BGRA buffer");
+        Arc::new(RenderImage::new(smallvec![Frame::new(img)]))
+    }
+
+    /// Render all uploaded chunks from `camera` into a standard RGBA image
+    /// suitable for saving to PNG/JPEG on disk.
+    pub fn render_rgba(&self, camera: &OrbitCamera) -> RgbaImage {
+        let mut pixels = self.render_bgra_pixels(camera);
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        RgbaImage::from_raw(self.width, self.height, pixels)
+            .expect("dimensions match RGBA buffer")
+    }
+
+    fn render_bgra_pixels(&self, camera: &OrbitCamera) -> Vec<u8> {
         let uniform = CameraUniform {
             view_proj: camera.view_proj(self.width as f32 / self.height as f32),
         };
@@ -375,8 +509,8 @@ impl MeshRenderer {
             pass.set_vertex_buffer(0, self.grid_buffer.slice(..));
             pass.draw(0..self.grid_vertex_count, 0..1);
 
-            // All ARKit mesh chunks
-            for chunk in self.chunks.values() {
+            // All ARKit mesh chunks, then planned paths, then the rovers standing in them.
+            for chunk in self.chunks.values().chain(&self.paths).chain(&self.rovers) {
                 pass.set_vertex_buffer(0, chunk.buffer.slice(..));
                 pass.draw(0..chunk.vertex_count, 0..1);
             }
@@ -425,10 +559,7 @@ impl MeshRenderer {
         }
         drop(mapped);
         self.readback_buffer.unmap();
-
-        let img = RgbaImage::from_raw(self.width, self.height, pixels)
-            .expect("dimensions match BGRA buffer");
-        Arc::new(RenderImage::new(smallvec![Frame::new(img)]))
+        pixels
     }
 }
 
@@ -480,6 +611,110 @@ fn create_targets(
 
 /// RGB colour for `ARMeshClassification` (0=none, 1=wall, 2=floor, 3=ceiling,
 /// 4=table, 5=seat, 6=window, 7=door).
+/// The triangles of one rover marker: a pointed-nose prism matching the
+/// rover's real physical `length × width` turned to its heading.
+fn rover_triangles(marker: &RoverMarker) -> Vec<MeshVertex> {
+    let half_l = (marker.length * 0.5).max(0.05);
+    let half_w = (marker.width * 0.5).max(0.04);
+    let shoulder = half_l * 0.5;
+    let outline: [[f32; 2]; 5] = [
+        [-half_l, -half_w],
+        [shoulder, -half_w],
+        [half_l, 0.0],
+        [shoulder, half_w],
+        [-half_l, half_w],
+    ];
+    let top_z = (marker.width * 0.45).clamp(0.08, 0.28);
+
+    let (sin, cos) = marker.yaw.sin_cos();
+    let corner = |[forward, left]: [f32; 2], z: f32| {
+        [
+            marker.position[0] + forward * cos - left * sin,
+            marker.position[1] + forward * sin + left * cos,
+            z,
+        ]
+    };
+    let bottom: Vec<[f32; 3]> = outline.iter().map(|&point| corner(point, ROVER_BOTTOM_M)).collect();
+    let top: Vec<[f32; 3]> = outline.iter().map(|&point| corner(point, top_z)).collect();
+
+    let mut verts = Vec::new();
+    let mut triangle = |p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]| {
+        let normal = normalize(cross(sub(p1, p0), sub(p2, p0)));
+        for position in [p0, p1, p2] {
+            verts.push(MeshVertex { position, normal, color: marker.color });
+        }
+    };
+
+    // The lid: a fan from the first corner.
+    for i in 1..top.len() - 1 {
+        triangle(top[0], top[i], top[i + 1]);
+    }
+    // The walls: two triangles per edge of the outline.
+    for i in 0..top.len() {
+        let next = (i + 1) % top.len();
+        triangle(bottom[i], bottom[next], top[next]);
+        triangle(bottom[i], top[next], top[i]);
+    }
+    verts
+}
+
+/// The triangles of one planned path: a flat ribbon at [`PATH_Z_M`] with
+/// smooth disc joins at corners and a small endpoint disc at the destination.
+fn path_triangles(path: &PathOverlay) -> Vec<MeshVertex> {
+    if path.points.len() < 2 {
+        return Vec::new();
+    }
+    let normal = [0.0, 0.0, 1.0];
+    let color = path.color;
+    let mut verts = Vec::new();
+    let push_tri = |verts: &mut Vec<MeshVertex>, p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]| {
+        verts.push(MeshVertex { position: p0, normal, color });
+        verts.push(MeshVertex { position: p1, normal, color });
+        verts.push(MeshVertex { position: p2, normal, color });
+    };
+
+    for seg in path.points.windows(2) {
+        let [a, b] = [seg[0], seg[1]];
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let len = dx.hypot(dy);
+        if len < 1e-4 {
+            continue;
+        }
+        let px = -dy / len * PATH_HALF_WIDTH_M;
+        let py = dx / len * PATH_HALF_WIDTH_M;
+        let a_l = [a[0] + px, a[1] + py, PATH_Z_M];
+        let a_r = [a[0] - px, a[1] - py, PATH_Z_M];
+        let b_l = [b[0] + px, b[1] + py, PATH_Z_M];
+        let b_r = [b[0] - px, b[1] - py, PATH_Z_M];
+        push_tri(&mut verts, a_l, a_r, b_r);
+        push_tri(&mut verts, a_l, b_r, b_l);
+    }
+
+    if verts.is_empty() {
+        return verts;
+    }
+
+    let mut push_disc = |center: [f32; 2], radius: f32, z: f32, sides: usize| {
+        let c = [center[0], center[1], z];
+        for i in 0..sides {
+            let a0 = (i as f32 / sides as f32) * std::f32::consts::TAU;
+            let a1 = ((i + 1) as f32 / sides as f32) * std::f32::consts::TAU;
+            let p0 = [center[0] + radius * a0.cos(), center[1] + radius * a0.sin(), z];
+            let p1 = [center[0] + radius * a1.cos(), center[1] + radius * a1.sin(), z];
+            push_tri(&mut verts, c, p0, p1);
+        }
+    };
+
+    for &pt in &path.points[1..path.points.len() - 1] {
+        push_disc(pt, PATH_HALF_WIDTH_M, PATH_Z_M, 6);
+    }
+    if let Some(&last) = path.points.last() {
+        push_disc(last, PATH_END_RADIUS_M, PATH_Z_M + 0.002, 10);
+    }
+    verts
+}
+
 fn class_rgb(cls: u8) -> [f32; 3] {
     match cls {
         2 => [0.10, 0.72, 0.48], // floor: emerald
@@ -620,4 +855,29 @@ fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_triangles_handles_empty_and_multi_segment_paths() {
+        let color = [0.5, 0.6, 1.0];
+        assert!(path_triangles(&PathOverlay { points: vec![], color }).is_empty());
+        assert!(path_triangles(&PathOverlay { points: vec![[0.0, 0.0]], color }).is_empty());
+        assert!(path_triangles(&PathOverlay {
+            points: vec![[1.0, 1.0], [1.0, 1.0]],
+            color,
+        })
+        .is_empty());
+
+        let verts = path_triangles(&PathOverlay {
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            color,
+        });
+        // 2 segments (2 * 6 verts) + 1 interior 6-sided join disc (6 * 3 verts) + 1 10-sided end disc (10 * 3 verts)
+        assert_eq!(verts.len(), 12 + 18 + 30);
+        assert!(verts.iter().all(|v| v.position[2] >= PATH_Z_M));
+    }
 }

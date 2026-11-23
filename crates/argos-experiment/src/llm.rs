@@ -9,7 +9,6 @@ use std::sync::OnceLock;
 use rig::Agent;
 use rig::AgentBuilder;
 use rig::providers::openai::OpenAIConfig;
-use std::process;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:9931/v1";
 const DEFAULT_MODEL: &str = "LiquidAI/LFM3-Omni-2B-GGUF";
