@@ -27,7 +27,7 @@ pub enum ButtonLook {
     Disabled,
 }
 
-/// A button, 44 px tall. Add `.on_click(..)` to make it do something.
+/// A clean, compact button (34 px tall). Add `.on_click(..)` to make it do something.
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -35,49 +35,56 @@ pub fn button(
 ) -> Stateful<Div> {
     let button = div()
         .id(id)
-        .min_h(px(44.0))
+        .min_h(px(34.0))
         .px_3()
         .flex()
         .items_center()
         .justify_center()
         .rounded(px(8.0))
+        .text_size(px(13.0))
         .child(label.into());
 
     let button = match look {
         ButtonLook::Primary => button
             .bg(rgb(theme::BLUE))
             .text_color(rgb(theme::INK))
-            .font_weight(FontWeight::BOLD),
+            .font_weight(FontWeight::MEDIUM),
         ButtonLook::Outline => button
+            .bg(rgb(theme::PANEL_MUTED))
             .border_1()
             .border_color(rgb(theme::BORDER))
             .text_color(rgb(theme::TEXT)),
         ButtonLook::Stop => button
             .bg(rgb(theme::STOP))
             .text_color(rgb(theme::STOP_TEXT))
-            .font_weight(FontWeight::BOLD),
+            .font_weight(FontWeight::SEMIBOLD),
         ButtonLook::ToneFilled(tone) => button
             .bg(rgb(tone.fill))
             .text_color(rgb(tone.ink))
-            .font_weight(FontWeight::BOLD),
+            .font_weight(FontWeight::MEDIUM),
         ButtonLook::ToneOutline(tone) => button
+            .bg(rgb(theme::PANEL_MUTED))
             .border_1()
             .border_color(rgb(tone.accent))
             .text_color(rgb(tone.text)),
         ButtonLook::Disabled => button
+            .bg(rgb(theme::PANEL))
             .border_1()
-            .border_color(rgb(theme::BORDER))
+            .border_color(rgb(theme::BORDER_SUBTLE))
             .text_color(rgb(theme::TEXT_MUTED))
-            .opacity(0.6),
+            .opacity(0.55),
     };
 
     match look {
         ButtonLook::Disabled => button,
-        _ => button.cursor_pointer().hover(|style| style.opacity(0.85)),
+        ButtonLook::Outline | ButtonLook::ToneOutline(_) => button
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(theme::BORDER))),
+        _ => button.cursor_pointer().hover(|style| style.opacity(0.88)),
     }
 }
 
-/// One half of an on/off pair, as in "Normal | Turbo".
+/// One half of a compact segmented control, as in "Supervise | Agent".
 pub fn segment(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -85,40 +92,47 @@ pub fn segment(
 ) -> Stateful<Div> {
     let segment = div()
         .id(id)
-        .min_h(px(44.0))
+        .min_h(px(26.0))
         .px_3()
+        .py(px(3.0))
         .flex()
         .flex_1()
         .items_center()
         .justify_center()
+        .rounded(px(6.0))
+        .text_size(px(12.0))
         .cursor_pointer()
         .child(label.into());
     if selected {
         segment
-            .bg(rgb(theme::BLUE_BG))
-            .text_color(rgb(theme::BLUE_TEXT))
+            .bg(rgb(theme::BORDER))
+            .text_color(rgb(theme::TEXT))
             .font_weight(FontWeight::SEMIBOLD)
     } else {
-        segment.text_color(rgb(theme::TEXT_MUTED))
+        segment
+            .text_color(rgb(theme::TEXT_MUTED))
+            .hover(|style| style.text_color(rgb(theme::TEXT)))
     }
 }
 
-/// The frame around a row of [`segment`]s.
+/// The dark recessed track around a row of [`segment`]s.
 pub fn segmented() -> Div {
     h_flex()
+        .p(px(2.0))
+        .gap(px(2.0))
+        .bg(rgb(theme::BG))
         .border_1()
         .border_color(rgb(theme::BORDER))
         .rounded(px(8.0))
-        .overflow_hidden()
 }
 
-/// A bordered box that groups related things.
+/// A crisp framed card that groups related things.
 pub fn panel() -> Div {
     v_flex()
-        .bg(rgb(theme::PANEL))
+        .bg(rgb(theme::PANEL_MUTED))
         .border_1()
         .border_color(rgb(theme::BORDER))
-        .rounded(px(10.0))
+        .rounded(px(8.0))
         .p_3()
         .gap_2()
 }
@@ -128,7 +142,8 @@ pub fn heading(text: impl Into<SharedString>) -> Div {
     div()
         .font_family(theme::FONT_HEADING)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_size(px(16.0))
+        .text_size(px(13.5))
+        .text_color(rgb(theme::TEXT))
         .child(text.into())
 }
 

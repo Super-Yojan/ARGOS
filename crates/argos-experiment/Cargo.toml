@@ -19,6 +19,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = { workspace = true }
 terra-comms = { path = "../../../Terra/crates/terra-comms" }
+terra-map = { path = "../terra-map" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 uuid = { workspace = true }
 webrtc = { workspace = true }

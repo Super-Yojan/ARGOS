@@ -2,7 +2,6 @@
 //! urgent first. The number on a card matches the number on the map.
 
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::widgets::{ButtonLook, clock, mono};
@@ -71,29 +70,33 @@ fn card(
 
     let title = h_flex()
         .justify_between()
-        .items_start()
+        .items_center()
         .gap_2()
         .child(
-            // In a narrow column the name wraps; the clock keeps its place.
             h_flex()
                 .flex_1()
                 .min_w_0()
                 .flex_wrap()
+                .items_center()
                 .gap_x_2()
                 .font_family(theme::FONT_HEADING)
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(16.0))
+                .text_size(px(13.5))
                 .child(
                     mono(place.to_string())
-                        .text_size(px(16.0))
-                        .text_color(rgb(tone.fill)),
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(tone.fill))
+                        .text_size(px(11.0))
+                        .text_color(rgb(tone.ink)),
                 )
                 .child(format!("{} · {}", rover.name(), rover.headline())),
         )
         .child(
             mono(clock(rover.waiting))
                 .flex_none()
-                .text_size(px(16.0))
+                .text_size(px(12.0))
                 .text_color(rgb(tone.text)),
         );
 
@@ -123,24 +126,19 @@ fn card(
     v_flex()
         .id(("help-card", rover.id as usize))
         .gap_2()
-        .p_3()
-        .rounded(px(10.0))
+        .p(px(10.0))
+        .rounded(px(6.0))
         .bg(rgb(tone.bg))
+        .border_1()
+        .border_color(rgb(theme::BORDER))
+        .border_l(px(if stopped { 3.5 } else { 3.0 }))
         .border_color(rgb(tone.accent))
-        // A stopped rover gets the heavier frame.
-        .map(|card| {
-            if stopped {
-                card.border_2()
-            } else {
-                card.border_1()
-            }
-        })
         .cursor_pointer()
         .on_click(move |_, window, cx| on_action(&focus, window, cx))
         .child(title)
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(px(12.0))
                 .text_color(rgb(tone.text))
                 .child(rover.explanation()),
         )

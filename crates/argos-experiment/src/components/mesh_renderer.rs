@@ -483,9 +483,9 @@ impl MeshRenderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.015,
-                            g: 0.022,
-                            b: 0.035,
+                            r: 0.012,
+                            g: 0.014,
+                            b: 0.018,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,

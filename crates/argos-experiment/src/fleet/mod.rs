@@ -24,19 +24,21 @@ mod rover;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use terra_comms::{
-    BaseLink, Capabilities, CaptureWorldMap, CommsConfig, Depth, Estop, GateCommand, Goal,
-    LoadWorldMap, Occupancy, Params, PlannedPath, Pose, RemoteCmd, RemoteState, Status,
-    Subscription, Task, TaskAction, TaskCommand, TaskStatus, Teleop, WorldMap, WorldMapRequest,
+    BaseLink, Capabilities, CommsConfig, Depth, Estop, GateCommand, Goal, Occupancy, Params,
+    PlannedPath, Pose, RemoteCmd, RemoteState, Status, Task, TaskAction, TaskCommand, TaskStatus,
+    Teleop, WorldMap,
 };
 
 pub use level::Level;
-pub use rover::{Activity, Request, Rover, RoverAction, Urgency, help_queue};
+pub use rover::{
+    Activity, Request, Rover, RoverAction, Urgency, haversine_distance_m, help_queue,
+    world_to_lat_lon,
+};
 use rover::Reports;
 
 /// How close counts as "arrived" for a goal clicked on the map, metres.
@@ -45,36 +47,6 @@ const GOAL_TOLERANCE: f64 = 0.25;
 #[derive(Clone)]
 pub struct Fleet {
     inner: Rc<Inner>,
-}
-
-/// Latest saved `ARWorldMap` archive shared across the fleet so multiple
-/// rovers can relocalize into one world coordinate origin.
-#[derive(Clone)]
-struct SharedWorldMap {
-    source_rover: Option<u64>,
-    sequence: u64,
-    data: Vec<u8>,
-}
-
-fn shared_world_map_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config/argos/shared_world_map.arworldmap"))
-}
-
-/// Minimum size/feature count for a saved `ARWorldMap` to be relocalizable.
-/// Sparse maps (e.g. captured before scanning the room) trap joining rovers in
-/// ARKit's `.limited(.relocalizing)` state forever.
-const MIN_SHARED_MAP_BYTES: usize = 100_000;
-const MIN_SHARED_MAP_POINTS: usize = 100;
-
-fn save_world_map_to_disk(data: &[u8]) {
-    let Some(path) = shared_world_map_path() else { return };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(err) = std::fs::write(&path, data) {
-        eprintln!("[WorldMap] failed to save {}: {err}", path.display());
-    }
 }
 
 struct Inner {
@@ -91,10 +63,6 @@ struct Inner {
     goal_levels: RefCell<BTreeMap<u64, Level>>,
     /// Per rover: operator-chosen controller overrides for each autonomy level.
     level_controllers: RefCell<BTreeMap<u64, BTreeMap<Level, String>>>,
-    /// Shared `ARWorldMap` cached from the latest rover upload (or disk).
-    shared_world_map: Arc<Mutex<Option<SharedWorldMap>>>,
-    /// Keeps the `WorldMap` and `WorldMapRequest` subscriptions alive.
-    _world_map_subs: Vec<Subscription>,
 }
 
 pub enum LinkState {
@@ -126,73 +94,6 @@ impl Fleet {
             Err(error) => (None, Some(error.to_string())),
         };
 
-        // Start each ARGOS session with no cached shared map so moving to a new
-        // room never traps rovers trying to relocalize against a previous venue.
-        let shared_world_map: Arc<Mutex<Option<SharedWorldMap>>> = Arc::new(Mutex::new(None));
-        let mut world_map_subs = Vec::new();
-        if let Some(base) = &base {
-            // Cache every relocalizable ARWorldMap uploaded by any rover and persist it.
-            let cache = shared_world_map.clone();
-            world_map_subs.push(base.subscribe::<WorldMap>(move |rover_id, map| {
-                if map.data.len() < MIN_SHARED_MAP_BYTES
-                    || map.points.len() < MIN_SHARED_MAP_POINTS
-                {
-                    eprintln!(
-                        "[WorldMap] ignoring sparse map from Rover {rover_id} ({} pts, {} bytes) — scan more of the room first",
-                        map.points.len(),
-                        map.data.len(),
-                    );
-                    return;
-                }
-                eprintln!(
-                    "[WorldMap] cached shared map from Rover {rover_id} (seq={}, {} pts, {:.2} MB)",
-                    map.sequence,
-                    map.points.len(),
-                    map.data.len() as f64 / (1024.0 * 1024.0),
-                );
-                save_world_map_to_disk(&map.data);
-                if let Ok(mut guard) = cache.lock() {
-                    let seq = guard.as_ref().map_or(1, |prev| prev.sequence + 1);
-                    *guard = Some(SharedWorldMap {
-                        source_rover: Some(rover_id),
-                        sequence: seq,
-                        data: map.data,
-                    });
-                }
-            }));
-
-            // Automatically answer any rover's WorldMapRequest with the saved map.
-            let cache = shared_world_map.clone();
-            let base_reply = base.clone();
-            world_map_subs.push(base.subscribe::<WorldMapRequest>(move |rover_id, req| {
-                let saved = cache.lock().ok().and_then(|g| g.clone());
-                match saved {
-                    Some(map) if req.auto && map.source_rover == Some(rover_id) => {
-                        eprintln!(
-                            "[WorldMap] skipping auto-sync for Rover {rover_id} (it captured the current map)"
-                        );
-                    }
-                    Some(map) => {
-                        eprintln!(
-                            "[WorldMap] serving saved map to Rover {rover_id} ({:.2} MB, auto={}, source={:?})",
-                            map.data.len() as f64 / (1024.0 * 1024.0),
-                            req.auto,
-                            map.source_rover,
-                        );
-                        base_reply.send(
-                            rover_id,
-                            &LoadWorldMap { t: now(), sequence: map.sequence, data: map.data },
-                        );
-                    }
-                    None => {
-                        eprintln!(
-                            "[WorldMap] Rover {rover_id} requested shared map, but none is saved yet"
-                        );
-                    }
-                }
-            }));
-        }
-
         Self {
             inner: Rc::new(Inner {
                 endpoint,
@@ -202,8 +103,6 @@ impl Fleet {
                 waiting: RefCell::default(),
                 goal_levels: RefCell::default(),
                 level_controllers: RefCell::default(),
-                shared_world_map,
-                _world_map_subs: world_map_subs,
             }),
         }
     }
@@ -345,12 +244,6 @@ impl Fleet {
                 self.set_level_controller(rover_id, level, controller)
             }
             RoverAction::SetGate(open) => self.set_gate(rover_id, open),
-            RoverAction::SyncWorldMap => {
-                self.sync_world_map(rover_id);
-            }
-            RoverAction::CaptureWorldMap => {
-                self.capture_world_map(rover_id);
-            }
             RoverAction::Focus | RoverAction::TakeOver | RoverAction::SetGoal => {}
         }
     }
@@ -363,9 +256,29 @@ impl Fleet {
         self.send_task(rover_id, new_task_id(), goal, rover.goal_level);
     }
 
+    /// Send the rover to a WGS84 geographic coordinate `(latitude, longitude)`,
+    /// at its goal level, enforcing `tolerance >= gps_anchor.accuracy`.
+    /// Returns `Err(reason)` without sending if the rover cannot accept a GPS goal.
+    pub fn go_to_gps(&self, rover_id: u64, latitude: f64, longitude: f64) -> Result<(), &'static str> {
+        let Some(rover) = self.rover(rover_id) else {
+            return Err("Rover is not connected");
+        };
+        rover.supports_gps_goal()?;
+        let tolerance = rover.gps_goal_tolerance();
+        let goal = Goal::Gps {
+            latitude,
+            longitude,
+            heading: None,
+            tolerance,
+        };
+        self.send_task(rover_id, new_task_id(), goal, rover.goal_level);
+        Ok(())
+    }
+
     /// Drive the rover's goals at `level` from now on. If it is on its way
-    /// to a goal, it switches at once and keeps the goal. Levels that take
-    /// no goals are ignored: the drive view handles those.
+    /// to a goal, it switches at once and keeps the goal (both local `Pose`
+    /// and geographic `Gps` goals). Levels that take no goals are ignored:
+    /// the drive view handles those.
     fn set_goal_level(&self, rover_id: u64, level: Level) {
         if !level.takes_goals() {
             return;
@@ -381,7 +294,12 @@ impl Fleet {
             .get(&rover_id)
             .cloned()
             .unwrap_or_default();
-        if let Some(TaskStatus { task_id: Some(task_id), goal: goal @ Goal::Pose { .. }, controller, .. }) = current
+        if let Some(TaskStatus {
+            task_id: Some(task_id),
+            goal: goal @ (Goal::Pose { .. } | Goal::Gps { .. }),
+            controller,
+            ..
+        }) = current
             && Level::of_controller_with(&controller, true, &overrides, Some(level)).takes_goals()
         {
             self.send_task(rover_id, task_id, goal, level);
@@ -441,32 +359,6 @@ impl Fleet {
     pub fn set_gate(&self, rover_id: u64, open: bool) {
         if let Some(base) = &self.inner.base {
             base.send(rover_id, &GateCommand { t: now(), open });
-        }
-    }
-
-    /// Push the base station's saved shared `ARWorldMap` to `rover_id` so it
-    /// relocalizes into the fleet's shared world coordinate origin.
-    pub fn sync_world_map(&self, rover_id: u64) -> bool {
-        let Some(base) = &self.inner.base else { return false };
-        let saved = self.inner.shared_world_map.lock().ok().and_then(|g| g.clone());
-        let Some(map) = saved else {
-            eprintln!("[WorldMap] cannot sync Rover {rover_id}: no shared map saved yet");
-            return false;
-        };
-        eprintln!(
-            "[WorldMap] pushing shared map to Rover {rover_id} ({:.2} MB)",
-            map.data.len() as f64 / (1024.0 * 1024.0),
-        );
-        base.send(rover_id, &LoadWorldMap { t: now(), sequence: map.sequence, data: map.data });
-        true
-    }
-
-    /// Ask `rover_id` to capture its current `ARWorldMap` and upload it as the
-    /// fleet's shared map.
-    pub fn capture_world_map(&self, rover_id: u64) {
-        if let Some(base) = &self.inner.base {
-            eprintln!("[WorldMap] requesting world map capture from Rover {rover_id}");
-            base.send(rover_id, &CaptureWorldMap { t: now() });
         }
     }
 

@@ -295,6 +295,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "terra-comms",
+ "terra-map",
  "tokio",
  "uuid",
  "webrtc",

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::h_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use terra_comms::{MeshChunk, Subscription as MeshSubscription};
 
@@ -363,41 +363,95 @@ impl Render for SceneView {
 
         let notice = self.notice.as_ref().map(|(msg, is_error, _)| {
             let color = if *is_error {
-                theme::RED.accent
+                theme::RED.text
             } else {
                 theme::GREEN
             };
             mono(msg.clone())
                 .absolute()
-                .left(px(10.0))
-                .top(px(30.0))
+                .left_2()
+                .top_2()
                 .px_2()
                 .py_1()
                 .rounded(px(6.0))
                 .border_1()
                 .border_color(rgb(theme::BORDER))
                 .bg(rgb(theme::PANEL))
+                .text_size(px(11.0))
                 .text_color(rgb(color))
         });
 
-        let overlay_button = |id: &'static str, label: &'static str| {
+        let header_button = |id: &'static str, label: &'static str| {
             mono(label)
                 .id(id)
-                .px_2()
-                .py_1()
-                .rounded(px(6.0))
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
                 .border_1()
                 .border_color(rgb(theme::BORDER))
-                .bg(rgb(theme::PANEL))
+                .bg(rgb(theme::PANEL_MUTED))
+                .text_size(px(10.5))
                 .text_color(rgb(theme::TEXT_MUTED))
                 .cursor_pointer()
+                .hover(|style| style.bg(rgb(theme::BORDER)).text_color(rgb(theme::TEXT)))
                 .occlude()
         };
 
-        div()
+        let header = h_flex()
+            .flex_none()
+            .justify_between()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py(px(5.0))
+            .bg(rgb(theme::PANEL))
+            .border_b_1()
+            .border_color(rgb(theme::BORDER_SUBTLE))
+            .child(
+                mono(status)
+                    .text_size(px(10.5))
+                    .text_color(rgb(status_color)),
+            )
+            .child(
+                h_flex()
+                    .gap(px(3.0))
+                    .child(
+                        header_button(
+                            "toggle-color-mode",
+                            match self.color_mode {
+                                MeshColorMode::VertexColor => "RGB",
+                                MeshColorMode::Classification => "Class",
+                            },
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_color_mode(cx))),
+                    )
+                    .child(
+                        header_button(
+                            "toggle-ceiling",
+                            if self.hide_ceiling { "Ceil" } else { "Ceil ✓" },
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_ceiling(cx))),
+                    )
+                    .child(
+                        header_button("clear-meshes", "Clear")
+                            .on_click(cx.listener(|this, _, _, cx| this.clear_meshes(cx))),
+                    )
+                    .child(
+                        header_button("reset-camera", "Reset")
+                            .on_click(cx.listener(|this, _, _, cx| this.reset_camera(cx))),
+                    )
+                    .child(
+                        header_button("save-snapshot", "Save")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_snapshot(cx))),
+                    ),
+            );
+
+        let canvas = div()
             .id("scene-view")
             .relative()
-            .size_full()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .overflow_hidden()
             .bg(rgb(theme::SCENE_BG))
             .cursor_grab()
@@ -412,54 +466,9 @@ impl Render for SceneView {
                     .clone()
                     .map(|frame| img(frame).size_full().object_fit(ObjectFit::Cover)),
             )
-            .child(
-                mono(status)
-                    .absolute()
-                    .left(px(10.0))
-                    .top_2()
-                    .text_color(rgb(status_color)),
-            )
-            .children(notice)
-            .child(
-                h_flex()
-                    .absolute()
-                    .right_2()
-                    .top_2()
-                    .gap_1()
-                    .child(
-                        overlay_button(
-                            "toggle-color-mode",
-                            match self.color_mode {
-                                MeshColorMode::VertexColor => "Color: RGB",
-                                MeshColorMode::Classification => "Color: Class",
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_color_mode(cx))),
-                    )
-                    .child(
-                        overlay_button(
-                            "toggle-ceiling",
-                            if self.hide_ceiling {
-                                "Ceiling off"
-                            } else {
-                                "Ceiling on"
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_ceiling(cx))),
-                    )
-                    .child(
-                        overlay_button("clear-meshes", "Clear mesh")
-                            .on_click(cx.listener(|this, _, _, cx| this.clear_meshes(cx))),
-                    )
-                    .child(
-                        overlay_button("reset-camera", "Reset")
-                            .on_click(cx.listener(|this, _, _, cx| this.reset_camera(cx))),
-                    )
-                    .child(
-                        overlay_button("save-snapshot", "Save")
-                            .on_click(cx.listener(|this, _, _, cx| this.save_snapshot(cx))),
-                    ),
-            )
+            .children(notice);
+
+        v_flex().size_full().child(header).child(canvas)
     }
 }
 

@@ -20,6 +20,7 @@ pub mod drive_controls;
 pub mod fleet_map;
 pub mod focus_panel;
 pub mod fpv_view;
+pub mod geo_map;
 pub mod help_queue;
 pub mod level_picker;
 pub mod mesh_renderer;

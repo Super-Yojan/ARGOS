@@ -57,9 +57,10 @@ impl RenderOnce for TopBar {
 
         let fleet = self.fleet;
         let stop_all = button("stop-all", "STOP ALL", ButtonLook::Stop)
-            .px(px(22.0))
+            .min_h(px(30.0))
+            .px(px(14.0))
             .font_family(theme::FONT_HEADING)
-            .text_size(px(16.0))
+            .text_size(px(12.5))
             .on_click(move |_, _, cx| {
                 fleet.stop_all();
                 cx.refresh_windows();
@@ -71,8 +72,8 @@ impl RenderOnce for TopBar {
             .items_center()
             .gap_3()
             .px_3()
-            .py_2()
-            .rounded(px(10.0))
+            .py(px(6.0))
+            .rounded(px(8.0))
             .border_1()
             .bg(rgb(theme::PANEL))
             .border_color(rgb(theme::BORDER))
@@ -80,11 +81,28 @@ impl RenderOnce for TopBar {
                 bar.bg(rgb(theme::BLUE_BG)).border_color(rgb(theme::BLUE))
             })
             .child(
-                div()
-                    .font_family(theme::FONT_HEADING)
-                    .font_weight(FontWeight::BOLD)
-                    .text_size(px(20.0))
-                    .child("ARGOS"),
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_family(theme::FONT_HEADING)
+                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(15.0))
+                            .text_color(rgb(theme::TEXT))
+                            .child("ARGOS"),
+                    )
+                    .child(
+                        mono("/")
+                            .text_color(rgb(theme::BORDER)),
+                    )
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_size(px(13.0))
+                            .text_color(rgb(theme::TEXT_MUTED))
+                            .child("Ops Deck"),
+                    ),
             )
             .child(summary)
             .child(div().flex_1())
@@ -117,8 +135,9 @@ fn fleet_summary(fleet: &Fleet) -> Div {
         .child(
             mono(link)
                 .px(px(10.0))
-                .py_1()
+                .py(px(3.0))
                 .rounded_full()
+                .bg(rgb(theme::PANEL_MUTED))
                 .border_1()
                 .border_color(rgb(theme::BORDER))
                 .text_color(rgb(link_color)),

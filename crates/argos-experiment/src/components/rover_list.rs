@@ -65,41 +65,60 @@ fn row(rover: &Rover) -> Stateful<Div> {
         _ => String::new(),
     };
     let running = matches!(rover.activity, Activity::Driving { .. });
+    let (badge_bg, badge_fg) = if running {
+        (theme::BLUE_BG, theme::BLUE_TEXT)
+    } else {
+        (0x13261d, theme::GREEN)
+    };
 
     h_flex()
         .id(("rover-row", rover.id as usize))
-        .min_h(px(44.0))
+        .min_h(px(40.0))
         .px(px(10.0))
+        .py(px(6.0))
         .gap_2()
         .items_center()
-        .rounded(px(8.0))
+        .rounded(px(6.0))
         .border_1()
         .border_color(rgb(theme::BORDER))
-        .bg(rgb(theme::PANEL))
+        .bg(rgb(theme::PANEL_MUTED))
         .cursor_pointer()
+        .hover(|style| style.border_color(rgb(theme::TEXT_MUTED)))
         .child(
-            div()
-                .w(px(76.0))
-                .flex_none()
-                .font_weight(FontWeight::BOLD)
-                .child(rover.name()),
-        )
-        .child(
-            mono(rover.level.code())
-                .w(px(36.0))
-                .flex_none()
-                .text_color(rgb(theme::BLUE_TEXT)),
-        )
-        .child(
-            div()
+            v_flex()
                 .flex_1()
-                .text_size(px(13.0))
-                .text_color(rgb(if running {
-                    theme::GREEN
-                } else {
-                    theme::TEXT_MUTED
-                }))
-                .child(rover.headline()),
+                .min_w_0()
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(px(13.0))
+                        .text_color(rgb(theme::TEXT))
+                        .child(rover.name()),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            mono(rover.level.code())
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::BLUE_TEXT)),
+                        )
+                        .when(!detail.is_empty(), |row| {
+                            row.child(
+                                mono(detail)
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::TEXT_MUTED)),
+                            )
+                        }),
+                ),
         )
-        .child(mono(detail).text_color(rgb(theme::TEXT_MUTED)))
+        .child(
+            mono(rover.headline())
+                .px(px(7.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .bg(rgb(badge_bg))
+                .text_size(px(10.5))
+                .text_color(rgb(badge_fg)),
+        )
 }

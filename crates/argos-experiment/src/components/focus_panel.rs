@@ -60,11 +60,20 @@ impl FocusPanel {
 
 impl RenderOnce for FocusPanel {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let column = v_flex().id("focus-panel").gap_3();
+        let column = v_flex().id("focus-panel");
         let Some(rover) = self.rover else {
-            return column.child(heading("Focus")).child(note(
-                "No rover in sight yet. Rovers appear here as soon as they connect.",
-            ));
+            return column
+                .child(
+                    h_flex()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(rgb(theme::BORDER_SUBTLE))
+                        .child(heading("Focus")),
+                )
+                .child(div().p_3().child(note(
+                    "No rover in sight yet. Rovers appear here as soon as they connect.",
+                )));
         };
 
         let frame_color = rover
@@ -72,9 +81,9 @@ impl RenderOnce for FocusPanel {
             .map(|urgency| tone(urgency).accent)
             .unwrap_or(theme::BORDER);
         let follows = if self.following_queue {
-            "follows the top of the queue"
+            "queue top"
         } else {
-            "picked by you"
+            "selected"
         };
 
         let on_3d = self.on_toggle_fpv.clone();
@@ -84,12 +93,18 @@ impl RenderOnce for FocusPanel {
                 h_flex()
                     .justify_between()
                     .items_center()
+                    .px_3()
+                    .py(px(6.0))
+                    .border_b_1()
+                    .border_color(rgb(theme::BORDER_SUBTLE))
                     .child(
-                        v_flex()
-                            .child(heading(format!("Focus · {}", rover.name())))
+                        h_flex()
+                            .items_baseline()
+                            .gap_2()
+                            .child(heading(rover.name()))
                             .child(
                                 mono(follows)
-                                    .text_size(px(11.0))
+                                    .text_size(px(10.5))
                                     .text_color(rgb(theme::TEXT_MUTED)),
                             ),
                     )
@@ -106,21 +121,26 @@ impl RenderOnce for FocusPanel {
                     ),
             )
             .child(
-                div()
-                    .h(px(230.0))
-                    .flex_none()
-                    .rounded(px(10.0))
-                    .border_2()
-                    .border_color(rgb(frame_color))
-                    .overflow_hidden()
-                    .child(self.viewport),
+                v_flex()
+                    .p(px(10.0))
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .h(px(230.0))
+                            .flex_none()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(rgb(frame_color))
+                            .overflow_hidden()
+                            .child(self.viewport),
+                    )
+                    .child(what_happened(&rover))
+                    .child(LevelPicker::new(rover.clone(), self.on_action.clone()))
+                    .child(what_you_can_do(&rover, &self.on_action))
+                    .when_some(self.next, |column, next| {
+                        column.child(next_in_queue(&next, &self.on_action))
+                    }),
             )
-            .child(what_happened(&rover))
-            .child(LevelPicker::new(rover.clone(), self.on_action.clone()))
-            .child(what_you_can_do(&rover, &self.on_action))
-            .when_some(self.next, |column, next| {
-                column.child(next_in_queue(&next, &self.on_action))
-            })
     }
 }
 
@@ -130,6 +150,20 @@ fn what_happened(rover: &Rover) -> Div {
         Some(_) => "position lost".into(),
         None => "no position yet".into(),
     };
+    let gps_line = match (rover.geo_pose, rover.gps_anchor.as_ref()) {
+        (Some(geo), Some(anchor)) => format!(
+            "GPS {:.5}, {:.5} · hdg {:03.0}° · ±{:.1} m",
+            geo.latitude, geo.longitude, geo.heading_deg, anchor.accuracy
+        ),
+        (None, Some(anchor)) => format!("GPS anchor ±{:.1} m (pose untracked)", anchor.accuracy),
+        _ => "GPS: no anchor yet".into(),
+    };
+    let gps_goal_line = rover.gps_goal.map(|g| {
+        format!(
+            "GPS goal {:.5}, {:.5} (±{:.1} m)",
+            g.latitude, g.longitude, g.tolerance
+        )
+    });
     panel()
         .gap(px(6.0))
         .child(caps_label("What happened"))
@@ -139,6 +173,10 @@ fn what_happened(rover: &Rover) -> Div {
             rover.explanation()
         )))
         .child(mono(position).text_color(rgb(theme::TEXT_MUTED)))
+        .child(mono(gps_line).text_size(px(11.0)).text_color(rgb(theme::TEXT_MUTED)))
+        .when_some(gps_goal_line, |panel, line| {
+            panel.child(mono(line).text_size(px(11.0)).text_color(rgb(theme::BLUE_TEXT)))
+        })
         .when_some(rover.rejected.clone(), |panel, reason| {
             panel.child(
                 mono(format!("Last request refused: {reason}")).text_color(rgb(theme::RED.fill)),
@@ -205,11 +243,6 @@ fn what_you_can_do(rover: &Rover, on_action: &ActionHandler) -> Div {
             pair()
                 .child(action_button(rover, gate_action, gate_label, gate_look, on_action).flex_1())
                 .child(outline(RoverAction::Clear)),
-        )
-        .child(
-            pair()
-                .child(outline(RoverAction::CaptureWorldMap))
-                .child(outline(RoverAction::SyncWorldMap)),
         )
         .child(action_button(
             rover,

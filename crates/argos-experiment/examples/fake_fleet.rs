@@ -16,25 +16,28 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use terra_comms::{
-    Attention, Capabilities, CommsConfig, Goal, GoalKind, Occupancy, PlannedPath, Pose, Pose2,
-    RemoteState, RoverLink, StageOption, Status, Task, TaskAction, TaskState, TaskStatus, Twist,
+    Attention, Capabilities, CommsConfig, Goal, GoalKind, GpsAnchor, Occupancy, PlannedPath, Pose,
+    Pose2, RemoteState, RoverLink, StageOption, Status, Task, TaskAction, TaskState, TaskStatus,
+    Twist,
 };
 
 const TICK: Duration = Duration::from_millis(50);
 const SPEED: f64 = 0.5; // m/s
+const EARTH_RADIUS_M: f64 = 6_371_000.0;
 
 struct FakeRover {
     link: RoverLink,
     x: f64,
     y: f64,
     yaw: f64,
+    gps_anchor: Option<GpsAnchor>,
     task: Option<Task>,
     state: TaskState,
     started: f64,
 }
 
 impl FakeRover {
-    fn connect(id: u64, x: f64, y: f64) -> Self {
+    fn connect(id: u64, x: f64, y: f64, gps_anchor: Option<GpsAnchor>) -> Self {
         let endpoint =
             std::env::var("TERRA_ENDPOINT").unwrap_or_else(|_| "tcp/127.0.0.1:7447".into());
         let config =
@@ -59,6 +62,7 @@ impl FakeRover {
             x,
             y,
             yaw: 0.0,
+            gps_anchor,
             task: None,
             state: TaskState::Idle,
             started: now(),
@@ -152,7 +156,7 @@ impl FakeRover {
             estopped,
             link_ok: true,
             detail: String::new(),
-            gps_anchor: None,
+            gps_anchor: self.gps_anchor.clone(),
             gate_open: false,
         });
         self.link.publish(&TaskStatus {
@@ -180,11 +184,42 @@ impl FakeRover {
         self.y += v * self.yaw.sin() * dt;
     }
 
+    fn goal_world(&self, goal: &Goal) -> Option<(f64, f64, f64)> {
+        match goal {
+            Goal::Pose {
+                x, y, tolerance, ..
+            } => Some((*x, *y, *tolerance)),
+            Goal::Gps {
+                latitude,
+                longitude,
+                tolerance,
+                ..
+            } => {
+                let anchor = self.gps_anchor.as_ref()?;
+                let d_lat = (latitude - anchor.latitude).to_radians();
+                let d_lon = (longitude - anchor.longitude).to_radians();
+                let north = EARTH_RADIUS_M * d_lat;
+                let east = EARTH_RADIUS_M * anchor.latitude.to_radians().cos() * d_lon;
+                let (sin_h, cos_h) = anchor.heading.sin_cos();
+                let x = east * sin_h + north * cos_h;
+                let y = -east * cos_h + north * sin_h;
+                Some((x, y, *tolerance))
+            }
+            Goal::Stop | Goal::Explore { .. } => None,
+        }
+    }
+
     fn drive_to_goal(&mut self, dt: f64) {
-        let Some(Goal::Pose {
-            x, y, tolerance, ..
-        }) = self.task.as_ref().map(|task| task.goal.clone())
-        else {
+        let Some(goal) = self.task.as_ref().map(|task| task.goal.clone()) else {
+            return;
+        };
+        let Some((x, y, tolerance)) = self.goal_world(&goal) else {
+            if matches!(goal, Goal::Gps { .. }) {
+                self.state = TaskState::NeedsAttention {
+                    reason: Attention::NoGpsAnchor,
+                    since: now(),
+                };
+            }
             return;
         };
         let (dx, dy) = (x - self.x, y - self.y);
@@ -207,12 +242,15 @@ impl FakeRover {
         let poses = match (&self.task, &self.state) {
             (
                 Some(Task {
-                    goal: Goal::Pose { x, y, .. },
+                    goal,
                     planner: Some(_),
                     ..
                 }),
                 TaskState::Running { .. } | TaskState::Paused | TaskState::NeedsAttention { .. },
-            ) => sample_path([self.x, self.y], [*x, *y]),
+            ) => self
+                .goal_world(goal)
+                .map(|(x, y, _)| sample_path([self.x, self.y], [x, y]))
+                .unwrap_or_default(),
             _ => Vec::new(),
         };
         self.link.publish(&PlannedPath { t: now(), poses });
@@ -245,7 +283,7 @@ fn capabilities() -> Capabilities {
         params: Vec::new(),
         goals,
     };
-    let takes_goals = vec![GoalKind::Local];
+    let takes_goals = vec![GoalKind::Local, GoalKind::Gps];
     Capabilities {
         t: now(),
         controllers: vec![
@@ -290,11 +328,19 @@ fn now() -> f64 {
 }
 
 fn main() {
+    let with_gps = std::env::args().any(|arg| arg == "--gps");
+    let anchor = with_gps.then_some(GpsAnchor {
+        latitude: 37.7749,
+        longitude: -122.4194,
+        heading: 0.0,
+        accuracy: 1.5,
+    });
     let mut rovers = vec![
-        FakeRover::connect(1, -3.0, 2.0),
-        FakeRover::connect(2, 2.0, 1.0),
-        FakeRover::connect(3, 0.0, -2.5),
-        FakeRover::connect(4, 4.0, -1.0),
+        FakeRover::connect(1, -3.0, 2.0, anchor.clone()),
+        FakeRover::connect(2, 2.0, 1.0, anchor.clone()),
+        FakeRover::connect(3, 0.0, -2.5, anchor),
+        // Leave rover 4 without a GPS anchor even in --gps mode so mixed fleets are easy to test.
+        FakeRover::connect(4, 4.0, -1.0, None),
     ];
 
     // Rover 1 is on its way somewhere; rover 3 got stuck on its way.

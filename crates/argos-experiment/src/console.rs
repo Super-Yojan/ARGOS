@@ -163,12 +163,12 @@ impl Render for Console {
 
         v_flex()
             .size_full()
-            .p_3()
-            .gap_3()
+            .p_2()
+            .gap_2()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::TEXT))
             .font_family(theme::FONT_UI)
-            .text_size(px(14.0))
+            .text_size(px(13.0))
             .child(self.top_bar(cx))
             .child(div().flex_1().min_h_0().child(page))
     }

@@ -8,10 +8,68 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use terra_comms::{
-    Attention, Capabilities, Goal, GoalKind, Pose, StageOption, Status, TaskState, TaskStatus,
+    Attention, Capabilities, Goal, GoalKind, GpsAnchor, Pose, StageOption, Status, TaskState,
+    TaskStatus,
 };
 
 use super::level::Level;
+
+/// Mean Earth radius (m), matching `terra-av::estimation::gps`.
+const EARTH_RADIUS_M: f64 = 6_371_000.0;
+
+/// Default minimum arrival tolerance for GPS goals (m) when anchor accuracy is
+/// tighter than this.
+pub const MIN_GPS_GOAL_TOLERANCE_M: f64 = 0.35;
+
+/// Rover pose in geographic coordinates (WGS84), derived from `Pose` + `GpsAnchor`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeoPose {
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Compass bearing in degrees clockwise from true north `[0, 360)`.
+    pub heading_deg: f64,
+}
+
+/// Active WGS84 goal (`Goal::Gps`) on a rover.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpsGoal {
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Optional target compass heading (rad, clockwise from true north).
+    pub heading: Option<f64>,
+    /// Arrival tolerance (m).
+    pub tolerance: f64,
+}
+
+/// Convert a local world-frame point `(x, y)` (m) into WGS84 `(latitude, longitude)`
+/// using `anchor`. Inverse of `terra_av::estimation::GpsAnchor::to_world`.
+///
+/// `anchor.heading` is radians clockwise from true north to world `+X`;
+/// world `+Y` is 90° counter-clockwise (left) of `+X`.
+pub fn world_to_lat_lon(anchor: &GpsAnchor, x: f64, y: f64) -> (f64, f64) {
+    let (sin_h, cos_h) = anchor.heading.sin_cos();
+    let east = x * sin_h - y * cos_h;
+    let north = x * cos_h + y * sin_h;
+    let d_lat = (north / EARTH_RADIUS_M).to_degrees();
+    let cos_lat = anchor.latitude.to_radians().cos().abs().max(1e-6);
+    let d_lon = (east / (EARTH_RADIUS_M * cos_lat)).to_degrees();
+    (anchor.latitude + d_lat, anchor.longitude + d_lon)
+}
+
+/// Convert a world-frame yaw (rad, CCW from world `+X`) to a compass bearing
+/// (degrees, CW from true north, normalized to `[0, 360)`).
+pub fn world_yaw_to_compass_deg(anchor: &GpsAnchor, yaw: f64) -> f64 {
+    (anchor.heading - yaw).to_degrees().rem_euclid(360.0)
+}
+
+/// Great-circle (haversine) surface distance in metres between two WGS84 points.
+pub fn haversine_distance_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lon = (lon2 - lon1).to_radians();
+    let a = (d_lat * 0.5).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon * 0.5).sin().powi(2);
+    2.0 * EARTH_RADIUS_M * a.sqrt().min(1.0).asin()
+}
 
 /// What a rover is doing right now.
 #[derive(Clone, Debug, PartialEq)]
@@ -73,12 +131,6 @@ pub enum RoverAction {
     SetLevelController { level: Level, controller: String },
     /// Open (`true`) or close (`false`) the rover's dump gate servo.
     SetGate(bool),
-    /// Push the base station's saved shared `ARWorldMap` to this rover so it
-    /// relocalizes into the fleet's shared world coordinate frame.
-    SyncWorldMap,
-    /// Ask this rover to capture its current `ARWorldMap` and upload it as the
-    /// fleet's shared map.
-    CaptureWorldMap,
 }
 
 impl RoverAction {
@@ -96,8 +148,6 @@ impl RoverAction {
             Self::SetLevelController { .. } => "Set controller",
             Self::SetGate(true) => "Open gate",
             Self::SetGate(false) => "Close gate",
-            Self::SyncWorldMap => "Sync map",
-            Self::CaptureWorldMap => "Save map",
         }
     }
 }
@@ -132,6 +182,12 @@ pub struct Rover {
     pub task_id: Option<u64>,
     /// Where the task is going, world frame, metres.
     pub goal: Option<[f64; 2]>,
+    /// Where the task is going in WGS84 coordinates, when the task has a `Goal::Gps`.
+    pub gps_goal: Option<GpsGoal>,
+    /// Latest GPS anchor reported by the rover's estimator (`Status.gps_anchor`).
+    pub gps_anchor: Option<GpsAnchor>,
+    /// Rover position & compass heading in WGS84, derived from tracked `pose` + `gps_anchor`.
+    pub geo_pose: Option<GeoPose>,
     /// Why the rover refused the latest request, if it did.
     pub rejected: Option<String>,
     /// This console has an e-stop engaged on it.
@@ -206,7 +262,7 @@ impl Rover {
         };
 
         let gate_open = status.as_ref().is_some_and(|status| status.gate_open);
-        let stopped = stopped_here || status.is_some_and(|status| status.estopped);
+        let stopped = stopped_here || status.as_ref().is_some_and(|status| status.estopped);
         let activity = match task.as_ref().map(|task| &task.state) {
             _ if stopped => Activity::Stopped,
             Some(TaskState::NeedsAttention { reason, .. }) => Activity::Attention(reason.clone()),
@@ -227,6 +283,36 @@ impl Rover {
                 Goal::Pose { x, y, .. } => Some([x, y]),
                 Goal::Stop | Goal::Gps { .. } | Goal::Explore { .. } => None,
             });
+        let gps_goal = task
+            .as_ref()
+            .filter(|_| has_task)
+            .and_then(|task| match task.goal {
+                Goal::Gps {
+                    latitude,
+                    longitude,
+                    heading,
+                    tolerance,
+                } => Some(GpsGoal {
+                    latitude,
+                    longitude,
+                    heading,
+                    tolerance,
+                }),
+                Goal::Stop | Goal::Pose { .. } | Goal::Explore { .. } => None,
+            });
+        let gps_anchor = status.as_ref().and_then(|s| s.gps_anchor.clone());
+        let geo_pose = match (pose.as_ref(), gps_anchor.as_ref()) {
+            (Some(pose), Some(anchor)) if pose.tracked => {
+                let (latitude, longitude) = world_to_lat_lon(anchor, pose.x, pose.y);
+                let heading_deg = world_yaw_to_compass_deg(anchor, pose.yaw);
+                Some(GeoPose {
+                    latitude,
+                    longitude,
+                    heading_deg,
+                })
+            }
+            _ => None,
+        };
 
         let level_controllers = Level::CONFIGURABLE
             .into_iter()
@@ -256,6 +342,9 @@ impl Rover {
             level_controllers,
             task_id: task.as_ref().and_then(|task| task.task_id),
             goal,
+            gps_goal,
+            gps_anchor,
+            geo_pose,
             rejected: task
                 .and_then(|task| task.last_rejected)
                 .map(|rejection| rejection.reason),
@@ -271,6 +360,42 @@ impl Rover {
     /// The controller configured for `level`, if it is a configurable level.
     pub fn controller_for(&self, level: Level) -> Option<&str> {
         self.level_controllers.get(&level).map(String::as_str)
+    }
+
+    /// Whether this rover can accept a `Goal::Gps` at its current `goal_level`.
+    ///
+    /// Follows `terra-comms` API §4.3:
+    /// - A controller listing `GoalKind::Gps` accepts GPS goals directly.
+    /// - A controller listing `GoalKind::Local` accepts GPS goals once the
+    ///   rover reports a `gps_anchor` (the rover converts `Goal::Gps` to local).
+    pub fn supports_gps_goal(&self) -> Result<(), &'static str> {
+        let controller_name = self.controller_for(self.goal_level);
+        let stage = controller_name
+            .and_then(|id| self.controllers.iter().find(|c| c.id == id));
+
+        if let Some(stage) = stage {
+            if stage.accepts(GoalKind::Gps) {
+                return Ok(());
+            }
+            if !stage.accepts(GoalKind::Local) {
+                return Err("Selected controller does not accept GPS goals");
+            }
+        }
+        if self.gps_anchor.is_some() {
+            Ok(())
+        } else {
+            Err("No GPS anchor yet (drive ~10 m outdoors with GPS)")
+        }
+    }
+
+    /// Arrival tolerance (m) for a GPS goal sent to this rover: never tighter
+    /// than the rover's current `gps_anchor.accuracy` (`terra-comms` API §6).
+    pub fn gps_goal_tolerance(&self) -> f64 {
+        let accuracy = self
+            .gps_anchor
+            .as_ref()
+            .map_or(0.0, |anchor| if anchor.accuracy.is_finite() { anchor.accuracy } else { 0.0 });
+        MIN_GPS_GOAL_TOLERANCE_M.max(accuracy)
     }
 
     /// "Rover 4".
@@ -396,7 +521,6 @@ impl Rover {
                         })
             }
             RoverAction::SetGate(_) => !matches!(self.activity, Activity::Stopped),
-            RoverAction::SyncWorldMap | RoverAction::CaptureWorldMap => true,
         }
     }
 }
@@ -433,6 +557,9 @@ mod tests {
             level_controllers: BTreeMap::new(),
             task_id: Some(1),
             goal: None,
+            gps_goal: None,
+            gps_anchor: None,
+            geo_pose: None,
             rejected: None,
             stopped_here: false,
             gate_open: false,
@@ -551,5 +678,92 @@ mod tests {
             "engaged elsewhere: not ours to release"
         );
         assert!(!rover.allows(&RoverAction::Resume));
+    }
+
+    #[test]
+    fn world_to_lat_lon_and_compass_heading_match_anchor_convention() {
+        // World +X points due east (heading = 90° CW from north).
+        // World +Y is 90° CCW (left) of +X, so world +Y points due north.
+        let anchor = GpsAnchor {
+            latitude: 37.7749,
+            longitude: -122.4194,
+            heading: std::f64::consts::FRAC_PI_2,
+            accuracy: 2.0,
+        };
+        let (lat_x, lon_x) = world_to_lat_lon(&anchor, 100.0, 0.0);
+        assert!((lat_x - anchor.latitude).abs() < 1e-9);
+        assert!(lon_x > anchor.longitude);
+
+        let (lat_y, lon_y) = world_to_lat_lon(&anchor, 0.0, 100.0);
+        assert!(lat_y > anchor.latitude);
+        assert!((lon_y - anchor.longitude).abs() < 1e-9);
+
+        // Distance for 100 m north should be ~100 m.
+        let d = haversine_distance_m(anchor.latitude, anchor.longitude, lat_y, lon_y);
+        assert!((d - 100.0).abs() < 0.2, "expected ~100 m, got {d}");
+
+        // Yaw = 0 (facing +X = east) -> compass 90°.
+        assert!((world_yaw_to_compass_deg(&anchor, 0.0) - 90.0).abs() < 1e-6);
+        // Yaw = +90° (facing +Y = north) -> compass 0°.
+        let north = world_yaw_to_compass_deg(&anchor, std::f64::consts::FRAC_PI_2);
+        assert!(north.abs() < 1e-6 || (north - 360.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gps_goal_support_and_tolerance_respect_anchor_and_capabilities() {
+        let caps = Capabilities {
+            t: 0.0,
+            controllers: vec![stage("dwa")],
+            planners: vec![stage("hybrid_astar")],
+            default_controller: "teleop".into(),
+            software: String::new(),
+            footprint: None,
+        };
+        let unanchored = Rover::interpret(
+            1,
+            Reports {
+                capabilities: Some(caps.clone()),
+                ..Default::default()
+            },
+            false,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(unanchored.supports_gps_goal().is_err());
+
+        let anchor = GpsAnchor {
+            latitude: 37.7749,
+            longitude: -122.4194,
+            heading: 0.0,
+            accuracy: 2.4,
+        };
+        let anchored = Rover::interpret(
+            1,
+            Reports {
+                capabilities: Some(caps),
+                status: Some(Status {
+                    t: 0.0,
+                    estopped: false,
+                    link_ok: true,
+                    detail: String::new(),
+                    gps_anchor: Some(anchor),
+                    gate_open: false,
+                }),
+                pose: Some(Pose {
+                    t: 0.0,
+                    x: 10.0,
+                    y: 0.0,
+                    yaw: 0.0,
+                    tracked: true,
+                }),
+                ..Default::default()
+            },
+            false,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(anchored.supports_gps_goal().is_ok());
+        assert!((anchored.gps_goal_tolerance() - 2.4).abs() < 1e-9);
+        assert!(anchored.geo_pose.is_some());
     }
 }

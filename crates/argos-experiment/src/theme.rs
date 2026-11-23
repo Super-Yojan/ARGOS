@@ -1,5 +1,9 @@
 //! Colours and fonts of the operator console.
 //!
+//! Neutral carbon-dark operations palette: deep obsidian chrome, graphite
+//! framed panes, elevated slate cards, crisp 1 px hairlines, and high-contrast
+//! tactical cobalt / crimson / emerald accents.
+//!
 //! Colours are `0xRRGGBB` values; wrap them in `rgb(..)` where they are used.
 
 // ------------------------------------------------------------------ fonts
@@ -13,48 +17,62 @@ pub const FONT_MONO: &str = "IBM Plex Mono";
 
 // ---------------------------------------------------------------- surfaces
 
-pub const BG: u32 = 0x0f1513;
-pub const PANEL: u32 = 0x171f1c;
-pub const MAP_BG: u32 = 0x131a18;
-pub const MAP_FREE: u32 = 0x1e2c27;
-pub const MAP_GRID: u32 = 0x24332e;
-pub const MAP_OBSTACLE: u32 = 0x8aa399;
-pub const SCENE_BG: u32 = 0x050807;
-pub const BORDER: u32 = 0x2c3833;
+/// Deep neutral carbon window backdrop.
+pub const BG: u32 = 0x0b0c0e;
+/// Primary framed pane surface (Rovers, Map, Focus, TopBar).
+pub const PANEL: u32 = 0x141518;
+/// Elevated card / recessed control track surface.
+pub const PANEL_MUTED: u32 = 0x1c1e22;
+/// Crisp dark charcoal canvas for the 2D fleet map.
+pub const MAP_BG: u32 = 0x0f1114;
+/// Subtle explored free space on the 2D map.
+pub const MAP_FREE: u32 = 0x171b20;
+/// Quiet 1 m reference grid on the 2D map.
+pub const MAP_GRID: u32 = 0x1e2229;
+/// High-contrast cool slate obstacle cells on the 2D map.
+pub const MAP_OBSTACLE: u32 = 0x94a3b8;
+/// Neutral dark backdrop for the 3D scene and FPV viewport.
+pub const SCENE_BG: u32 = 0x0d0f12;
+/// Crisp 1 px graphite hairline border.
+pub const BORDER: u32 = 0x262930;
+/// Whisper-quiet inner divider between pane headers and sections.
+pub const BORDER_SUBTLE: u32 = 0x1e2026;
 
 // -------------------------------------------------------------------- text
 
-pub const TEXT: u32 = 0xe4ebe8;
-pub const TEXT_MUTED: u32 = 0x97a6a1;
+/// Crisp off-white primary text.
+pub const TEXT: u32 = 0xf3f4f6;
+/// Neutral slate secondary text.
+pub const TEXT_MUTED: u32 = 0x8b909a;
 
 // ----------------------------------------------------------------- accents
 
-/// Selection, routes and the main action.
-pub const BLUE: u32 = 0x7ea3ff;
-pub const BLUE_TEXT: u32 = 0xa9c1ff;
-pub const BLUE_PALE: u32 = 0xcfdcff;
-pub const BLUE_BG: u32 = 0x1a2440;
-/// Text on a blue button.
-pub const INK: u32 = 0x0f1513;
+/// Selection, routes and the primary action (tactical cobalt).
+pub const BLUE: u32 = 0x2563eb;
+pub const BLUE_TEXT: u32 = 0x60a5fa;
+pub const BLUE_PALE: u32 = 0xdbeafe;
+pub const BLUE_BG: u32 = 0x172554;
+/// Text on a filled blue button.
+pub const INK: u32 = 0xffffff;
 
-/// "All good".
-pub const GREEN: u32 = 0x6fd3a0;
+/// "All good" / active emerald.
+pub const GREEN: u32 = 0x34d399;
 
 /// The STOP buttons.
-pub const STOP: u32 = 0xb3261e;
+pub const STOP: u32 = 0xdc2626;
 pub const STOP_TEXT: u32 = 0xffffff;
 
 /// Rovers that need nothing from the operator, drawn small on the map.
-pub const QUIET_ROVER: u32 = 0x7f97c9;
-pub const QUIET_ROUTE: u32 = 0x56709f;
-pub const QUIET_LABEL: u32 = 0xb9c8ea;
+pub const QUIET_ROVER: u32 = 0x64748b;
+pub const QUIET_ROUTE: u32 = 0x475569;
+pub const QUIET_LABEL: u32 = 0xcbd5e1;
 
 /// The colours of one kind of alert: a card, its text and its buttons.
 #[derive(Clone, Copy)]
 pub struct Tone {
-    /// Border, ring on the map, outline button.
+    /// Border, left accent bar, ring on the map, outline button.
     pub accent: u32,
-    /// Filled button.
+    /// Filled button and badge.
     pub fill: u32,
     /// Text on the filled button.
     pub ink: u32,
@@ -64,23 +82,23 @@ pub struct Tone {
     pub bg: u32,
 }
 
-/// A rover that is stopped.
+/// A rover that is stopped (incident style).
 pub const RED: Tone = Tone {
-    accent: 0xff8a80,
-    fill: 0xffb4ab,
-    ink: 0x2a0f0d,
-    text: 0xffd9d4,
-    bg: 0x3a1d1b,
+    accent: 0xdc2626,
+    fill: 0xdc2626,
+    ink: 0xffffff,
+    text: 0xfca5a5,
+    bg: 0x1e1315,
 };
 
 /// A rover that waits for the operator.
 pub const ORANGE: Tone = Tone {
-    accent: 0xff9a5a,
-    fill: 0xff9a5a,
-    ink: 0x2a1608,
-    text: 0xffe2cf,
-    bg: 0x3a2416,
+    accent: 0xd97706,
+    fill: 0xd97706,
+    ink: 0xffffff,
+    text: 0xfcd34d,
+    bg: 0x1d1812,
 };
 
-/// Orange text on a dark panel (a count, a state).
-pub const ORANGE_TEXT: u32 = 0xffb685;
+/// Amber text on a dark panel (a count, a state).
+pub const ORANGE_TEXT: u32 = 0xfbbf24;
